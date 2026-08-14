@@ -4,8 +4,12 @@
 
 **EAC = Embracing All Creation（揽尽万象）**
 
+[![GitHub stars](https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC) [![Windows](https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases) [![Desktop App](https://img.shields.io/badge/Desktop-App-47848F?style=flat)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC) [![MIT License](https://img.shields.io/badge/license-MIT-2EA44F?style=flat)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE)
+
 把官方 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（`@deepseek-ai/dsh`，一切皆插件的 agent harness）
 封装为**开箱即用的 Windows 桌面客户端**，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。
+
+[![Deepseek Harness EAC 界面预览](docs/screenshot-preview.jpg)](docs/screenshot-preview.jpg)
 
 ---
 
