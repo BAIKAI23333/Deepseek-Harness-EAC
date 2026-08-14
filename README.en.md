@@ -1,3 +1,5 @@
+<div align="center">
+
 [中文](README.md) | [English](README.en.md)
 
 # Deepseek Harness EAC — Embracing All Creation
@@ -10,6 +12,8 @@ A ready-to-use **Windows desktop client** wrapping the official [deepseek-ai/dee
 On top of the original, EAC embraces the community's creations — skins, plugins, tools, memories — everything installable with one click.
 
 [![Deepseek Harness EAC UI preview](docs/screenshot-preview.jpg)](docs/screenshot-preview.jpg)
+
+</div>
 
 ---
 

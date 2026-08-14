@@ -1,3 +1,5 @@
+<div align="center">
+
 [中文](README.md) | [English](README.en.md)
 
 # Deepseek Harness EAC — 揽尽万象
@@ -10,6 +12,8 @@
 封装为**开箱即用的 Windows 桌面客户端**，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。
 
 [![Deepseek Harness EAC 界面预览](docs/screenshot-preview.jpg)](docs/screenshot-preview.jpg)
+
+</div>
 
 ---
 
