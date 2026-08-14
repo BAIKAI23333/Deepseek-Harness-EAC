@@ -1,17 +1,22 @@
 <div align="center">
 
-[中文](README.md) | [English](README.en.md)
+<p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
-# Deepseek Harness EAC — 揽尽万象
+<h1>Deepseek Harness EAC — 揽尽万象</h1>
 
-**EAC = Embracing All Creation（揽尽万象）**
+<p><strong>EAC = Embracing All Creation（揽尽万象）</strong></p>
 
-[![GitHub stars](https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC) [![Windows](https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases) [![Desktop App](https://img.shields.io/badge/Desktop-App-47848F?style=flat)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC) [![MIT License](https://img.shields.io/badge/license-MIT-2EA44F?style=flat)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE)
+<p>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
+</p>
 
-把官方 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（`@deepseek-ai/dsh`，一切皆插件的 agent harness）
-封装为**开箱即用的 Windows 桌面客户端**，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。
+<p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
+封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
-[![Deepseek Harness EAC 界面预览](docs/screenshot-preview.jpg)](docs/screenshot-preview.jpg)
+<p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
 
 </div>
 
