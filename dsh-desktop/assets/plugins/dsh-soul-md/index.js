@@ -36,8 +36,16 @@ const SECTION_NAME = "soul:persona";
 
 /** Runtime schema for the soul-md row. */
 const Config = z.object({
-  /** Path to the soul.md persona card. Absolute, or relative to the dsh home. */
-  path: z.string().required(),
+  /**
+   * Path to the soul.md persona card. Absolute, or relative to the dsh home.
+   * Defaults to "<dsh home>/soul.md": when the file is missing the row falls
+   * back to empty text and registers NO prompt section, so the stock official
+   * system prompt is used untouched. MUST keep a default — a required field
+   * with no default fails config validation when the profile patch row
+   * carries no config, which takes down the whole plugin tree (dsh web exits
+   * with code 1, the app shows "启动失败").
+   */
+  path: z.string().default("soul.md"),
   /** Text used when the file is missing or unreadable. Empty means no section. */
   fallback: z.string().default(""),
   /** Prompt section order; 0 renders right after the deployment persona slot. */

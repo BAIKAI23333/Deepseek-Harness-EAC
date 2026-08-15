@@ -25,6 +25,7 @@ const updater = require('./updater');
 const clientUpdater = require('./client-updater');
 const balance = require('./balance');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
+const { configLinesFor, healSoulMdPatchRow, removeBundledRowDuplicates } = require('./patch-row-heal');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
 const zlib = require('node:zlib');
 
@@ -940,7 +941,11 @@ const COMPANION_PLUGINS = [
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
   // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
   { id: 'tool-vision', name: 'dsh-tool-vision', dir: 'dsh-tool-vision' },
-  { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md' },
+  // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
+  // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
+  // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
+  // 写 config 是双保险，healSoulMdPatchRow 另负责修复存量坏行。
+  { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
   { id: 'tdai-memory', name: 'dsh-tdai-memory', dir: 'dsh-tdai-memory' },
   { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
 ];
@@ -1158,7 +1163,7 @@ function syncCompanionPlugins() {
       const src = path.join(__dirname, 'assets', 'plugins', p.dir || p.name.slice('@deepseek-ai/'.length));
       if (!fs.existsSync(path.join(src, 'package.json'))) continue;
       copyPluginPackage(profileDirP, src, p.name);
-      pending.push({ id: p.id, name: p.name, disabled: false });
+      pending.push({ id: p.id, name: p.name, disabled: false, config: p.config });
     }
     // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
     for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
@@ -1177,9 +1182,35 @@ function syncCompanionPlugins() {
     let patch = '';
     try { patch = fs.readFileSync(patchFile, 'utf8'); } catch { patch = ''; }
     let changed = false;
+    // 先修存量坏行：v2.0.0 写入的 soul-md 行缺 config.path（见 patch-row-heal.js
+    // 头注释），不修则升级用户仍会 “dsh web 启动失败 (退出码 1)”。
+    const healed = healSoulMdPatchRow(patch);
+    if (healed.healed.length) {
+      patch = healed.patch;
+      changed = true;
+      log('boot', '已修复 profile patch 中缺 config.path 的 soul-md 行');
+    }
+    // 市场安装（dsh plugin add）会把插件登记进 package.json 的
+    // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
+    // 也有一行（syncCompanionPlugins 写的），整个插件树会以
+    // “duplicate loader entry id” 崩溃。清掉 overlay 重复行（包内行保留）。
+    let bundled = [];
+    try { bundled = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
+    const rowIds = {};
+    for (const p of COMPANION_PLUGINS) rowIds[p.id] = p.name;
+    const deduped = removeBundledRowDuplicates(patch, rowIds, bundled);
+    if (deduped.removed.length) {
+      patch = deduped.patch;
+      changed = true;
+      log('boot', '已移除与 bundle 登记重复的 patch 行: ' + deduped.removed.join(', '));
+    }
     for (const p of pending) {
       if (new RegExp('id:\\s*' + p.id + '\\b').test(patch)) continue;
+      // 已在 bundle 列表里的插件由其包内 patch 挂载，overlay 不能再写行
+      // （会 duplicate loader entry id，拖垮整个插件树）。
+      if (bundled.includes(p.name)) continue;
       let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
+      if (p.config) block += configLinesFor(p.config);
       if (p.disabled) block += `      disabled: true\n`;
       if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/\[\]/m, block);
       else if (patch.trim() === '') patch = '# dsh web profile patch（由 DSH Desktop 维护）\n' + block;
