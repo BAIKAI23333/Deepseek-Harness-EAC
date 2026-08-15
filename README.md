@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
@@ -52,8 +52,8 @@
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v1.0-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~150 MB |
-| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v1.0-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~150 MB |
+| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~150 MB |
+| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~150 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
@@ -63,7 +63,7 @@
 2. 如尚未配置 API Key，在界面「设置」内完成配置即可开始使用（与命令行 dsh 完全一致）。
 3. 常用入口：设置 → 皮肤（10 款内置皮肤切换）/ 插件市场 / 模型一键选择；对话区 → 终端 / 文件标签页。
 
-> 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC v1.0\`。
+> 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC v2.0\`。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
 ### 升级部署
@@ -117,10 +117,14 @@
 - **文件更改追踪 + 一键还原**：「文件」标签页查看本会话全部文件改动（新建/修改/删除 + 行级 diff）并逐文件/全部还原；数据只读复用会话日志，稳定不受升级影响
 - **会话内终端**：「终端」标签页在当前会话项目目录启动持久 PowerShell（SSE 流式、命令历史、断线重连），中文编码干净
 - **项目文件树 + HTML/端口预览**：VSCode 风格文件树，站内预览 HTML/本地端口服务（仅回环）
-- **插件市场**：设置 → 插件，搜索 npm 上的 dsh 插件并一键安装/卸载到 web profile
+- **社区插件市场（v2 新增，dsh-webui-market）**：设置 → 插件 → 市场，浏览 awesome-dsh-plugin.com 收录的 dsh 插件并一键安装/卸载到 profile；安装/卸载任务在服务重启窗口期排队执行，不打断当前会话
+- **外置视觉模型（v2 新增，dsh-tool-vision）**：`inspect_image` 工具把本地图片或图片 URL 发给任意 OpenAI 兼容视觉端点（qwen-vl / GLM-4V / Ollama 等），看图回答直接带回对话
+- **长期记忆（v2 新增，dsh-tdai-memory）**：腾讯云 Agent Memory 移植 —— L0 对话捕获 → L1 结构化记忆 → L2 场景 / L3 画像，自动召回注入 + 记忆/对话搜索工具，复用现有 `~/.memory-tencentdb/memory-tdai` 数据
+- **soul.md 人设热重载（v2 新增，dsh-soul-md）**：markdown 人设文件注入系统提示词（`soul:persona`），文件变更即时热重载，Agent 边干活边角色扮演
+- **移动端布局修复（v2 新增，dsh-web-mobile-fix）**：窄屏（≤400px）下设置面板、弹窗、侧栏、会话头布局修复，纯前端 CSS，不影响桌面布局
 - **快速配置（dsh-easy-setup）**：视觉模型提供商/模型一键选择、`soul.md` 人设可视化编辑、从 Codex / Claude Code 目录一键迁移 skills + MCP + 记忆
 - **双重自动更新**：官方 dsh agent 更新（npm overlay）+ 客户端封装自更新，均经用户同意，失败自动回退
-- **稳定性自愈**：`profile-module-heal` 自动修复 profile 模块遮蔽问题（如 `prompt section already registered`、模型列表/模式切换失效）
+- **稳定性自愈**：`profile-module-heal` 自动修复 profile 模块遮蔽问题（如 `prompt section already registered`、模型列表/模式切换失效）；重启服务时等待旧进程完全退出（释放文件锁）再启动新服务，插件包（含自带 vendor 依赖）随安装包原样分发
 
 ---
 

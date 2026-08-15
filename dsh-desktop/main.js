@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 // DSH Desktop — Electron shell around the DeepSeek Harness browser UI.
 //
@@ -172,6 +172,29 @@ function childEnv() {
   return env;
 }
 
+// 等待一个子进程真正退出（taskkill 先优雅后强杀，锁住的 DLL 要等进程
+// 终止才释放）。轮询 tasklist，超时后放行由调用方自行处理。
+function waitForProcExit(proc, timeoutMs) {
+  return new Promise((resolve) => {
+    if (!proc || !proc.pid) return resolve();
+    const pid = proc.pid;
+    const started = Date.now();
+    const check = () => {
+      try {
+        const out = require('node:child_process').execSync(
+          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
+        if (!out.includes('"' + pid + '"')) return resolve();
+      } catch { return resolve(); }
+      if (Date.now() - started >= timeoutMs) {
+        log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
+        return resolve();
+      }
+      setTimeout(check, 200);
+    };
+    check();
+  });
+}
+
 function showBox(opts) {
   if (mainWindow && !mainWindow.isDestroyed()) return dialog.showMessageBox(mainWindow, opts);
   return dialog.showMessageBox(opts);
@@ -321,7 +344,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: 'Deepseek Harness EAC v1.0',
+    title: 'Deepseek Harness EAC v2.0',
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
@@ -340,7 +363,7 @@ function createWindow() {
   // Keep the app brand in the OS title bar (the web UI sets its own <title>).
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault();
-    mainWindow.setTitle('Deepseek Harness EAC v1.0');
+    mainWindow.setTitle('Deepseek Harness EAC v2.0');
   });
 
   // Open target=_blank / window.open in the system browser.
@@ -614,8 +637,8 @@ async function showAbout() {
   const urls = repoUrls();
   const { response } = await showBox({
     type: 'info',
-    title: '关于 Deepseek Harness EAC v1.0',
-    message: 'Deepseek Harness EAC v1.0（封装版本 ' + APP_VERSION + '）',
+    title: '关于 Deepseek Harness EAC v2.0',
+    message: 'Deepseek Harness EAC v2.0（封装版本 ' + APP_VERSION + '）',
     detail: 'DeepSeek Harness 桌面客户端\n\nagent 版本：' + dshVersion() + '（' + dshVersionSource() + '）\n数据目录：' + userDataDir + '\nDSH_HOME：' + (dshHome || '（dsh 默认）') +
       '\n\n项目仓库：\n  GitHub: ' + urls.github + '\n  Gitee:  ' + urls.gitee,
     buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
@@ -693,7 +716,17 @@ function registerChromeIpc() {
     log('service', '请求重启 dsh web 服务');
     restartingServer = true;
     try {
+      const oldProc = serverProc;
       killTree(serverProc);
+      serverProc = null;
+      // 等旧进程真正退出（DLL 文件锁随之释放），再执行插件市场排队任务，
+      // 最后才拉起新服务 —— 排队安装正需要这个"无锁窗口"。
+      await waitForProcExit(oldProc, 20000);
+      await processPendingMarketOps();
+      // pnpm（排队安装/卸载）会重写 profile node_modules：可能删掉配套插件
+      // 副本、重新 hoist 核心包。服务拉起前重建 + 清理，顺序不能反。
+      syncCompanionPlugins();
+      healProfileModules();
       const url = await startAndShow();
       log('service', 'dsh web 服务已重启: ' + url);
       return { ok: true, url };
@@ -806,7 +839,7 @@ function trayHintOnce() {
   trayHintShown = true;
   try {
     tray.displayBalloon({
-      title: 'Deepseek Harness EAC v1.0 仍在运行',
+      title: 'Deepseek Harness EAC v2.0 仍在运行',
       content: '窗口已隐藏到系统托盘，点击托盘图标可重新打开。',
       iconType: 'info',
     });
@@ -826,9 +859,9 @@ function createTray() {
     const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
     if (!fs.existsSync(iconPath)) return;
     tray = new Tray(iconPath);
-    tray.setToolTip('Deepseek Harness EAC v1.0');
+    tray.setToolTip('Deepseek Harness EAC v2.0');
     const menu = Menu.buildFromTemplate([
-      { label: '显示 Deepseek Harness EAC v1.0', click: () => showMainWindow() },
+      { label: '显示 Deepseek Harness EAC v2.0', click: () => showMainWindow() },
       { type: 'separator' },
       { label: '检查 dsh 更新…', click: () => { showMainWindow(); runUpdateFlow(true); } },
       { label: '检查客户端更新…', click: () => { showMainWindow(); runClientUpdateFlow(true); } },
@@ -898,9 +931,18 @@ const COMPANION_PLUGINS = [
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
   { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
-  { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },
+  // 社区插件市场（awesome-dsh-plugin.com 目录）：内置分发，替换早期 npm 检索版市场。
+  { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin', dir: 'dsh-webui-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
+  // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
+  // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
+  // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
+  // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
+  { id: 'tool-vision', name: 'dsh-tool-vision', dir: 'dsh-tool-vision' },
+  { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md' },
+  { id: 'tdai-memory', name: 'dsh-tdai-memory', dir: 'dsh-tdai-memory' },
+  { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
 ];
 
 // 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
@@ -937,12 +979,21 @@ function copyPluginPackage(profileDirP, src, name) {
   // lib 整目录随包（配套插件可能有 logic.js 等额外模块，按清单拷会漏文件
   // 导致 dsh web 启动时 ERR_MODULE_NOT_FOUND）。
   for (const f of ['package.json', 'skin.json', ...EXTRA_PACKAGE_FILES]) copyFile(f);
+  // 社区插件（soul-md / tdai-memory / tool-vision）入口在包根目录而非
+  // lib/，vendor/ 是其内置依赖，同样必须随包分发。
+  for (const f of ['index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml']) copyFile(f);
   copyDir('lib');
   copyDir('preview');
+  copyDir('vendor');
+  // 内置插件自带的嵌套 node_modules（vendored 运行时依赖）：放在包内部，
+  // pnpm 重写 profile node_modules 顶层时不会波及，插件保持自包含。
+  copyDir('node_modules');
+  // dsh-webui-market 的离线目录快照（官网不可达时的兜底数据）。
+  copyDir('data');
 }
 
 // 随插件/皮肤包一起拷贝到 profile 的许可与出处文件（存在才拷贝）。
-const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'README.md'];
+const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'README.md', 'README.zh.md', 'THIRD-PARTY-NOTICES.md'];
 
 // pnpm（dsh plugin add / 插件市场）hoist 进 profile node_modules 的
 // @deepseek-ai 核心包真实拷贝，会遮蔽 <home>/profiles/node_modules 里指向
@@ -960,6 +1011,141 @@ function healProfileModules() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 插件市场排队任务：服务运行中安装/卸载撞上 Windows 文件锁（EPERM，如
+// sqlite-vec 的 vec0.dll 被运行中的 web 进程加载）时，市场插件把任务写进
+// profile 的 .dsh-market-pending.json。这里在"无服务进程持锁"的窗口期
+// （应用启动时 / 原地重启 kill 完旧进程后）用 dsh CLI 完成它。
+// ---------------------------------------------------------------------------
+const MARKER_NAME = '.dsh-market-pending.json';
+const MARKER_MAX_ATTEMPTS = 3;
+
+// 删除排队标记文件。曾有残留进程短暂持锁导致 rmSync 静默失败、标记
+// "复活"并反复触发 pnpm 的案例 —— 这里带重试 + 改名兜底，并返回是否
+// 真正删除，调用方据此决定是否放弃任务。
+function removeMarkerFile(file) {
+  try {
+    fs.rmSync(file, { force: true, maxRetries: 5, retryDelay: 200 });
+  } catch { /* 落到改名兜底 */ }
+  if (!fs.existsSync(file)) return true;
+  try {
+    fs.renameSync(file, file + '.stale-' + Date.now());
+  } catch { /* 锁着也无可奈何，交给 attempts 上限 */ }
+  return !fs.existsSync(file);
+}
+
+function pendingMarketMarkers() {
+  const out = [];
+  try {
+    const home = dshHome || path.join(os.homedir(), '.dsh');
+    const profilesRoot = path.join(home, 'profiles');
+    if (!fs.existsSync(profilesRoot)) return out;
+    for (const entry of fs.readdirSync(profilesRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const marker = path.join(profilesRoot, entry.name, MARKER_NAME);
+      if (!fs.existsSync(marker)) continue;
+      try {
+        // 去掉可能的 UTF-8 BOM（外部编辑器写入的标记）再解析。
+        const job = JSON.parse(fs.readFileSync(marker, 'utf8').replace(/^\uFEFF/, ''));
+        if (job && typeof job.target === 'string' && job.target
+          && typeof job.profile === 'string' && /^[A-Za-z0-9_-]+$/.test(job.profile)
+          && (job.kind === 'install' || job.kind === 'uninstall')) {
+          out.push({ marker, job });
+        } else {
+          log('market-pending', '标记字段不完整，已删除: ' + marker);
+          removeMarkerFile(marker);
+        }
+      } catch (err) {
+        log('market-pending', `标记损坏，已删除: ${marker} (${err.message})`);
+        removeMarkerFile(marker);
+      }
+    }
+  } catch (err) {
+    log('market-pending', '扫描排队任务失败: ' + err.message);
+  }
+  return out;
+}
+
+function finishMarketMarker(marker, job, attempts, ok, tail) {
+  if (ok) {
+    log('market-pending', '排队任务完成: ' + (job.label || job.target));
+    if (!removeMarkerFile(marker)) {
+      log('market-pending', '警告: 排队标记删除失败（文件被占用？），已尝试改名兜底');
+    }
+    return;
+  }
+  if (attempts >= MARKER_MAX_ATTEMPTS) {
+    const last = String(tail || '').split(/\r?\n/).filter(Boolean).pop() || '';
+    log('market-pending', `排队任务连续 ${attempts} 次失败，放弃并清除: ${job.label || job.target}${last ? ' — ' + last.slice(0, 200) : ''}`);
+    removeMarkerFile(marker);
+    return;
+  }
+  try { fs.writeFileSync(marker, JSON.stringify({ ...job, attempts }, null, 2)); } catch {}
+  log('market-pending', '排队任务失败（下次启动重试）: ' + (job.label || job.target));
+}
+
+// 必须在"没有任何 dsh web 进程持锁"时调用；调用方负责先等待旧进程退出。
+function processPendingMarketOps() {
+  return new Promise((resolve) => {
+    const items = pendingMarketMarkers();
+    if (items.length === 0) return resolve();
+    const nodeBin = nodeExe();
+    const bin = dshBin();
+    if (!fs.existsSync(nodeBin) || !fs.existsSync(bin)) {
+      log('market-pending', '找不到 node/dsh CLI，跳过排队任务');
+      return resolve();
+    }
+    log('market-pending', `发现 ${items.length} 个排队任务，开始执行（Web 服务启动前，无文件锁）`);
+    let idx = 0;
+    const next = () => {
+      if (idx >= items.length) {
+        // pnpm 可能重新 hoist 出 @deepseek-ai 遮蔽拷贝，装完立刻清理，
+        // 避免模块双实例（Symbol 身份不一致）问题拖到下次启动。
+        healProfileModules();
+        return resolve();
+      }
+      const { marker, job } = items[idx++];
+      const attempts = Number(job.attempts || 0) + 1;
+      const action = job.kind === 'uninstall' ? 'remove' : 'add';
+      log('market-pending', `执行(${attempts}/${MARKER_MAX_ATTEMPTS}): dsh plugin --profile ${job.profile} ${action} ${job.target}`);
+      const child = spawn(nodeBin, [bin, 'plugin', '--profile', job.profile, action, job.target], {
+        cwd: userDataDir,
+        // CI=true 与市场插件 host 侧一致：pnpm v10 无 TTY 时对被忽略的构建
+        // 脚本（如 node-llama-cpp）静默放行，而不是 ERR_PNPM_IGNORED_BUILDS 硬失败。
+        env: { ...childEnv(), CI: 'true' },
+        windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let tail = '';
+      const onData = (c) => {
+        const text = c.toString();
+        tail = (tail + text).slice(-8000);
+        for (const line of text.split(/\r?\n/)) {
+          const s = line.trim();
+          // Progress: \r 进度条不进日志，只保留有信息量的行。
+          if (s && !/^Progress:/.test(s)) log('market-pending', s.slice(0, 300));
+        }
+      };
+      child.stdout.on('data', onData);
+      child.stderr.on('data', onData);
+      const timer = setTimeout(() => {
+        log('market-pending', '排队任务超时（5 分钟），强制终止');
+        try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch {}
+      }, 5 * 60 * 1000);
+      child.on('error', (err) => {
+        clearTimeout(timer);
+        finishMarketMarker(marker, job, attempts, false, String(err.message));
+        next();
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        finishMarketMarker(marker, job, attempts, code === 0, tail);
+        next();
+      });
+    };
+    next();
+  });
+}
+
 function syncCompanionPlugins() {
   if (!IS_WIN) return;
   try {
@@ -968,7 +1154,8 @@ function syncCompanionPlugins() {
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending = [];
     for (const p of COMPANION_PLUGINS) {
-      const src = path.join(__dirname, 'assets', 'plugins', p.name.slice('@deepseek-ai/'.length));
+      // 非 @deepseek-ai 作用域的配套包用显式 dir 指定 assets/plugins 下的目录名。
+      const src = path.join(__dirname, 'assets', 'plugins', p.dir || p.name.slice('@deepseek-ai/'.length));
       if (!fs.existsSync(path.join(src, 'package.json'))) continue;
       copyPluginPackage(profileDirP, src, p.name);
       pending.push({ id: p.id, name: p.name, disabled: false });
@@ -1038,7 +1225,7 @@ function maintainShortcuts() {
     const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
     const settings = updater.loadSettings(updCtx());
     const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-    const APP_TITLE = 'Deepseek Harness EAC v1.0';
+    const APP_TITLE = 'Deepseek Harness EAC v2.0';
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
     const desktop = path.join(app.getPath('desktop'), APP_TITLE + '.lnk');
     const ico = shortcutIconPath();
@@ -1091,7 +1278,7 @@ function warnTempRun() {
       type: 'warning',
       title: '正在从临时目录运行',
       message: '当前便携版位于系统临时目录。',
-      detail: '临时目录中的文件可能被系统自动清理，导致快捷方式失效或程序“消失”。\n建议把 Deepseek Harness EAC v1.0 exe 移动到固定位置（如桌面或 D 盘）后再运行。',
+      detail: '临时目录中的文件可能被系统自动清理，导致快捷方式失效或程序“消失”。\n建议把 Deepseek Harness EAC v2.0 exe 移动到固定位置（如桌面或 D 盘）后再运行。',
       buttons: ['知道了'],
     });
   }
@@ -1131,7 +1318,7 @@ async function runClientUpdateFlow(manual) {
         type: 'info',
         title: '检查客户端更新',
         message: '当前已是最新版本。',
-        detail: `Deepseek Harness EAC v1.0（封装版本 v${APP_VERSION}）\n上游最新：${release.version}（${release.source}）`,
+        detail: `Deepseek Harness EAC v2.0（封装版本 v${APP_VERSION}）\n上游最新：${release.version}（${release.source}）`,
         buttons: ['确定'],
       });
     }
@@ -1344,7 +1531,7 @@ function boot() {
   fs.mkdirSync(logsDir, { recursive: true });
   if (dshHome) fs.mkdirSync(dshHome, { recursive: true });
   desktopLog = fs.createWriteStream(path.join(logsDir, 'desktop.log'), { flags: 'a' });
-  log('boot', `Deepseek Harness EAC v1.0（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
+  log('boot', `Deepseek Harness EAC v2.0（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
   Menu.setApplicationMenu(null);
@@ -1354,7 +1541,17 @@ function boot() {
   syncCompanionPlugins();
   healProfileModules();
   createWindow();
-  startAndShow()
+  // 插件市场排队任务（服务运行中撞文件锁转待重启的安装/卸载）：趁服务
+  // 尚未启动、无文件锁时先完成，再拉起 Web 服务。
+  processPendingMarketOps()
+    .then(() => {
+      // 排队的 pnpm 操作可能刚重写 profile node_modules（删掉配套插件副本、
+      // hoist 核心包形成双实例）—— 服务启动前重建副本并清理遮蔽，
+      // 保证加载的始终是内置分发版本。
+      syncCompanionPlugins();
+      healProfileModules();
+    })
+    .then(() => startAndShow())
     .then(() => {
       // Session-completion notifications: watch dsh session logs under the
       // effective DSH_HOME (same config the CLI uses).

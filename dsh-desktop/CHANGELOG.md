@@ -3,7 +3,38 @@
 DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行时与 dsh CLI，
 一键启动 Web UI。
 版本路径：0.1.0（基础壳）→ 0.2.0（伴侣插件体系 + 自更新 + 会话工具链）→
-1.0.0（本版：品牌升级 EAC + 界面皮肤 + 快速配置 + 插件市场 + 稳定性自愈）。
+1.0.0（品牌升级 EAC + 界面皮肤 + 快速配置 + 插件市场 + 稳定性自愈）→
+2.0.0（本版：社区插件市场 + 视觉/记忆/人设插件全家桶 + 重启窗口期排队任务 + 插件原样分发）。
+
+## [2.0.0] — 2026-08-15
+
+### 新增
+- **社区插件市场**（`dsh-webui-market`，@sanqi-normal）：设置 → 插件 → 市场，
+  浏览 awesome-dsh-plugin.com 收录的 dsh 插件并一键安装/卸载到 profile。
+- **外置视觉模型**（`dsh-tool-vision`，Scorp1o117）：`inspect_image` 工具把本地图片
+  或图片 URL 发给任意 OpenAI 兼容视觉端点（qwen-vl / GLM-4V / Ollama 等），
+  看图回答直接带回对话。
+- **长期记忆**（`dsh-tdai-memory`，Scorp1o117）：腾讯云 Agent Memory 移植 ——
+  L0 对话捕获 → L1 结构化记忆 → L2 场景 / L3 画像，自动召回注入 +
+  记忆/对话搜索工具；复用现有 `~/.memory-tencentdb/memory-tdai` 数据。
+- **soul.md 人设热重载**（`dsh-soul-md`，Scorp1o117）：markdown 人设文件注入
+  系统提示词（`soul:persona`），文件变更即时热重载，Agent 边干活边角色扮演。
+- **移动端布局修复**（`dsh-web-mobile-fix`，AcidGr）：窄屏（≤400px）下设置面板、
+  弹窗、侧栏、会话头布局修复，纯前端 CSS。
+- **NSIS 安装器定制**（`build/installer.nsh`）：安装流程接入自定义脚本。
+
+### 改进
+- **重启窗口期排队任务**：服务重启时先 `killTree` 旧进程并 `waitForProcExit`
+  等待其完全退出（释放文件锁），再处理插件市场排队中的安装/卸载任务、
+  同步配套插件、自愈 profile 模块，最后启动新服务，避免文件占用与半套改状态。
+- **插件原样分发**（`after-pack.js`）：打包后把 `assets/plugins/` 原样拷回应用目录，
+  社区插件自带的 vendor 依赖（sqlite-vec / jieba / AI SDK / BM25 语料等）不再被
+  electron-builder 清掉。
+- 内置插件/皮肤拷贝逻辑支持根目录入口文件、vendor、node_modules、data 目录。
+
+### 说明
+- 安装版数据目录改为 `%APPDATA%\Deepseek Harness EAC v2.0\`；便携版仍跟随 exe。
+- 产物命名 `Deepseek-Harness-EAC-v2.0-Portable/Setup-x64.exe`，自更新链路自动适配。
 
 ## [1.0.0] — 2026-08-15
 

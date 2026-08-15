@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
@@ -52,8 +52,8 @@ On top of the original, EAC embraces the community's creations — skins, plugin
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v1.0-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~150 MB |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v1.0-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~150 MB |
+| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~150 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~150 MB |
 
 More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases).
 
@@ -63,7 +63,7 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 2. If you haven't configured an API Key yet, set it up in the UI to get started (identical to the `dsh` CLI).
 3. Highlights: Settings → Skins (10 built-in skins) / Plugin Marketplace / one-click model picker; conversation area → Terminal / Files tabs.
 
-> Portable data lives next to the exe in `data\`; the installer uses `%APPDATA%\Deepseek Harness EAC v1.0\`.
+> Portable data lives next to the exe in `data\`; the installer uses `%APPDATA%\Deepseek Harness EAC v2.0\`.
 > To override the DSH config directory, set the `DSH_HOME` environment variable before launch (same as the dsh CLI).
 
 ### Upgrading
@@ -117,10 +117,14 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 - **File-change tracking + one-click revert**: a Files tab aggregates every file the agent touched (created/modified/deleted + line-level diffs) with per-file or bulk revert; data is read-only reuse of session logs, stable across upgrades
 - **In-session terminal**: a Terminal tab starts a persistent PowerShell in the session's project dir (SSE streaming, command history, auto-reconnect, clean CJK encoding)
 - **Project file tree + HTML/port preview**: VSCode-style tree, in-app preview of HTML files and localhost ports (loopback only)
-- **Plugin marketplace**: Settings → Plugins — search npm for dsh plugins and install/uninstall them into the web profile with one click
+- **Community plugin marketplace (new in v2, dsh-webui-market)**: Settings → Plugins → Marketplace — browse plugins listed on awesome-dsh-plugin.com and install/uninstall them into the profile with one click; install/uninstall jobs are queued and run during the service restart window so the current session is never interrupted
+- **External vision models (new in v2, dsh-tool-vision)**: the `inspect_image` tool sends local image files or image URLs to any OpenAI-compatible vision endpoint (qwen-vl / GLM-4V / Ollama, ...) and brings the vision answer back into the conversation
+- **Long-term memory (new in v2, dsh-tdai-memory)**: a port of TencentDB Agent Memory — L0 conversation capture → L1 structured memory → L2 scenarios / L3 persona profiles, with automatic recall injection plus memory/conversation search tools; reuses existing `~/.memory-tencentdb/memory-tdai` data
+- **soul.md persona hot-reload (new in v2, dsh-soul-md)**: injects a markdown persona file into the system prompt (`soul:persona`), hot-reloads on file change — the agent roleplays while it works
+- **Mobile layout fixes (new in v2, dsh-web-mobile-fix)**: fixes settings panel, popups, sidebar and session header on narrow (≤400px) screens — pure client-side CSS, desktop layout untouched
 - **Easy setup (dsh-easy-setup)**: one-click vision-model provider/model picker, `soul.md` persona visual editor, one-click migration of skills + MCP + memory from Codex / Claude Code directories
 - **Dual auto-update**: official dsh agent updates (npm overlay) + client-wrapper self-update — both user-consented, automatic rollback on failure
-- **Self-healing**: `profile-module-heal` fixes profile module shadowing issues (e.g. `prompt section already registered`, broken model list / mode switching)
+- **Self-healing**: `profile-module-heal` fixes profile module shadowing issues (e.g. `prompt section already registered`, broken model list / mode switching); service restarts wait for the old process to fully exit (releasing file locks) before starting, and plugins (with their bundled vendor dependencies) ship verbatim inside the installer
 
 ---
 
