@@ -201,15 +201,24 @@ function selectAsset(release) {
   if (direct) return { parts: [direct], name: direct.name, totalSize: direct.size };
 
   // Gitee 单文件 100MB 限制：安装包拆分为 <file>.part1 / <file>.part2 …
-  const base = isPortable()
-    ? `Deepseek-Harness-EAC-${release.version}-Portable-x64.exe`
-    : `Deepseek-Harness-EAC-${release.version}-Setup-x64.exe`;
-  const parts = release.assets
-    .filter((a) => a.name.startsWith(base + '.part'))
-    .sort((a, b) => {
-      const n = (s) => parseInt(s.split('part').pop(), 10) || 0;
-      return n(a.name) - n(b.name);
-    });
+  // v2.0.3 起 artifact 名不再带版本号，两个候选都试（覆盖旧 Release）。
+  const kind = isPortable() ? 'Portable' : 'Setup';
+  const bases = [
+    `Deepseek-Harness-EAC-${kind}-x64.exe`,
+    `Deepseek-Harness-EAC-v${release.version}-${kind}-x64.exe`,
+    `Deepseek-Harness-EAC-${release.version}-${kind}-x64.exe`,
+  ];
+  let base = '';
+  let parts = [];
+  for (const b of bases) {
+    parts = release.assets
+      .filter((a) => a.name.startsWith(b + '.part'))
+      .sort((a, b2) => {
+        const n = (s) => parseInt(s.split('part').pop(), 10) || 0;
+        return n(a.name) - n(b2.name);
+      });
+    if (parts.length) { base = b; break; }
+  }
   if (!parts.length) {
     throw new Error('未找到匹配的安装包资产（' + release.assets.map((a) => a.name).join(', ') + '）');
   }

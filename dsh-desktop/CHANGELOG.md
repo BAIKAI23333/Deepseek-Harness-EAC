@@ -6,6 +6,45 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 1.0.0（品牌升级 EAC + 界面皮肤 + 快速配置 + 插件市场 + 稳定性自愈）→
 2.0.0（本版：社区插件市场 + 视觉/记忆/人设插件全家桶 + 重启窗口期排队任务 + 插件原样分发）。
 
+## [2.0.3] — 2026-08-15
+
+### 修复（issues #1 #3 #4 + README 404）
+- **安装后 dsh web 启动即退（MODULE_NOT_FOUND）**（#4 问题 2 / #3）：productName
+  去掉版本号后缀。此前带版本号的安装目录在升级时被注册表旧 INSTALLDIR 嵌套成
+  `...\Deepseek Harness EAC v1.0\Deepseek Harness EAC v2.0\`，深层 node_modules
+  路径超过 MAX_PATH(260)，NSIS 7z 解压器对超长路径**静默丢文件**（实测丢 42 个，
+  含运行时必需的 `@opentelemetry/resources` machine-id / ServiceInstanceIdDetector），
+  dsh web 一启动即崩。目录不再带版本号后，升级永远原地覆盖，不再嵌套。
+- **GUI 安装器卡「无法关闭现有进程」死循环**（#4 问题 1）：`customInit` 统一
+  kill 新旧全部进程名（含 v1.0 / v2.0 遗留 exe），`customCheckAppRunning` 改为
+  无对话框等待（最多 10s）后继续，不再弹重试 MessageBox。
+- **嵌套安装目录自愈**：`customInit` 检测到 `...\v1.0\...\v2.0` 式嵌套且父目录
+  本身是安装根时自动剥离一层；并同步回写注册表（InstallLocation /
+  UninstallString 指向治愈后的根目录；根目录无可用旧卸载器则清空该值跳过旧版
+  卸载步骤）——否则内置"卸载旧版本"步骤与旧卸载器都会重读注册表、对着嵌套残缺
+  目录操作，触发 `Failed to uninstall old application files ... : 2` 安装失败弹窗。
+- **打包长路径审计 + 裁剪**（`after-pack.js`）：构建时扫描全部产物路径，≥240
+  字符即告警；同时裁剪 x64 包里无用的 `node-pty` win32-arm64 prebuilds 与
+  `@opentelemetry` browser 平台探测器（也是树里最深的目录）。
+- **README 下载链接 404**：安装包产物名去掉版本号（`Deepseek-Harness-EAC-Setup-x64.exe`
+  / `...-Portable-x64.exe`），README（中/英）改用 `releases/latest/download/` 永久
+  链接，发新版不再失效。
+- **安装版数据目录**随 productName 变为 `%APPDATA%\Deepseek Harness EAC\`
+  （旧版为 `...\EAC v2.0\`；DSH 配置/会话在 `DSH_HOME`，不受影响）。
+- 自更新资产选择兼容新旧命名（无版本号优先，回退带版本号 + Gitee 分片）。
+- `desktop.log` 时间戳由 UTC 改为本地时间 + 显式时区偏移（#4 建议 4）。
+
+## [2.0.2] — 2026-08-15
+
+- 自动更新网络层改用 Electron `net`（系统代理 + 系统 CA），修复 MITM 证书失败
+  与直连超时；修复资产名正则与下载校验。内置三套预设组合（Anchored Standard /
+  Router Standard / Minimal Git Bash），预设实现为纯组合目录不进插件树。
+
+## [2.0.1] — 2026-08-15
+
+- 修复 v2.0.0 预装 `dsh-soul-md` 缺少必填 `config.path` 导致插件树加载失败、
+  `dsh web 启动失败（退出码 1）`：默认补 `soul.md` 并在启动时自动补全缺失配置行。
+
 ## [2.0.0] — 2026-08-15
 
 ### 新增

@@ -52,8 +52,8 @@
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0.1-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~167 MB |
-| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0.1-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~167 MB |
+| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~167 MB |
+| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~167 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
@@ -65,7 +65,7 @@
 2. 如尚未配置 API Key，在界面「设置」内完成配置即可开始使用（与命令行 dsh 完全一致）。
 3. 常用入口：设置 → 皮肤（10 款内置皮肤切换）/ 插件市场 / 模型一键选择；对话区 → 终端 / 文件标签页。
 
-> 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC v2.0\`。
+> 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC\`。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
 ### 升级部署

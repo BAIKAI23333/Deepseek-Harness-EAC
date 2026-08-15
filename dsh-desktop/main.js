@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // DSH Desktop — Electron shell around the DeepSeek Harness browser UI.
 //
@@ -103,7 +103,15 @@ let restartingServer = false;
 // ---------------------------------------------------------------------------
 
 function log(tag, msg) {
-  const line = `[${new Date().toISOString()}] [${tag}] ${msg}\n`;
+  // 本地时间 + 显式时区偏移：此前用 toISOString()（UTC），本地排查时易误判（issue #4）。
+  const d = new Date();
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? '+' : '-';
+  const p = (n, w = 2) => String(n).padStart(w, '0');
+  const ts = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}` +
+    ` UTC${sign}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
+  const line = `[${ts}] [${tag}] ${msg}\n`;
   try { if (desktopLog) desktopLog.write(line); } catch {}
   if (process.env.DSH_DESKTOP_DEBUG) process.stdout.write(line);
 }
@@ -346,7 +354,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: 'Deepseek Harness EAC v2.0',
+    title: 'Deepseek Harness EAC',
     backgroundColor: '#0b1220',
     icon: path.join(__dirname, 'assets', 'icon.png'),
     // 风格化无边框窗口：去掉原生标题栏/菜单栏，自绘玻璃栏 + Win11 原生圆角。
@@ -365,7 +373,7 @@ function createWindow() {
   // Keep the app brand in the OS title bar (the web UI sets its own <title>).
   mainWindow.on('page-title-updated', (event) => {
     event.preventDefault();
-    mainWindow.setTitle('Deepseek Harness EAC v2.0');
+    mainWindow.setTitle('Deepseek Harness EAC');
   });
 
   // Open target=_blank / window.open in the system browser.
@@ -639,8 +647,8 @@ async function showAbout() {
   const urls = repoUrls();
   const { response } = await showBox({
     type: 'info',
-    title: '关于 Deepseek Harness EAC v2.0',
-    message: 'Deepseek Harness EAC v2.0（封装版本 ' + APP_VERSION + '）',
+    title: '关于 Deepseek Harness EAC',
+    message: 'Deepseek Harness EAC（封装版本 ' + APP_VERSION + '）',
     detail: 'DeepSeek Harness 桌面客户端\n\nagent 版本：' + dshVersion() + '（' + dshVersionSource() + '）\n数据目录：' + userDataDir + '\nDSH_HOME：' + (dshHome || '（dsh 默认）') +
       '\n\n项目仓库：\n  GitHub: ' + urls.github + '\n  Gitee:  ' + urls.gitee,
     buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
@@ -841,7 +849,7 @@ function trayHintOnce() {
   trayHintShown = true;
   try {
     tray.displayBalloon({
-      title: 'Deepseek Harness EAC v2.0 仍在运行',
+      title: 'Deepseek Harness EAC 仍在运行',
       content: '窗口已隐藏到系统托盘，点击托盘图标可重新打开。',
       iconType: 'info',
     });
@@ -861,9 +869,9 @@ function createTray() {
     const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
     if (!fs.existsSync(iconPath)) return;
     tray = new Tray(iconPath);
-    tray.setToolTip('Deepseek Harness EAC v2.0');
+    tray.setToolTip('Deepseek Harness EAC');
     const menu = Menu.buildFromTemplate([
-      { label: '显示 Deepseek Harness EAC v2.0', click: () => showMainWindow() },
+      { label: '显示 Deepseek Harness EAC', click: () => showMainWindow() },
       { type: 'separator' },
       { label: '检查 dsh 更新…', click: () => { showMainWindow(); runUpdateFlow(true); } },
       { label: '检查客户端更新…', click: () => { showMainWindow(); runClientUpdateFlow(true); } },
@@ -1272,7 +1280,7 @@ function maintainShortcuts() {
     const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
     const settings = updater.loadSettings(updCtx());
     const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-    const APP_TITLE = 'Deepseek Harness EAC v2.0';
+    const APP_TITLE = 'Deepseek Harness EAC';
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
     const desktop = path.join(app.getPath('desktop'), APP_TITLE + '.lnk');
     const ico = shortcutIconPath();
@@ -1325,7 +1333,7 @@ function warnTempRun() {
       type: 'warning',
       title: '正在从临时目录运行',
       message: '当前便携版位于系统临时目录。',
-      detail: '临时目录中的文件可能被系统自动清理，导致快捷方式失效或程序“消失”。\n建议把 Deepseek Harness EAC v2.0 exe 移动到固定位置（如桌面或 D 盘）后再运行。',
+      detail: '临时目录中的文件可能被系统自动清理，导致快捷方式失效或程序“消失”。\n建议把 Deepseek Harness EAC exe 移动到固定位置（如桌面或 D 盘）后再运行。',
       buttons: ['知道了'],
     });
   }
@@ -1365,7 +1373,7 @@ async function runClientUpdateFlow(manual) {
         type: 'info',
         title: '检查客户端更新',
         message: '当前已是最新版本。',
-        detail: `Deepseek Harness EAC v2.0（封装版本 v${APP_VERSION}）\n上游最新：${release.version}（${release.source}）`,
+        detail: `Deepseek Harness EAC（封装版本 v${APP_VERSION}）\n上游最新：${release.version}（${release.source}）`,
         buttons: ['确定'],
       });
     }
@@ -1578,7 +1586,7 @@ function boot() {
   fs.mkdirSync(logsDir, { recursive: true });
   if (dshHome) fs.mkdirSync(dshHome, { recursive: true });
   desktopLog = fs.createWriteStream(path.join(logsDir, 'desktop.log'), { flags: 'a' });
-  log('boot', `Deepseek Harness EAC v2.0（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
+  log('boot', `Deepseek Harness EAC（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
   // 移除原生菜单栏（文件/视图/帮助），全部功能由自绘 chrome 与托盘提供。
   Menu.setApplicationMenu(null);

@@ -52,8 +52,8 @@ On top of the original, EAC embraces the community's creations — skins, plugin
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0.1-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~167 MB |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0.1-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~167 MB |
+| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~167 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~167 MB |
 
 More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases).
 
@@ -65,7 +65,7 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 2. If you haven't configured an API Key yet, set it up in the UI to get started (identical to the `dsh` CLI).
 3. Highlights: Settings → Skins (10 built-in skins) / Plugin Marketplace / one-click model picker; conversation area → Terminal / Files tabs.
 
-> Portable data lives next to the exe in `data\`; the installer uses `%APPDATA%\Deepseek Harness EAC v2.0\`.
+> Portable data lives next to the exe in `data\`; the installer uses `%APPDATA%\Deepseek Harness EAC\`.
 > To override the DSH config directory, set the `DSH_HOME` environment variable before launch (same as the dsh CLI).
 
 ### Upgrading

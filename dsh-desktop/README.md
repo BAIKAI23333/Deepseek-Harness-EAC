@@ -1,4 +1,4 @@
-﻿# Deepseek Harness EAC（揽尽万象 · Embracing All Creation）
+# Deepseek Harness EAC（揽尽万象 · Embracing All Creation）
 
 把 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（DeepSeek Harness）封装成开箱即用的 Windows 桌面客户端。
 
@@ -22,15 +22,15 @@
 
 ## 快速开始（成品用户）
 
-1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，选其一：
-   - `Deepseek-Harness-EAC-v2.0.1-Portable-x64.exe` —— 免安装便携版，双击运行
-   - `Deepseek-Harness-EAC-v2.0.1-Setup-x64.exe` —— 安装版，创建桌面/开始菜单快捷方式
+1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，选其一（链接永久有效，始终指向最新版）：
+   - [Deepseek-Harness-EAC-Portable-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-x64.exe) —— 免安装便携版，双击运行
+   - [Deepseek-Harness-EAC-Setup-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-x64.exe) —— 安装版，创建桌面/开始菜单快捷方式
 2. 首次运行会显示启动动画，随后进入 DeepSeek Harness Web UI。
 3. 如尚未配置 API Key，在界面内完成配置即可开始使用（与命令行 dsh 完全一致）。
 
 > ⚠️ **务必安装到纯英文路径**（如默认的 `C:\Users\<你>\AppData\Local\Programs\`）：中文路径（如 `D:\迅雷下载\`）会触发 Chromium 渲染进程原生崩溃，窗口弹出数秒后自动退出。
 >
-> 便携版的数据目录是 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC v2.0\`。
+> 便携版的数据目录是 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC\`。
 > 若想强制指定 DSH 配置目录，启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
 ## 跟随官方更新（用户同意后自动更新）
@@ -48,7 +48,7 @@
 - 发现新版本时弹窗询问：**立即更新 / 跳过此版本 / 稍后**；同意后带进度条下载安装包（便携版选 `*-portable-x64.exe`，安装版选 `Setup-*-x64.exe`；Gitee 因单文件 100MB 限制拆分的 `.part1/.part2` 分片会自动按序下载并合并），下载到 `<数据目录>\updates\`。
 - 确认重启后：**便携版**用 detached 脚本等待旧 exe 解锁 → 备份 → 原地替换 → 自动启动新版本（只读目录自动退化为直接启动新 exe）；**安装版**等待进程退出后以向导方式启动新安装包。失败自动保留当前版本，下次启动继续提示待安装更新。
 - 菜单入口：chrome 栏 ⋯ 菜单 →「检查客户端更新…」；托盘菜单同样可用。跳过版本记录在 `settings.json`（`skipClientVersion`）。
-- **更新源可见可复制**：⋯ 菜单内「更新源」区块与「关于 Deepseek Harness EAC v1.0」对话框展示项目仓库地址（GitHub），一键复制到剪贴板。
+- **更新源可见可复制**：⋯ 菜单内「更新源」区块与「关于 Deepseek Harness EAC」对话框展示项目仓库地址（GitHub），一键复制到剪贴板。
 - 链路自检：`node scripts/check-client-latest.js [--download]`（可设 `DSH_DESKTOP_RELEASE_API` / `PORTABLE_EXECUTABLE_DIR`）。
 
 ## DeepSeek 余额小部件
@@ -186,7 +186,7 @@ npm run dist                   # 构建 portable + NSIS 安装包，输出到 di
 - `dsh-web.log`：dsh web 的完整 stdout/stderr
 - `update.log`：官方更新的 npm 安装日志
 
-位置：便携版 `data\logs\`；安装版 `%APPDATA%\Deepseek Harness EAC v2.0\logs\`。
+位置：便携版 `data\logs\`；安装版 `%APPDATA%\Deepseek Harness EAC\logs\`。
 菜单「视图 → 打开日志目录」可直接打开。
 
 常见问题：
@@ -194,7 +194,7 @@ npm run dist                   # 构建 portable + NSIS 安装包，输出到 di
 - **Windows 提示"已保护你的电脑"（SmartScreen）**：成品未做代码签名。点「更多信息 → 仍要运行」，或在 PowerShell 里 `Unblock-File`。
 - **首次启动慢**：dsh 首次引导 profile 需要数秒到数十秒，属正常现象。
 - **更新下载慢**：设置环境变量 `NPM_CONFIG_REGISTRY=https://registry.npmmirror.com` 后重启应用。
-- **收不到通知**：确认菜单「会话完成通知」已勾选；便携版确认开始菜单里存在「Deepseek Harness EAC v1.0」快捷方式（首次运行自动创建，勿删除）；检查 Windows「通知与操作」设置里应用通知未被禁用。
+- **收不到通知**：确认菜单「会话完成通知」已勾选；便携版确认开始菜单里存在「Deepseek Harness EAC」快捷方式（首次运行自动创建，勿删除）；检查 Windows「通知与操作」设置里应用通知未被禁用。
 - **端口被占**：应用自动使用空闲端口，无需手动处理。
 
 ## 目录结构
