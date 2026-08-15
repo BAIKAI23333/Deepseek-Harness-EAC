@@ -17,16 +17,20 @@
 - ✅ **文件更改追踪 + 一键还原**：详情面板新增「文件」标签页，聚合本会话 agent 修改过的全部文件（新建/修改/删除、行级 diff、逐文件或全部还原）；数据只读复用会话日志已持久化的 `tool/result.meta.diffs`，还原由桌面壳做内容精确匹配后替换，失败安全提示
 - ✅ **会话完成系统通知**：agent 任务跑完时弹 Windows 系统通知，点击回到窗口
 - ✅ **界面皮肤**：设置页「皮肤」标签页内置 10 款 Web UI 皮肤（9 款 dsh-web-ui 皮肤 + 1 款深海女仆工坊），互斥切换、默认不启用、重启生效；随包标注出处与许可（详见「界面皮肤」章节）
+- ✅ **内置社区插件套件**（v2.0 新增，详见「内置社区插件」章节）：插件市场 / 外置视觉模型 / 长期记忆 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
+- ✅ **一键迁移（一键夺舍）**：设置页选择任意已有 AI 工具目录（如 Codex / Claude 安装目录）→ 自动新建工作区与对话 → 发送迁移指令，AI 在对话中全程可视化提取 skills / MCP 配置 / 长期记忆
 
 ## 快速开始（成品用户）
 
-1. 打开 `dist` 目录，选其一：
-   - `Deepseek-Harness-EAC-v1.0-Portable-x64.exe` —— 免安装便携版，双击运行
-   - `Deepseek-Harness-EAC-v1.0-Setup-x64.exe` —— 安装版，创建桌面/开始菜单快捷方式
+1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，选其一：
+   - `Deepseek-Harness-EAC-v2.0-Portable-x64.exe` —— 免安装便携版，双击运行
+   - `Deepseek-Harness-EAC-v2.0-Setup-x64.exe` —— 安装版，创建桌面/开始菜单快捷方式
 2. 首次运行会显示启动动画，随后进入 DeepSeek Harness Web UI。
 3. 如尚未配置 API Key，在界面内完成配置即可开始使用（与命令行 dsh 完全一致）。
 
-> 便携版的数据目录是 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC v1.0\`。
+> ⚠️ **务必安装到纯英文路径**（如默认的 `C:\Users\<你>\AppData\Local\Programs\`）：中文路径（如 `D:\迅雷下载\`）会触发 Chromium 渲染进程原生崩溃，窗口弹出数秒后自动退出。
+>
+> 便携版的数据目录是 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC v2.0\`。
 > 若想强制指定 DSH 配置目录，启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
 ## 跟随官方更新（用户同意后自动更新）
@@ -112,7 +116,24 @@
 
 - 皮肤来源与版权：dsh-web-ui 九款皮肤包随包分发 `LICENSE`（BSD-3-Clause，出处/作者字段见皮肤卡片与包内元数据）；maid-atelier 为衍生创作（角色原作：上善；DeepSeek 元素二次设计：ZipZipPipe；本皮肤：Small-tailqwq），完整署名链见包内 `NOTICE`，整体仅限非商业使用。各皮肤包的 `LICENSE`/`NOTICE`/`README` 随同步一并分发到 web profile 的 `node_modules` 中。
 
+## 内置社区插件（v2.0）
 
+以下社区插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；`pnpm` 安装第三方插件后导致模块双实例时，启动时的 heal 流程会自动清理遮蔽包并重建副本。
+
+| 插件 | 功能 | 设置入口 |
+| --- | --- | --- |
+| `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测） | 设置 → 插件 → 插件市场 |
+| `dsh-tool-vision` | 外置视觉模型：`inspect_image` 把本地图片/URL 发给任意 OpenAI 兼容视觉端点（GLM-4V / qwen-vl / Ollama…），主模型保持不变 | 设置 → 视觉模型 |
+| `dsh-tdai-memory` | 长期记忆（腾讯云 Agent Memory 移植）：L0 对话 → L1 结构化事实 → L2 场景 → L3 画像，自动召回注入 + 记忆/对话搜索工具，数据存于 `~/.memory-tencentdb/memory-tdai` | 设置 → 长期记忆 |
+| `dsh-soul-md` | soul.md 人设卡：可视化编辑人设，热重载即时生效；未配置时注册空 section，**完全不影响官方系统提示词** | 设置 → 人设卡 |
+| `dsh-web-mobile-fix` | Web UI 移动端适配修复 | 随包自动启用 |
+| `dsh-easy-setup` | 一键迁移（一键夺舍）：选择目录 → 新建工作区与对话 → AI 全程可视化迁移 skills / MCP / 记忆 | 设置 → 一键迁移 |
+
+> **Windows 文件锁排队**：运行中的 Web 服务加载着原生模块（sqlite-vec 等 DLL）时，插件安装/卸载会遇到 `EPERM` 文件锁 —— 任务会自动排队（`.dsh-market-pending.json`），下次服务重启前（无锁窗口）自动完成，市场界面提供「立即重启并完成」按钮。
+>
+> **NSIS 升级修复**：安装器在卸载旧版前自动结束新旧进程，修复了旧版 "Failed to uninstall old application files: 2"（应用运行中导致文件被锁）。
+
+## 从源码构建
 
 要求：Windows + Node.js（仅构建机需要）+ npm。
 
@@ -165,7 +186,7 @@ npm run dist                   # 构建 portable + NSIS 安装包，输出到 di
 - `dsh-web.log`：dsh web 的完整 stdout/stderr
 - `update.log`：官方更新的 npm 安装日志
 
-位置：便携版 `data\logs\`；安装版 `%APPDATA%\Deepseek Harness EAC v1.0\logs\`。
+位置：便携版 `data\logs\`；安装版 `%APPDATA%\Deepseek Harness EAC v2.0\logs\`。
 菜单「视图 → 打开日志目录」可直接打开。
 
 常见问题：
@@ -187,8 +208,11 @@ dsh-desktop/
 ├── session-watcher.js    # 会话完成监听（zstd 多帧解码 + turn/end 检测）
 ├── preload.js            # 沙箱预加载（自绘玻璃标题栏 + 窗口控制/菜单 IPC + 余额事件桥）
 ├── assets/               # 加载页、更新进度页、图标、托盘图标、配套 dsh 插件
-│   └── plugins/          # dsh-balance、dsh-file-changes、dsh-terminal、dsh-easy-setup、
-│                         # dsh-skin-switch、dsh-plugin-marketplace … 自动同步进 web profile
+│   └── plugins/          # 桌面壳配套（dsh-balance、dsh-file-changes、dsh-terminal、
+│                         # dsh-easy-setup、dsh-skin-switch）+ 内置社区插件
+│                         # （dsh-webui-market、dsh-tool-vision、dsh-tdai-memory、
+│                         # dsh-soul-md、dsh-web-mobile-fix，含 vendor 与自包含依赖）
+│                         # 全部自动同步进 web profile
 ├── scripts/
 │   ├── fetch-node.js     # 内置 node.exe 复制脚本
 │   ├── fetch-npm.js      # 内置 npm CLI 复制脚本

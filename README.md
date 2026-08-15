@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
@@ -52,10 +52,12 @@
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~150 MB |
-| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~150 MB |
+| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Portable-x64.exe) | 免安装，双击即用，可放 U 盘 | ~167 MB |
+| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Setup-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~167 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
+
+> ⚠️ **务必安装/放置到纯英文路径**（默认 `C:\Users\<你>\AppData\Local\Programs\` 即可）：中文路径（如 `D:\迅雷下载\`）会触发 Chromium 渲染进程原生崩溃，窗口弹出数十秒后自动退出。
 
 **首次使用**：
 
@@ -70,7 +72,7 @@
 
 - **客户端本体**：启动后自动检查上游新版本（GitHub Releases 双源回退），经你同意后下载安装；便携版原地替换自动重启，安装版引导新安装包。失败自动保留当前版本。
 - **官方 agent（dsh）**：自动检测 `@deepseek-ai/dsh` 新版本，同意后安装到数据目录 overlay，原子切换，新版启动失败可一键回退内置版本。
-- 也可直接下载上方最新安装包覆盖安装，数据不会丢失。
+- 也可直接下载上方最新安装包覆盖安装，数据不会丢失；v2.0 起安装器在卸载旧版前自动结束运行中的新旧进程，覆盖安装不再报 "Failed to uninstall old application files"。
 
 ---
 
@@ -184,8 +186,11 @@ dsh-desktop/                  # Electron 桌面端
 ├── preload.js                # 沙箱预加载
 ├── assets/                   # 加载页、更新进度页、图标、皮肤、配套插件
 │   ├── skins/                # 10 款内置 Web UI 皮肤
-│   └── plugins/              # dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch / dsh-plugin-marketplace …
+│   └── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
+│                             # / dsh-easy-setup / dsh-skin-switch
+│                             # 内置社区插件：dsh-webui-market / dsh-tool-vision
+│                             # / dsh-tdai-memory / dsh-soul-md / dsh-web-mobile-fix
+│                             # （含 vendor 与自包含运行时依赖，随仓库分发）
 ├── scripts/                  # 构建与开发辅助脚本
 ├── build/icon.png            # electron-builder 图标
 ├── vendor/                   # 内置 node.exe / npm CLI（不入库）

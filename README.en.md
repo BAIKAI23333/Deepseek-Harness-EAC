@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 <p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
@@ -52,10 +52,12 @@ On top of the original, EAC embraces the community's creations — skins, plugin
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~150 MB |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~150 MB |
+| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Portable-x64.exe) | No install needed, double-click to run, USB-friendly | ~167 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-v2.0-Setup-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~167 MB |
 
 More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases).
+
+> ⚠️ **Install to an ASCII-only path** (the default `C:\Users\<you>\AppData\Local\Programs\` is fine): non-ASCII paths (e.g. `D:\迅雷下载\`) trigger a native Chromium renderer crash — the window quits by itself within a minute.
 
 **First run**:
 
@@ -70,7 +72,7 @@ More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Ha
 
 - **Client**: checks the upstream repo (GitHub Releases with fallback) after launch; once you agree it downloads and installs — the portable build replaces itself in place and restarts, the setup build launches the new installer. On failure the current version is kept.
 - **Official agent (dsh)**: new versions of `@deepseek-ai/dsh` are detected and installed into a data-dir overlay (atomic switch; one-click rollback to the bundled version if the new one fails to start).
-- You can also just download the latest installer above and run it — data is preserved.
+- You can also just download the latest installer above and run it — data is preserved; since v2.0 the installer kills running old/new instances before uninstalling, so "Failed to uninstall old application files" no longer occurs.
 
 ---
 
