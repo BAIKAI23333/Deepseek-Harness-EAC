@@ -19,6 +19,7 @@
 //        （安装器会记录原安装目录并在完成后自动启动新版本）。
 
 const https = require('node:https');
+const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -111,7 +112,9 @@ function getResponse(url, { headers = {}, timeoutMs = 20000, redirects = 0 } = {
     });
   }
   return new Promise((resolve, reject) => {
-    const req = https.get(url, { headers: { 'User-Agent': 'DSH-Desktop', ...headers } }, (res) => {
+    // 自定义镜像（DSH_DESKTOP_RELEASE_API）与单测允许 http:// 端点
+    const lib = url.startsWith('http:') ? http : https;
+    const req = lib.get(url, { headers: { 'User-Agent': 'DSH-Desktop', ...headers } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
         getResponse(new URL(res.headers.location, url).toString(), { headers, timeoutMs, redirects: redirects + 1 }).then(resolve, reject);
@@ -225,19 +228,15 @@ function selectAsset(release) {
   return { parts, name: base, totalSize: parts.reduce((s, p) => s + p.size, 0) };
 }
 
-function downloadFile(url, dest, { onProgress } = {}) {
+/** 单次下载尝试。resumeFrom > 0 时发 Range 续传请求并以追加模式写入；
+ *  失败时保留 .part 供下一次断点续传（不删）。 */
+function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
   return new Promise((resolve, reject) => {
     const tmp = dest + '.part';
-    const file = fs.createWriteStream(tmp);
-    let received = 0;
+    let received = resumeFrom;
     let settled = false;
     let idleTimer = null;
     const finish = (fn, value) => { if (!settled) { settled = true; if (idleTimer) clearTimeout(idleTimer); fn(value); } };
-    const fail = (err) => {
-      file.close(() => {});
-      try { fs.rmSync(tmp, { force: true }); } catch {}
-      finish(reject, err);
-    };
     // 空闲超时：60 秒没有任何数据到达才判死（167MB 的安装包在慢链路上
     // 要传十几分钟，不能设整体超时）。每个数据块重置计时。
     const bumpIdle = (stream) => {
@@ -246,12 +245,39 @@ function downloadFile(url, dest, { onProgress } = {}) {
         try { stream.destroy(new Error('下载超时')); } catch { /* already destroyed */ }
       }, 60000);
     };
-    getResponse(url, { timeoutMs: 60000 }).then(({ status, headers, stream }) => {
-      if (status !== 200) {
+    const reqHeaders = resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : {};
+    getResponse(url, { timeoutMs: 60000, headers: reqHeaders }).then(({ status, headers, stream }) => {
+      if (settled) { stream.resume(); return; }
+      if (status === 416) {
+        // .part 比远端文件还长（上轮损坏/上游换了文件）：作废重来
         stream.resume();
-        return fail(new Error('下载失败 HTTP ' + status));
+        try { fs.rmSync(tmp, { force: true }); } catch {}
+        return finish(reject, new Error('RESUME_INVALID'));
       }
-      const total = Number(headerValue(headers, 'content-length') || 0);
+      const partial = status === 206;
+      if (status !== 200 && !partial) {
+        stream.resume();
+        return finish(reject, new Error('下载失败 HTTP ' + status));
+      }
+      if (partial) {
+        const cr = String(headerValue(headers, 'content-range') || '');
+        const m = /^bytes (\d+)-/i.exec(cr);
+        if (m && Number(m[1]) !== resumeFrom) {
+          stream.resume();
+          return finish(reject, new Error('RESUME_INVALID'));
+        }
+      }
+      // 服务器忽略 Range 回 200 全量时必须覆盖写（追加会把旧半截拼在前面）
+      const append = partial && resumeFrom > 0;
+      if (!append) received = 0;
+      const file = fs.createWriteStream(tmp, { flags: append ? 'a' : 'w' });
+      const fail = (err) => {
+        file.close(() => {});
+        // 保留 .part：下一次重试从已落盘字节续传
+        finish(reject, err);
+      };
+      const declared = Number(headerValue(headers, 'content-length') || 0);
+      const total = append ? (declared ? resumeFrom + declared : 0) : declared;
       bumpIdle(stream);
       stream.on('data', (c) => {
         received += c.length;
@@ -260,15 +286,41 @@ function downloadFile(url, dest, { onProgress } = {}) {
       });
       stream.on('aborted', () => fail(new Error('连接中断')));
       stream.on('error', fail);
+      file.on('finish', () => {
+        if (settled) return;
+        try { fs.renameSync(tmp, dest); } catch (err) { return finish(reject, err); }
+        finish(resolve, { path: dest, size: received });
+      });
+      file.on('error', fail);
       stream.pipe(file);
-    }, fail);
-    file.on('finish', () => {
-      if (settled) return;
-      try { fs.renameSync(tmp, dest); } catch (err) { return finish(reject, err); }
-      finish(resolve, { path: dest, size: received });
-    });
-    file.on('error', fail);
+    }, finish.bind(null, reject));
   });
+}
+
+/** 带断点续传 + 指数退避重试的下载。慢链路上 167MB 直连常被 RST
+ *  （net::ERR_CONNECTION_RESET），一锤子流下载必然偶发失败；每次重试
+ *  从已落盘的 .part 断点继续，而不是整包重来。 */
+async function downloadFile(url, dest, { onProgress, ctx = null, maxAttempts = 10 } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let resumeFrom = 0;
+    try { resumeFrom = fs.statSync(dest + '.part').size; } catch { /* 无残留，全新下载 */ }
+    if (attempt > 1 || resumeFrom > 0) {
+      ctx?.log?.('client-update', `下载尝试 ${attempt}/${maxAttempts}（从 ${Math.round(resumeFrom / 1048576)} MB 处续传）`);
+    }
+    try {
+      return await downloadFileOnce(url, dest, { onProgress, resumeFrom });
+    } catch (err) {
+      lastErr = err;
+      if (err.message === 'RESUME_INVALID') continue; // .part 已作废，立即全新重试
+      if (attempt < maxAttempts) {
+        const delay = Math.min(3000 * 2 ** (attempt - 1), 30000);
+        ctx?.log?.('client-update', `下载中断（${err.message}），${Math.round(delay / 1000)}s 后从断点重试`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr || new Error('下载失败');
 }
 
 async function concatFiles(sources, dest) {
@@ -301,6 +353,7 @@ async function downloadRelease(ctx, release, { onProgress } = {}) {
     ctx.log('client-update', `下载 ${p.name}（${Math.round(p.size / 1048576)} MB）`);
     const dest = split ? finalPath + '.part' + (i + 1) : finalPath;
     const res = await downloadFile(p.url, dest, {
+      ctx,
       onProgress: (r) => {
         if (onProgress) onProgress(split ? merged + r : r, sel.totalSize);
       },
@@ -389,4 +442,4 @@ function applyUpdate(ctx, pending) {
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadRelease, applyUpdate, isPortable, resolveRepos, DEFAULT_REPOS };
+module.exports = { checkLatest, selectAsset, downloadFile, downloadRelease, applyUpdate, isPortable, resolveRepos, DEFAULT_REPOS };
