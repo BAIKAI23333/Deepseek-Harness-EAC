@@ -26,6 +26,7 @@ const clientUpdater = require('./client-updater');
 const balance = require('./balance');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
 const { configLinesFor, healSoulMdPatchRow, removeBundledRowDuplicates } = require('./patch-row-heal');
+const { syncBundledPresets, ensureDefaultAgentPreset } = require('./preset-sync');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
 const zlib = require('node:zlib');
 
@@ -1156,6 +1157,21 @@ function syncCompanionPlugins() {
   try {
     const home = dshHome || path.join(os.homedir(), '.dsh');
     const profileDirP = path.join(home, 'profiles', 'web');
+    // 内置社区 agent preset（anchored-standard：首请求锚定 Minimal 工具对，
+    // 首次工具调用/回复后开放完整 Standard 目录）：安装到用户 preset 根。
+    // preset 不进插件树，坏 preset 不会拖垮启动；已存在则跳过（用户手装
+    // 或改过的版本优先），见 preset-sync.js。
+    const presetsSynced = syncBundledPresets(
+      path.join(__dirname, 'assets', 'agent-presets'),
+      path.join(home, '.agent-presets'),
+      (m) => log('boot', m)
+    );
+    if (presetsSynced.installed.length) log('boot', '已安装内置 agent preset: ' + presetsSynced.installed.join(', '));
+    // 默认 preset 指到内置的 anchored-standard（用户已在 settings.yaml 写过
+    // default 则一律保留）。失败只降级为官方默认 preset，不影响启动。
+    const defaultResult = ensureDefaultAgentPreset(home, 'anchored-standard', (m) => log('boot', m));
+    if (defaultResult === 'set') log('boot', '已设置默认 agent preset: anchored-standard');
+    else if (defaultResult === 'kept') log('boot', '用户已设置默认 agent preset，保持不变');
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending = [];
     for (const p of COMPANION_PLUGINS) {

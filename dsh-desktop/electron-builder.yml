@@ -23,6 +23,7 @@ files:
   - session-watcher.js
   - profile-module-heal.js
   - patch-row-heal.js
+  - preset-sync.js
   - preload.js
   - assets/**/*
   - package.json
@@ -45,10 +46,10 @@ win:
         - x64
 
 portable:
-  artifactName: Deepseek-Harness-EAC-v2.0.1-Portable-${arch}.${ext}
+  artifactName: Deepseek-Harness-EAC-v${version}-Portable-${arch}.${ext}
 
 nsis:
-  artifactName: Deepseek-Harness-EAC-v2.0.1-Setup-${arch}.${ext}
+  artifactName: Deepseek-Harness-EAC-v${version}-Setup-${arch}.${ext}
   include: build/installer.nsh
   oneClick: false
   perMachine: false

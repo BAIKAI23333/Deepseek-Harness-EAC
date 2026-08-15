@@ -24,6 +24,26 @@ const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { compareVersions } = require('./updater');
 
+// Electron 主进程下优先用 net 模块（Chromium 网络栈）发请求：走系统代理
+// 与系统 CA 信任库。用户网络里 Node https 常见的两类硬伤它都能正确处理：
+//   ① 企业/网关 MITM 证书不在 Node 内置 Mozilla CA 列表 —— 报
+//      "unable to verify the first certificate"，检查更新直接失败；
+//   ② 系统代理（如 127.0.0.1:7890）Node https 根本不读，直连 GitHub
+//      超时。纯 Node 环境（单测）下 electron 不可用，自动回落 node https。
+let electronNet = null;
+try {
+  const electron = require('electron');
+  if (electron && typeof electron.net === 'object' && typeof electron.net.request === 'function') {
+    electronNet = electron.net;
+  }
+} catch { /* plain node (tests): fall back to node https */ }
+
+/** 统一取响应头字段（net 与 http 的 header 值类型不一致，可能是数组）。 */
+function headerValue(headers, name) {
+  const v = headers && headers[name];
+  return Array.isArray(v) ? v[0] : v;
+}
+
 const DEFAULT_REPOS = { github: 'zouyuxuan122/Deepseek-Harness-EAC', gitee: 'zouyuxuan122/Deepseek-Harness-EAC' };
 const REPO_SLUG = /^[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_.-]{1,64}$/;
 const MIN_VALID_BYTES = 64 * 1024 * 1024; // 完整安装包远大于 64MB，防止把错误页当 exe
@@ -57,31 +77,71 @@ function apiEndpoints() {
 
 // --- HTTP ----------------------------------------------------------------
 
-function httpGetJson(url, headers = {}, timeoutMs = 20000, redirects = 0) {
+/**
+ * 统一的"取响应"原语：resolve { status, headers, stream }。
+ * electron.net 路径自动跟随重定向（含跨域）、自动走系统代理与系统 CA；
+ * node https 回退路径手动跟随重定向（≤5 次）。timeoutMs 只约束到响应头
+ * 到达（TTFB），响应体由调用方各自控制。
+ */
+function getResponse(url, { headers = {}, timeoutMs = 20000, redirects = 0 } = {}) {
+  if (redirects > 5) return Promise.reject(new Error('重定向次数过多'));
+  if (electronNet) {
+    return new Promise((resolve, reject) => {
+      let req;
+      try {
+        req = electronNet.request({ url, redirect: 'follow' });
+      } catch (err) {
+        return reject(err);
+      }
+      for (const [k, v] of Object.entries({ 'User-Agent': 'DSH-Desktop', ...headers })) {
+        try { req.setHeader(k, v); } catch { /* 无效头名等，忽略 */ }
+      }
+      const timer = setTimeout(() => {
+        try { req.destroy(new Error('请求超时')); } catch { /* already destroyed */ }
+      }, timeoutMs);
+      req.on('response', (res) => {
+        clearTimeout(timer);
+        resolve({ status: res.statusCode, headers: res.headers, stream: res });
+      });
+      req.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      });
+      req.end();
+    });
+  }
   return new Promise((resolve, reject) => {
-    if (redirects > 5) return reject(new Error('重定向次数过多'));
     const req = https.get(url, { headers: { 'User-Agent': 'DSH-Desktop', ...headers } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume();
-        return httpGetJson(new URL(res.headers.location, url).toString(), headers, timeoutMs, redirects + 1).then(resolve, reject);
+        getResponse(new URL(res.headers.location, url).toString(), { headers, timeoutMs, redirects: redirects + 1 }).then(resolve, reject);
+        return;
       }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error('HTTP ' + res.statusCode));
-      }
-      let body = '';
-      res.setEncoding('utf8');
-      res.on('data', (c) => {
-        body += c;
-        if (body.length > 4 * 1024 * 1024) req.destroy(new Error('响应过大'));
-      });
-      res.on('end', () => {
-        try { resolve(JSON.parse(body)); } catch { reject(new Error('JSON 解析失败')); }
-      });
+      resolve({ status: res.statusCode, headers: res.headers, stream: res });
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
     req.on('error', reject);
   });
+}
+
+async function httpGetJson(url, headers = {}, timeoutMs = 20000) {
+  const { status, stream } = await getResponse(url, { headers, timeoutMs });
+  if (status !== 200) {
+    stream.resume();
+    throw new Error('HTTP ' + status);
+  }
+  let body = '';
+  await new Promise((resolve, reject) => {
+    stream.setEncoding('utf8');
+    stream.on('data', (c) => {
+      body += c;
+      if (body.length > 4 * 1024 * 1024) stream.destroy(new Error('响应过大'));
+    });
+    stream.on('end', resolve);
+    stream.on('aborted', () => reject(new Error('连接中断')));
+    stream.on('error', reject);
+  });
+  try { return JSON.parse(body); } catch { throw new Error('JSON 解析失败'); }
 }
 
 // --- release 规范化 -------------------------------------------------------
@@ -131,7 +191,12 @@ async function checkLatest(ctx, currentVersion) {
 // --- 资产选择 / 下载 -------------------------------------------------------
 
 function selectAsset(release) {
-  const wanted = isPortable() ? /-portable-x64\.exe$/i : /-setup-.*-x64\.exe$/i;
+  // 资产命名：Deepseek-Harness-EAC-<version>-Setup-x64.exe / …-Portable-x64.exe。
+  // 旧正则 /-setup-.*-x64\.exe$/ 要求 -setup- 之后还有第二个 "-x64"，
+  // 对 "…-v2.0.1-Setup-x64.exe"（-Setup- 直接连 x64.exe）永远匹配失败，
+  // 更新流程卡死在"未找到匹配的安装包资产"。锚定 \.exe$ 保证 .blockmap
+  // 等附属资产不会被误选。
+  const wanted = isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
   const direct = release.assets.find((a) => wanted.test(a.name));
   if (direct) return { parts: [direct], name: direct.name, totalSize: direct.size };
 
@@ -157,34 +222,37 @@ function downloadFile(url, dest, { onProgress } = {}) {
     const file = fs.createWriteStream(tmp);
     let received = 0;
     let settled = false;
-    const finish = (fn, value) => { if (!settled) { settled = true; fn(value); } };
+    let idleTimer = null;
+    const finish = (fn, value) => { if (!settled) { settled = true; if (idleTimer) clearTimeout(idleTimer); fn(value); } };
     const fail = (err) => {
       file.close(() => {});
       try { fs.rmSync(tmp, { force: true }); } catch {}
       finish(reject, err);
     };
-    const request = (url2, redirects) => {
-      if (redirects > 5) return fail(new Error('重定向次数过多'));
-      const req = https.get(url2, { headers: { 'User-Agent': 'DSH-Desktop' } }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.resume();
-          return request(new URL(res.headers.location, url2).toString(), redirects + 1);
-        }
-        if (res.statusCode !== 200) {
-          res.resume();
-          return fail(new Error('下载失败 HTTP ' + res.statusCode));
-        }
-        const total = Number(res.headers['content-length'] || 0);
-        res.on('data', (c) => {
-          received += c.length;
-          if (onProgress) { try { onProgress(received, total); } catch {} }
-        });
-        res.pipe(file);
-      });
-      req.setTimeout(60000, () => req.destroy(new Error('下载超时')));
-      req.on('error', fail);
+    // 空闲超时：60 秒没有任何数据到达才判死（167MB 的安装包在慢链路上
+    // 要传十几分钟，不能设整体超时）。每个数据块重置计时。
+    const bumpIdle = (stream) => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        try { stream.destroy(new Error('下载超时')); } catch { /* already destroyed */ }
+      }, 60000);
     };
-    request(url, 0);
+    getResponse(url, { timeoutMs: 60000 }).then(({ status, headers, stream }) => {
+      if (status !== 200) {
+        stream.resume();
+        return fail(new Error('下载失败 HTTP ' + status));
+      }
+      const total = Number(headerValue(headers, 'content-length') || 0);
+      bumpIdle(stream);
+      stream.on('data', (c) => {
+        received += c.length;
+        bumpIdle(stream);
+        if (onProgress) { try { onProgress(received, total); } catch {} }
+      });
+      stream.on('aborted', () => fail(new Error('连接中断')));
+      stream.on('error', fail);
+      stream.pipe(file);
+    }, fail);
     file.on('finish', () => {
       if (settled) return;
       try { fs.renameSync(tmp, dest); } catch (err) { return finish(reject, err); }
