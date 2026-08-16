@@ -217,6 +217,11 @@ openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
 research/                     # 第三方微信/桥接协议调研资料
 ```
 
+## Contributors
+
+- [@zouyuxuan122](https://github.com/zouyuxuan122) — 项目发起者与维护者
+- [@Luoye-hb](https://github.com/Luoye-hb) — Linux 多发行版打包支持（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)）
+
 ## License
 
 MIT。基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）。内置皮肤版权归原作者所有（见上方皮肤许可表）。
