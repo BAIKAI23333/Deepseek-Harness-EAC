@@ -39,9 +39,45 @@ module.exports = async function afterPack(context) {
 
   trimLongPathFiles(appOutDir);
   dedupeNestedModules(appOutDir);
+  injectDshClosureExtras(appOutDir);
   writeBundleManifest(appOutDir);
   auditLongPaths(appOutDir);
 };
+
+// The profile fallback closure (profiles/node_modules junctions) is maintained
+// by dsh-app-boot, whose BFS starts at the BUNDLED dsh package's package.json.
+// Companion plugin deps that only exist in the app-layer package.json (e.g.
+// better-sidebar → schemastery) are unreachable from that BFS, so the fallback
+// never gains a schemastery junction and dsh web dies with ERR_MODULE_NOT_FOUND
+// (exit code 1, "启动失败" loop — v3.0.0 field report). Fix at the mechanism
+// level: declare those deps in the bundled dsh package too; the BFS then
+// resolves them through the app closure (top-level node_modules) and maintains
+// the junctions on every launch, idempotently. cosmokit comes along as
+// schemastery's own dependency.
+function injectDshClosureExtras(appOutDir) {
+  const appNm = path.join(appOutDir, 'resources', 'app', 'node_modules');
+  const dshPkgPath = path.join(appNm, '@deepseek-ai', 'dsh', 'package.json');
+  if (!fs.existsSync(dshPkgPath)) return;
+  let dshPkg;
+  try { dshPkg = JSON.parse(fs.readFileSync(dshPkgPath, 'utf8')); }
+  catch (err) { console.warn('afterPack: cannot parse bundled dsh package.json:', err.message); return; }
+  dshPkg.dependencies = dshPkg.dependencies || {};
+
+  const extras = ['schemastery'];
+  let injected = 0;
+  for (const name of extras) {
+    if (dshPkg.dependencies[name]) continue;
+    let version = '';
+    try { version = JSON.parse(fs.readFileSync(path.join(appNm, name, 'package.json'), 'utf8')).version || ''; }
+    catch { console.warn(`afterPack: ${name} not found in app closure — skipped`); continue; }
+    dshPkg.dependencies[name] = '^' + version;
+    injected++;
+  }
+  if (injected) {
+    fs.writeFileSync(dshPkgPath, JSON.stringify(dshPkg, null, 2) + '\n');
+    console.log(`afterPack: injected into dsh closure: ${extras.join(', ')} (fallback junctions will heal on next launch)`);
+  }
+}
 
 // Issue #7: record a per-package file-count manifest of the FINAL payload
 // (after trim/dedupe) so the installed app can detect stripped packages
