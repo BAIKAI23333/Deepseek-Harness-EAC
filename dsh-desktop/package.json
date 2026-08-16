@@ -1,7 +1,7 @@
 {
   "name": "dsh-desktop",
   "productName": "Deepseek Harness EAC",
-  "version": "2.0.4",
+  "version": "3.0.0",
   "description": "DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI",
   "main": "main.js",
   "author": "DSH Desktop",
@@ -10,8 +10,11 @@
   "scripts": {
     "start": "electron .",
     "fetch-node": "node scripts/fetch-node.js",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win",
+    "predist": "node scripts/check-syntax.js",
+    "prepack": "node scripts/check-syntax.js",
+    "pack": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --dir",
+    "dist": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --win",
+    "postinstall": "node scripts/patch-deps.js || exit 0",
     "fetch-npm": "node scripts/fetch-npm.js",
     "fetch-runtime": "node scripts/fetch-node.js && node scripts/fetch-npm.js",
     "electron:fetch": "node node_modules/electron/install.js",
@@ -38,7 +41,9 @@
     "@deepseek-ai/dsh-subagent-in-process-driver": "0.1.0-rc.6",
     "@deepseek-ai/dsh-subprocess": "0.1.0-rc.6",
     "@deepseek-ai/dsh-timeout": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-workflow": "0.1.0-rc.6"
+    "@deepseek-ai/dsh-workflow": "0.1.0-rc.6",
+    "schemastery": "^3.18.0",
+    "koffi": "3.1.5"
   },
   "devDependencies": {
     "electron": "^43.4.0",
