@@ -24,6 +24,12 @@ import { spawn } from 'node:child_process'
 // V4：pnpm 重写 node_modules 前后快照/回填第三方包的本地构建产物
 // （meow-memory 等人工补齐的 lib/ 不再被每次安装/更新清掉）。
 import { snapshotArtifacts, restoreArtifacts } from './artifact-keep.mjs'
+// V4.2：pnpm 封锁构建脚本（prepare/install）时自动放行并重试，安装
+// 不再因为 "allowBuilds 加白名单" 的提示而失败。
+import { parseBlockedBuildKeys, readAllowBuilds, ensureAllowBuilds } from './allow-builds.mjs'
+// V4.2：安装前轻量冲突预检（patch 行/settings 命名空间/核心依赖版本），
+// refuse 直接拒绝、warn 由 UI 红字提醒；只读不写。
+import { scanCandidate, collectProfileState } from './plugin-conflict-scan.mjs'
 
 export const name = 'dsh-market-plugin'
 
@@ -272,6 +278,9 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
   } catch (err) {
     appendOutput(op, '\n[keep] 快照失败（不影响安装）: ' + String((err && err.message) || err))
   }
+  // 启动（或重试）一次 pnpm 子进程。retried=true 表示已因 allowBuilds
+  // 自动放行而重试过，不再二次重试，避免死循环。
+  function startChild(op, retried) {
   const child = spawn(inv.file, [...inv.args, 'plugin', '--profile', profile, kind === 'uninstall' ? 'remove' : 'add', target], {
     cwd,
     // CI=true: pnpm v10 blocks forever on a silent interactive prompt without
@@ -312,6 +321,24 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
         appendOutput(op, '\n[pending] 文件被运行中的服务占用（Windows 文件锁）。任务已排队：重启 Web 服务后自动完成，无需手动重试。\n')
       } catch { /* 标记写入失败则按普通失败处理 */ }
     }
+    if (!ok && !retried) {
+      // V4.2：pnpm 默认封锁依赖构建脚本（prepare/install），git 源插件必
+      // 被拦。从失败输出里解析被锁的包名，自动写入 pnpm-workspace.yaml
+      // 的 allowBuilds（兼容旧名 onlyBuiltDependencies）后重试一次。
+      const keys = parseBlockedBuildKeys(String(op.output || ''))
+      if (keys.length > 0) {
+        try {
+          const r = ensureAllowBuilds(join(profileDir(op.profile), 'pnpm-workspace.yaml'), keys)
+          if (r.wrote) {
+            appendOutput(op, '\n[allowBuilds] pnpm 封锁了构建脚本，已自动放行: ' + r.added.join(', ') + '，自动重试一次\n')
+            startChild(op, true)
+            return
+          }
+        } catch (err) {
+          appendOutput(op, '\n[allowBuilds] 自动放行失败: ' + String((err && err.message) || err))
+        }
+      }
+    }
     if (ok && op.kind === 'install' && hotCtx !== null) {
       // Trial-boot already proved the bundle boots; hot-mount is the bonus
       // that skips the restart. Failure here only falls back to restart.
@@ -331,6 +358,8 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
     settleOp(op, 'timeout')
     killChild(child)
   }, DEFAULT_TIMEOUT)
+  }
+  startChild(op, false)
   activeOp = op
   return { ok: true, opId: op.id }
 }
@@ -414,6 +443,12 @@ async function runProbe(explicitBin, source) {
     }, null, 2) + '\n')
     writeFileSync(join(profileDir, 'cordis.patch.yml'), '[]\n')
     writeFileSync(join(profileDir, 'pnpm-workspace.yaml'), 'packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n')
+    // V4.2：试装环境沿用真实 profile 已放行的构建脚本键，试装结论与真实
+    // 安装保持一致（真实 profile 放行过的构建依赖不会在试装里误判失败）。
+    try {
+      const seedKeys = readAllowBuilds(profileDir(desktopProfile()) + '/pnpm-workspace.yaml')
+      if (seedKeys.length > 0) ensureAllowBuilds(join(profileDir, 'pnpm-workspace.yaml'), seedKeys)
+    } catch {}
     const env = { ...process.env, DSH_HOME: home, CI: 'true' }
 
     // Outer cwd must let execArgv loaders (tsx) resolve from the harness, not
@@ -422,9 +457,24 @@ async function runProbe(explicitBin, source) {
     const runCwd = inv.cwd ?? profileDir
 
     // 1) Install the candidate into the trial profile through the SAME CLI path.
-    const install = await spawnCapture(inv.file,
+    // V4.2：pnpm 封锁构建脚本时从输出解析包名、自动写入试装 workspace 的
+    // allowBuilds 后重试（最多一次），避免试装因放行缺失误报失败。
+    let install = await spawnCapture(inv.file,
       [...inv.args, 'plugin', '--profile', 'web', 'add', source],
       { cwd: runCwd, env, timeoutMs: PROBE_INSTALL_TIMEOUT })
+    if (!install.ok) {
+      const keys = parseBlockedBuildKeys(String(install.output || ''))
+      if (keys.length > 0) {
+        try {
+          const r = ensureAllowBuilds(join(profileDir, 'pnpm-workspace.yaml'), keys)
+          if (r.wrote) {
+            install = await spawnCapture(inv.file,
+              [...inv.args, 'plugin', '--profile', 'web', 'add', source],
+              { cwd: runCwd, env, timeoutMs: PROBE_INSTALL_TIMEOUT })
+          }
+        } catch {}
+      }
+    }
     if (!install.ok) {
       return { ok: false, stage: 'install', output: install.output }
     }
@@ -887,6 +937,81 @@ function builtinCollision(target, builtin) {
   return hit || null
 }
 
+// ── V4.2 安装前冲突预检（scan 路由 + install 门卫）────────────────────
+
+/**
+ * 抓取候选插件的 { name, manifest, patchText }（只读，不装）。
+ * github: → RAW_MIRRORS 抓 package.json + cordis.patch.yml；
+ * registry → npm registry latest manifest（patch 未知 → ''，由试装验证兜底）；
+ * link:/file: → 读本地包（相对 profile 目录或绝对路径）。
+ * @returns {Promise<{name, manifest, patchText} | {error}>}
+ */
+async function fetchCandidateInfo(source) {
+  const spec = String(source || '').trim()
+  if (!spec) return { error: '缺少安装源' }
+  const gh = /^github:([^/]+)\/([^/]+?)(?:\.git)?$/.exec(spec)
+  if (gh) {
+    const [, owner, repo] = gh
+    let manifest = null
+    let patchText = ''
+    for (const base of RAW_MIRRORS) {
+      try {
+        const r = await fetch(`${base}/${owner}/${repo}/HEAD/package.json`, {
+          redirect: 'follow', signal: AbortSignal.timeout(10000),
+        })
+        if (!r.ok) continue
+        manifest = await r.json()
+        break
+      } catch { /* next mirror */ }
+    }
+    if (manifest === null || typeof manifest !== 'object') return { error: '无法抓取候选插件清单（package.json）：' + spec }
+    for (const base of RAW_MIRRORS) {
+      try {
+        const r = await fetch(`${base}/${owner}/${repo}/HEAD/cordis.patch.yml`, {
+          redirect: 'follow', signal: AbortSignal.timeout(8000),
+        })
+        if (r.ok) { patchText = await r.text(); break }
+      } catch { /* patch 缺失不致命 */ }
+    }
+    return { name: String(manifest.name || repo), manifest, patchText }
+  }
+  if (spec.startsWith('link:') || spec.startsWith('file:')) {
+    const rel = spec.slice(spec.indexOf(':') + 1)
+    const dir = rel.startsWith('~') ? (homedir() + rel.slice(1)) : rel
+    const abs = dir.startsWith('.') ? join(profileDir(desktopProfile()), dir) : dir
+    try {
+      const manifest = JSON.parse(readFileSync(join(abs, 'package.json'), 'utf8'))
+      let patchText = ''
+      try { patchText = readFileSync(join(abs, 'cordis.patch.yml'), 'utf8') } catch {}
+      return { name: String(manifest.name || abs), manifest, patchText }
+    } catch (err) {
+      return { error: '本地源读取失败：' + String((err && err.message) || err) }
+    }
+  }
+  // registry spec（包名 或 包名@range）
+  const name = spec.replace(/@latest$/, '').split('@').filter(Boolean).join('@')
+  if (!/^@?[A-Za-z0-9][A-Za-z0-9._@/+-]*$/.test(name)) return { error: '无法识别的安装源：' + spec }
+  try {
+    const r = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name)}/latest`, {
+      redirect: 'follow', signal: AbortSignal.timeout(8000),
+    })
+    if (!r.ok) return { error: 'registry 抓取失败（HTTP ' + r.status + '）：' + name }
+    const manifest = await r.json()
+    return { name: String(manifest.name || name), manifest, patchText: '' }
+  } catch (err) {
+    return { error: 'registry 抓取失败：' + String((err && err.message) || err) }
+  }
+}
+
+/** 冲突预检的完整流程：抓候选 → 读 profile 态 → scanCandidate。 */
+async function conflictScan(profile, target) {
+  const info = await fetchCandidateInfo(target)
+  if (info.error) return { ok: false, error: info.error }
+  const state = collectProfileState(profileDir(profile))
+  const verdict = scanCandidate(info, state)
+  return { ok: true, ...verdict, candidate: info.name }
+}
+
 // ── update detection (mirrors dsh-market's checkUpdates) ─────────────────────
 
 /** Pinned commit per `owner/repo` from the profile lockfile's codeload tarball URLs. */
@@ -1076,6 +1201,15 @@ export function apply(ctx) {
           }
           return sendJson(res, 200, killOp())
         }
+        if (method === 'scan') {
+          // V4.2：安装前轻量冲突预检（只读）：patch 行 / settings 命名
+          // 空间 / 核心依赖版本冲突 → { ok, level, issues, candidate }。
+          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
+          const target = String(body.source || '').trim()
+          if (!target) return sendJson(res, 400, { ok: false, error: '缺少安装源' })
+          const verdict = await conflictScan(profile, target)
+          return sendJson(res, 200, verdict)
+        }
         if (method === 'install' || method === 'uninstall') {
           // Write operations require a same-origin browser POST.
           if (!sameOrigin(req)) {
@@ -1102,6 +1236,18 @@ export function apply(ctx) {
             }
           }
           if (method === 'install' && !body.skipCheck) {
+            // V4.2：冲突预检（refuse 直接拒绝；warn 只提醒不拦）。
+            // 与试装验证互补：这里是「会不会互相踩」，试装是「能不能启动」。
+            const scan = await conflictScan(profile, target)
+            if (scan.ok && scan.level === 'refuse') {
+              return sendJson(res, 200, {
+                ok: false,
+                refused: true,
+                output: '安装前冲突预检发现下列问题（真实 profile 未受影响）：\n\n'
+                  + scan.issues.map((i) => '• ' + i.message).join('\n')
+                  + '\n\n如需强制安装（风险自负），请勾选"跳过安全检查"。',
+              })
+            }
             // Source whitelist: curated catalog only (degrade open when the
             // catalog is unavailable; skipCheck bypasses).
             const catalog = await loadCatalog()
@@ -1141,6 +1287,9 @@ export function apply(ctx) {
             return sendJson(res, 200, { ok: true, opId: started.opId, timeoutMs: DEFAULT_TIMEOUT })
           }
           const label = String(body.label || target)
+          // V4.2：跳过安全检查的强制安装同样先备份安装前状态（与正常路径
+          // 对齐），之后可从备份回滚。
+          const snap = method === 'install' ? snapshotProfile(profile) : null
           // Uninstall: dispose the live hot mount FIRST, then disable any
           // loader entry under the same name. `dsh plugin remove` only edits
           // the persisted profile — the running Loader would otherwise keep
@@ -1151,7 +1300,8 @@ export function apply(ctx) {
             await disposeHotMount(target)
             await disableLoaderEntry(target)
           }
-          const started = startOp(method, profile, target, label, String(body.binPath || '').trim())
+          const started = startOp(method, profile, target, label, String(body.binPath || '').trim(),
+            snap ? '已备份安装前状态：' + snap + '\n' : '')
           if (!started.ok) return sendJson(res, 200, started)
           return sendJson(res, 200, { ok: true, opId: started.opId, timeoutMs: DEFAULT_TIMEOUT })
         }
