@@ -2624,6 +2624,10 @@ function pendingMarketMarkers() {
         if (job && typeof job.target === 'string' && job.target
           && typeof job.profile === 'string' && /^[A-Za-z0-9_-]+$/.test(job.profile)
           && (job.kind === 'install' || job.kind === 'uninstall')) {
+          // V4.2：旧版 host 可能把目录默认 profile 'web' 写进标记（桌面壳跑
+          // 在 web-desktop，profiles/web 不存在）—— 归一化后再执行，避免对
+          // 不存在的 profile 跑 pnpm（spawn 报 node.exe ENOENT）。
+          job.profile = job.profile === 'web' ? desktopProfile() : job.profile;
           out.push({ marker, job });
         } else {
           log('market-pending', '标记字段不完整，已删除: ' + marker);

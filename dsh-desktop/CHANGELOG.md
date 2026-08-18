@@ -15,6 +15,16 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 
 ## [4.2.0] — 2026-08-18
 
+### 修复：安装插件报 `spawn ...\resources\node\node.exe ENOENT`
+- 根因：插件市场目录条目不带目标 profile，客户端默认填 dsh CLI 生态的
+  `web`；桌面壳实际跑在专属 profile（web-desktop），`profiles/web` 并不存在。
+  安装时 spawn 以不存在的目录作 cwd，Windows 上 Node 把 ENOENT 记在可执行
+  文件（node.exe）头上 —— 错误信息极具误导性，node.exe 本身完好。
+- 修复：host 层统一把 `web` 映射到桌面 profile（`resolveProfile`，CLI 直连
+  时映射恒等、行为不变），安装/卸载/扫描/已装状态/更新检查全部走真实
+  profile；重启窗口期排队任务读取旧标记时同样归一化。此前有人用目录联接
+  （`profiles\web` → `web-desktop`）绕过，修复后无需保留。
+
 ### 修复：安装版自更新时黑窗挂死
 - 根因：installer.nsh 的进程存在性检查用 `tasklist | find` 管道 —— 每轮开
   3 个隐藏 cmd 经 `|` 串管道读输出，在无控制台的 NSIS 上下文里偶发永不

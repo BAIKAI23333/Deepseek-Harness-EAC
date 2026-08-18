@@ -209,6 +209,16 @@ function validProfile(p) {
   return typeof p === 'string' && /^[A-Za-z0-9_-]+$/.test(p)
 }
 
+// 目录条目（官网 HTML）不带 profile，客户端默认填 dsh CLI 生态的 'web'。
+// 桌面壳跑在专属 profile（web-desktop，见 main.js DSH_DESKTOP_PROFILE）上，
+// profiles/web 并不存在 —— 直接信任 'web' 会让 spawn 以不存在的目录作 cwd，
+// Node 把它报成 "spawn <node.exe> ENOENT"（锅记在可执行文件头上，误导排查）。
+// 统一把 'web' 映射到桌面 profile；CLI 直连（无 DSH_DESKTOP_PROFILE）时
+// desktopProfile() 就是 'web'，映射恒等、行为不变。
+function resolveProfile(requested) {
+  return requested !== 'web' && validProfile(requested) ? requested : desktopProfile()
+}
+
 function opSnapshot() {
   if (!activeOp) return null
   const { id, kind, profile, target, label, startedAt, status, output, exitCode, bin, hot, pendingRestart } = activeOp
@@ -250,6 +260,7 @@ function settleOp(op, status, exitCode) {
 
 /** Start one install/uninstall as a background op. Returns { ok, opId? } or { ok, error }. */
 function startOp(kind, profile, target, label, explicitBin, initialOutput) {
+  profile = resolveProfile(profile)
   const inv = dshInvoke(explicitBin)
   if (!inv) return { ok: false, error: 'dsh CLI 未定位（可在面板填写路径）' }
   const bin = inv.args[inv.args.length - 1]
@@ -1089,7 +1100,7 @@ async function checkUpdates(profile) {
 const UPDATES_TTL_MS = 10 * 60 * 1000
 let updatesCache = {}
 
-export { classifyPlugin, runProbe, whitelistSource, loadCatalog, parseSimplePatch, checkUpdates, parseSite, registryToCatalog, normalizeRepoUrl, readInstalledProvenance, matchInstalledPackage } // test hooks; cordis only reads name/inject/apply
+export { classifyPlugin, runProbe, whitelistSource, loadCatalog, parseSimplePatch, checkUpdates, parseSite, registryToCatalog, normalizeRepoUrl, readInstalledProvenance, matchInstalledPackage, resolveProfile } // test hooks; cordis only reads name/inject/apply
 
 export function apply(ctx) {
   const webServer = ctx.get('webServer')
@@ -1136,7 +1147,7 @@ export function apply(ctx) {
           })
         }
         if (method === 'installed') {
-          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
+          const profile = resolveProfile(body.profile)
           const p = profileDir(profile) + '/package.json'
           const builtin = readBuiltinPlugins(profile)
           if (!existsSync(p)) return sendJson(res, 200, { ok: true, profile, bundles: [], dependencies: {}, provenance: {}, builtin })
@@ -1157,7 +1168,7 @@ export function apply(ctx) {
         }
         if (method === 'updates') {
           // Read-only update detection for installed plugins (no write op).
-          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
+          const profile = resolveProfile(body.profile)
           const updates = await checkUpdates(profile)
           return sendJson(res, 200, { ok: true, profile, updates })
         }
@@ -1166,7 +1177,7 @@ export function apply(ctx) {
           if (!sameOrigin(req)) {
             return sendJson(res, 403, { ok: false, error: 'untrusted origin' })
           }
-          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
+          const profile = resolveProfile(body.profile)
           const name = String(body.name || '').trim()
           if (!name) return sendJson(res, 400, { ok: false, output: '缺少插件名' })
           const deps = readProfileDeps(profile)
@@ -1204,7 +1215,7 @@ export function apply(ctx) {
         if (method === 'scan') {
           // V4.2：安装前轻量冲突预检（只读）：patch 行 / settings 命名
           // 空间 / 核心依赖版本冲突 → { ok, level, issues, candidate }。
-          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
+          const profile = resolveProfile(body.profile)
           const target = String(body.source || '').trim()
           if (!target) return sendJson(res, 400, { ok: false, error: '缺少安装源' })
           const verdict = await conflictScan(profile, target)
@@ -1215,7 +1226,7 @@ export function apply(ctx) {
           if (!sameOrigin(req)) {
             return sendJson(res, 403, { ok: false, error: 'untrusted origin' })
           }
-          const profile = validProfile(body.profile) ? body.profile : desktopProfile()
+          const profile = resolveProfile(body.profile)
           const target = String(method === 'install' ? (body.source || '') : (body.pkg || '')).trim()
           if (!target) return sendJson(res, 400, { ok: false, output: '缺少参数' })
           if (activeOp && activeOp.status === 'running') {
