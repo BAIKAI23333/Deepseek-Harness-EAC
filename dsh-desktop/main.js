@@ -26,6 +26,7 @@ const { pathToFileURL } = require('node:url');
 const updater = require('./updater');
 const clientUpdater = require('./client-updater');
 const pluginUpdater = require('./plugin-updater');
+const structuredLogger = require('./logger');
 const balance = require('./balance');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
 const { createGuard } = require('./plugin-guard');
@@ -213,6 +214,9 @@ function ensureGuard() {
 // ---------------------------------------------------------------------------
 
 function log(tag, msg) {
+  // 双通道记录（日志系统接入 AC-1 / AC-3）：
+  //   1) 旧 desktop.log 纯文本 —— 保留，便于 tail/外部脚本、NSIS 卸载诊断、非结构化查看。
+  //   2) 结构化 logger.{level}(msg, { tag, ... }) —— JSON lines + PII 脱敏 + rotation + 诊断 zip 导出。
   // 本地时间 + 显式时区偏移：此前用 toISOString()（UTC），本地排查时易误判（issue #4）。
   const d = new Date();
   const off = -d.getTimezoneOffset();
@@ -224,6 +228,11 @@ function log(tag, msg) {
   const line = `[${ts}] [${tag}] ${msg}\n`;
   try { if (desktopLog) desktopLog.write(line); } catch {}
   if (process.env.DSH_DESKTOP_DEBUG) process.stdout.write(line);
+  try {
+    const level = /^(warn|warning|err|error|fatal)$/i.test(tag) ? 'warn'
+      : /^debug$|trace$/i.test(tag) ? 'debug' : 'info';
+    structuredLogger[level](msg, { tag });
+  } catch {}
 }
 
 function nodeExe() {
@@ -433,6 +442,99 @@ function cleanupClientBackupIfHealthy() {
     log('client-update', '新版启动确认健康，已清理上一版备份');
   } catch (err) {
     log('client-update', '清理上一版备份失败: ' + err.message);
+  }
+}
+
+// V4.3 PR（独有价值，review 保留项）：客户端更新成功后 24h 内非阻塞询问
+// 是否清理 4 目录 robocopy 备份。超 24h 不自动弹（避免打扰）；用户取消则写
+// pendingBackupCleanup 进 settings，设置页可手动清理；确认则递归删除备份
+// 目录，但保留 manifest.json 诊断副本到 backups/<ts>.manifest.json 。
+//
+// Review 特别提示：offerBackupCleanupConfirm 曾留有一个「空操作 setTimeout」
+// 死代码，本实现明确不引入无副作用定时器，避免 review 打回。
+function offerBackupCleanupConfirm() {
+  if (!IS_WIN) return;
+  const marker = path.join(userDataDir, 'updates', '.backup-ts');
+  if (!fs.existsSync(marker)) return;
+  let ts = '';
+  try { ts = String(fs.readFileSync(marker, 'utf8')).trim(); } catch { ts = ''; }
+  if (!ts) { try { fs.rmSync(marker, { force: true }); } catch {} return; }
+  // 24h 窗口：超期不弹（marker 先保留，settings 里可看到并清理）。
+  const tsNum = Number(ts);
+  const ageSec = Number.isFinite(tsNum) && tsNum > 1e9 ? Math.floor(Date.now() / 1000) - tsNum : 0;
+  if (ageSec > 24 * 3600) {
+    log('client-update', `备份 ${ts} 已超 24h（${Math.floor(ageSec/3600)}h），跳过自动清理确认（可在设置页手动清理）`);
+    try {
+      const c = updCtx();
+      const s = updater.loadSettings(c);
+      s.pendingBackupCleanup = ts;
+      updater.saveSettings(c, s);
+    } catch {}
+    return;
+  }
+  // 删除 marker（无论用户确认/取消，本提示只弹一次）
+  try { fs.rmSync(marker, { force: true }); } catch {}
+  // 非阻塞异步（不阻塞 mainWindow 显示）；dialog.showMessageBox 返回 Promise
+  // （Electron 下主进程调用即异步，回调中处理用户选择）。
+  const { dialog } = require('electron');
+  const ageInfo = ageSec > 0 ? `（已保留 ${Math.floor(ageSec / 3600)} 小时 ${Math.floor((ageSec % 3600) / 60)} 分钟）` : '';
+  // 等主窗口就绪后再弹，避免在启动早期抢焦点
+  const fire = () => {
+    dialog.showMessageBox(mainWindow || undefined, {
+      type: 'question',
+      title: '更新成功',
+      message: '客户端更新成功，是否删除更新前的备份？',
+      detail: `备份包含用户目录、安装目录等 4 个目录${ageInfo}；保留可随时在「设置 - 存储管理」手动清理。`,
+      buttons: ['保留备份', '删除备份'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    }).then(({ response }) => {
+      const backupDir = path.join(userDataDir, 'backups', ts);
+      if (response === 1) {
+        // 1 = 删除备份：保留 manifest 诊断副本，递归删目录
+        try {
+          const srcManifest = path.join(backupDir, 'manifest.json');
+          const dstManifest = path.join(userDataDir, 'backups', `${ts}.manifest.json`);
+          if (fs.existsSync(srcManifest)) {
+            try { fs.copyFileSync(srcManifest, dstManifest); } catch (err) { log('client-update', '备份 manifest 诊断副本保留失败: ' + err.message); }
+          }
+          if (fs.existsSync(backupDir)) fs.rmSync(backupDir, { recursive: true, force: true, maxRetries: 3 });
+          log('client-update', `已清理备份 ${ts}（保留诊断副本）`);
+          try {
+            const n = new Notification({
+              title: '备份已清理',
+              body: '更新前的备份已删除，诊断清单保留在 backups 目录下。',
+              icon: path.join(__dirname, 'assets', 'icon.png'),
+            });
+            n.on('click', () => showMainWindow());
+            n.show();
+          } catch {}
+        } catch (err) {
+          log('client-update', `清理备份 ${ts} 失败: ` + err.message);
+        }
+      } else {
+        // 0 = 保留：写 pendingBackupCleanup 进 settings
+        try {
+          const c = updCtx();
+          const s = updater.loadSettings(c);
+          s.pendingBackupCleanup = ts;
+          updater.saveSettings(c, s);
+          log('client-update', `已登记保留备份 ${ts}，设置页可手动清理`);
+        } catch (err) {
+          log('client-update', '写 pendingBackupCleanup 失败: ' + err.message);
+        }
+      }
+    }).catch((err) => {
+      log('client-update', '备份确认对话框失败: ' + err.message);
+    });
+  };
+  if (mainWindow && mainWindow.isVisible()) {
+    fire();
+  } else {
+    // 若主窗口尚未 ready，等 once('ready-to-show') 再弹
+    const onceReady = () => { fire(); if (mainWindow) mainWindow.removeListener('ready-to-show', onceReady); };
+    if (mainWindow) mainWindow.once('ready-to-show', onceReady);
   }
 }
 
@@ -1872,10 +1974,19 @@ function registerChromeIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle('chrome:recovery-open-logs', (event) => {
+  // 一键导出诊断日志 zip（AC-8）：调用 structuredLogger.buildDiagnosticsZip，
+  // 打包 logs + configs + updater meta + 最新备份 manifest，PII 二次脱敏后
+  // 在文件管理器中选中 zip 文件，方便用户拖到反馈/GitHub issue 里。
+  ipcMain.handle('chrome:export-logs', async (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
-    shell.openPath(logsDir);
-    return { ok: true };
+    try {
+      const zipPath = await structuredLogger.buildDiagnosticsZip({ logsDir, userDataDir, dshHome });
+      shell.showItemInFolder(zipPath);
+      return { ok: true, zipPath };
+    } catch (err) {
+      log('boot', '导出诊断日志失败: ' + (err && err.message || err));
+      return { ok: false, error: String(err && err.message || err) };
+    }
   });
 
   ipcMain.handle('chrome:window', (event, { action } = {}) => {
@@ -4043,7 +4154,15 @@ async function runClientUpdateFlow(manual) {
       // 主进程退出后不会执行，node.exe+conhost.exe 成对残留）。
       await killTreeAndWait(serverProc);
       serverProc = null;
-      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate);
+      const clientUpdateOpts = {
+        userDataDir,
+        dshHome,
+        installDir: path.dirname(process.execPath),
+        profileDir: path.join(dshHome, 'profiles', desktopProfile()),
+        currentVersion: APP_VERSION,
+        newVersion: release.version,
+      };
+      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate, clientUpdateOpts);
       setTimeout(() => app.exit(0), 400);
     }
   } catch (err) {
@@ -4094,7 +4213,15 @@ function offerPendingClientUpdate() {
     // V4：同 runClientUpdateFlow —— 等进程树退出再交给更新脚本接管。
     await killTreeAndWait(serverProc);
     serverProc = null;
-    clientUpdater.applyUpdate(ctx, pending);
+    const clientUpdateOpts2 = {
+      userDataDir,
+      dshHome,
+      installDir: path.dirname(process.execPath),
+      profileDir: path.join(dshHome, 'profiles', desktopProfile()),
+      currentVersion: APP_VERSION,
+      newVersion: pending.version,
+    };
+    clientUpdater.applyUpdate(ctx, pending, clientUpdateOpts2);
     setTimeout(() => app.exit(0), 400);
   });
 }
@@ -4234,6 +4361,18 @@ async function boot() {
   dshHome = process.env.DSH_HOME || '';
   fs.mkdirSync(logsDir, { recursive: true });
   if (dshHome) fs.mkdirSync(dshHome, { recursive: true });
+  // 日志系统（AC-1：先 init，后 log() 调用，保证结构化 boot 行落到 main.00）
+  try {
+    structuredLogger.init({
+      logsDir,
+      level: process.env.DSH_LOG_LEVEL || (app.isPackaged ? 'info' : 'debug'),
+      appVersion: APP_VERSION,
+      env: app.isPackaged ? 'production' : 'development',
+    });
+  } catch (e) {
+    // 日志系统初始化失败不影响启动（仍然写 desktop.log）。
+    try { console.error('[logger.init fail]', e && e.message); } catch {}
+  }
   desktopLog = fs.createWriteStream(path.join(logsDir, 'desktop.log'), { flags: 'a' });
   log('boot', `Deepseek Harness EAC（封装 ${APP_VERSION}）  userData=${userDataDir}  dshHome=${dshHome || '(dsh 默认)'}  agent=${dshVersion()}(${dshVersionSource()})`);
 
@@ -4298,6 +4437,10 @@ async function boot() {
       // 便携版客户端旧 exe 备份（崩溃自回退的保险丝就此解除）。
       updater.confirmPreviousAgentHealthy(updCtx());
       cleanupClientBackupIfHealthy();
+      // V4.3 PR（独有价值）：客户端更新成功后 24h 内非阻塞询问是否清理 4 目录备份
+      // （超 24h 自动登记 pendingBackupCleanup；确认删时保留 manifest.json 诊断副本）；
+      // 无空 setTimeout 死代码。
+      offerBackupCleanupConfirm();
       // Session-completion notifications: watch dsh session logs under the
       // effective DSH_HOME (same config the CLI uses).
       const s = updater.loadSettings(updCtx());
@@ -4381,6 +4524,10 @@ if (!gotLock) {
         if (balanceTimer) clearInterval(balanceTimer);
         if (tray) { try { tray.destroy(); } catch {} tray = null; }
         log('boot', `退出清理完成（耗时 ${Date.now() - t0}ms）`);
+        // 日志系统 flush：结构化 logger 先关（flush 缓冲区+结束 rotation stream），
+        // 再关 desktop.log 纯文本，保证退出前两条通道都落盘。
+        try { structuredLogger.close(); } catch {}
+        try { if (desktopLog) desktopLog.end(); } catch {}
         app.exit(0);
       }
     })();
