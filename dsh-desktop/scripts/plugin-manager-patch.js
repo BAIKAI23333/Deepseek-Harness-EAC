@@ -39,14 +39,51 @@ function entryIndentOf(line, id, indentLo, indentHi) {
 }
 
 /**
- * 在行数组中定位第一个满足层级的 `- id: <id>` 条目块。
+ * 行是否是指定 id 的「空块项 + 独立 id」条目起始行（dsh 官方 patch 常用写法）：
+ *     -
+ *         id: <id>
+ *         name: '…'
+ * 即一行只有 `-`（无内联内容），其后的非空行若以 `id: <id>` 开头即命中。
+ * 返回空块项 `-` 行的缩进（作为条目块语义缩进；id/name 行都更深），
+ * 否则 null；indentLo/Hi 限定该空块项层级。
+ */
+function dashEntryIndentOf(lines, i, id, indentLo, indentHi) {
+  const line = lines[i];
+  const [, dashWs, dashRest] = LEADING.exec(line);
+  if (!/^-\s*$/.test(dashRest)) return null; // 不是纯 `-` 空块项
+  const next = lines[i + 1];
+  if (next === undefined) return null;
+  const [, nextWs, nextRest] = LEADING.exec(next);
+  const trimmed = nextRest.replace(/^[ \t]+/, '');
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('^id:\\s*' + escapedId + '(?![A-Za-z0-9_.-])').exec(trimmed);
+  if (!m) return null;
+  const dashIndent = dashWs.length;
+  const idIndent = nextWs.length;
+  // 空块项必须浅于 id 行（id/name 都是它的内容）
+  if (idIndent <= dashIndent) return null;
+  if (dashIndent < indentLo || dashIndent > indentHi) return null;
+  return dashIndent;
+}
+
+/**
+ * 在行数组中定位第一个满足层级的 `<id>` 条目块。支持两种书写等价格式：
+ *   ① `- id: <id>`        —— EAC sync 单行写形；
+ *   ② `-` 空块项 + 独立 `id:` 行 —— dsh 官方 profile 的多行写形。
  * 返回 { start, end, indent }（end 为独占下界）：块 = 起始行 + 其后所有
- * 缩进比起始行更深的非空行（空行视为块结束，保守不吞）。
+ * 缩进足够深的属性行（空行视为块结束，保守不吞）。
  */
 function findEntryBlock(lines, id, indentLo, indentHi) {
   for (let i = 0; i < lines.length; i++) {
-    const ind = entryIndentOf(lines[i], id, indentLo, indentHi);
-    if (ind === null) continue;
+    let ind = entryIndentOf(lines[i], id, indentLo, indentHi);
+    let blockStart = i;
+    if (ind === null) {
+      const d = dashEntryIndentOf(lines, i, id, indentLo, indentHi);
+      if (d === null) continue;
+      ind = d;
+      blockStart = i; // `-` 空块项行
+      i += 1; // 下一行（id 行）纳入块
+    }
     let j = i + 1;
     while (j < lines.length) {
       const [, ws, rest] = LEADING.exec(lines[j]);
@@ -54,7 +91,7 @@ function findEntryBlock(lines, id, indentLo, indentHi) {
       if (ws.length <= ind) break; // 兄弟条目或外层结构：块结束
       j += 1;
     }
-    return { start: i, end: j, indent: ind };
+    return { start: blockStart, end: j, indent: ind };
   }
   return null;
 }
