@@ -249,15 +249,9 @@ research/                     # 第三方微信/桥接协议调研资料
 感谢每一位贡献者：
 
 <p align="center">
-  <a href="https://github.com/zouyuxuan122"><img src="https://avatars.githubusercontent.com/u/245557608?size=64" width="64" height="64" style="border-radius:50%" alt="zouyuxuan122" title="zouyuxuan122 · 27 commits"></a>
-  <a href="https://github.com/jiang8297"><img src="https://avatars.githubusercontent.com/u/242639667?size=64" width="64" height="64" style="border-radius:50%" alt="jiang8297" title="jiang8297 · 6 commits"></a>
-  <a href="https://github.com/zixin947"><img src="https://avatars.githubusercontent.com/u/318131693?size=64" width="64" height="64" style="border-radius:50%" alt="zixin947" title="zixin947 · 5 commits"></a>
-  <a href="https://github.com/dtyg123"><img src="https://avatars.githubusercontent.com/u/171705219?size=64" width="64" height="64" style="border-radius:50%" alt="dtyg123" title="dtyg123 · 3 commits"></a>
-  <a href="https://github.com/jing-hy"><img src="https://avatars.githubusercontent.com/u/281396152?size=64" width="64" height="64" style="border-radius:50%" alt="jing-hy" title="jing-hy · 2 commits"></a>
-  <a href="https://github.com/Luoye-hb"><img src="https://avatars.githubusercontent.com/u/238787898?size=64" width="64" height="64" style="border-radius:50%" alt="Luoye-hb" title="Luoye-hb · 1 commit"></a>
-  <a href="https://github.com/lanyun077"><img src="https://avatars.githubusercontent.com/u/186024291?size=64" width="64" height="64" style="border-radius:50%" alt="lanyun077" title="lanyun077 · 1 commit"></a>
-  <a href="https://github.com/lbn2011"><img src="https://avatars.githubusercontent.com/u/89037561?size=64" width="64" height="64" style="border-radius:50%" alt="lbn2011" title="lbn2011 · 1 commit"></a>
-</p>
+  <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
+  </a>
 
 ## Star History
 
