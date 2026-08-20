@@ -254,17 +254,26 @@ research/                     # 第三方微信/桥接协议调研资料
   </a>
 </p>
 
-### QQ 交流群
+### 交流群
 
-<p align="center">
-  <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC 交流群二维码（群号：523412163）" width="360" />
-</p>
-
-<p align="center">QQ群：<strong>523412163</strong></p>
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群二维码" width="320" />
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>QQ 交流群</strong><br />群号：523412163</td>
+    <td align="center"><strong>微信交流群</strong></td>
+  </tr>
+</table>
 
 ### Bug 反馈
 
-遇到问题时，请前往 [Bug 反馈网站](https://eac.dtyg123.dpdns.org/) 提交反馈。
+遇到 Bug，或有希望我们增加的功能，请前往 [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/)。
 
 ## Star History
 
