@@ -5,6 +5,14 @@
 name: Release
 
 on:
+  # 手动触发（支持在 Actions 页面点 Run workflow 按钮运行）
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '版本标签（形如 v4.4.1 或 v4.4.1-rc.1）'
+        required: true
+        default: 'v4.4.1'
+  # 推送 v* 标签时自动触发
   push:
     tags:
       - 'v*'
@@ -27,12 +35,19 @@ jobs:
     steps:
       - name: 检出代码（标签指向的提交）
         uses: actions/checkout@v4
+        with:
+          # 手动触发时默认检出的不是标签，需按输入的 tag 切到对应提交
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: 从标签提取版本号
         id: tag
         shell: bash
         run: |
-          tag="${GITHUB_REF_NAME}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
           if [[ "$tag" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$ ]]; then
             version="${BASH_REMATCH[1]}"
           else
