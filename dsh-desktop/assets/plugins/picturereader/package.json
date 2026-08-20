@@ -1,7 +1,7 @@
 {
     "name":  "picturereader",
-    "version":  "3.0.0",
-    "description":  "Unified image understanding plugin for DeepSeek Harness (DSH). Visual twin adapter for native thumbnails + auto-analysis on any text-only model (incl. pi-ai providers); privacy/smart/strict routing; local tools (scan/OCR×3 engines/crop/palette/compare/batch); document-to-image (pdf/word/excel/ppt); optional external VLM bridge.",
+    "version":  "3.0.3",
+    "description":  "Unified image understanding plugin for DeepSeek Harness (DSH). Visual twin adapter for native thumbnails + auto-analysis on any text-only model (incl. pi-ai providers); privacy/smart/strict routing; local tools (scan/OCR脳3 engines/crop/palette/compare/batch); document-to-image (pdf/word/excel/ppt); optional external VLM bridge.",
     "type":  "module",
     "main":  "src/index.js",
     "exports":  {
