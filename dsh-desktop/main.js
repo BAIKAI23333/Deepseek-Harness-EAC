@@ -197,6 +197,18 @@ function ensureDesktopProfileInit() {
     if (!fs.existsSync(path.join(dir, 'cordis.patch.yml'))) {
       fs.writeFileSync(path.join(dir, 'cordis.patch.yml'), '[]\n');
     }
+    // 从源码运行时，插件会从 DSH_HOME/profile 的共享 node_modules 解析
+    // 宿主依赖；全新隔离 DSH_HOME 没有安装闭包，先补齐桌面依赖中的
+    // schemastery junction，避免 better-sidebar / side-session 触发整树失败。
+    const shared = path.join(home, 'profiles', 'node_modules');
+    const source = path.join(__dirname, 'node_modules', 'schemastery');
+    const link = path.join(shared, 'schemastery');
+    if (fs.existsSync(source) && !fs.existsSync(link)) {
+      fs.mkdirSync(shared, { recursive: true });
+      try { fs.symlinkSync(source, link, 'junction'); } catch (err) {
+        log('boot', '创建 schemastery 共享链接失败: ' + err.message);
+      }
+    }
   } catch (err) {
     log('boot', '初始化桌面 profile 失败: ' + err.message);
   }
@@ -3170,7 +3182,6 @@ const COMPANION_PLUGINS = [
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
   // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
-  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
   // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
   // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
   // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。
@@ -4978,6 +4989,7 @@ async function boot() {
     // 尚未启动、无文件锁时先完成，再拉起 Web 服务。
     .then(() => processPendingMarketOps())
     .then(async () => {
+      retireRemovedBuiltinPlugins(desktopProfileDir());
       // 排队的 pnpm 操作可能刚重写 profile node_modules（删掉配套插件副本、
       // hoist 核心包形成双实例）—— 服务启动前重建副本并清理遮蔽，
       // 保证加载的始终是内置分发版本。
