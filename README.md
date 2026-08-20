@@ -261,6 +261,16 @@ research/                     # 第三方微信/桥接协议调研资料
 
 ## Star History
 
+
+<a href="https://gitdata.xuanhun520.com/?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date">
+<picture >
+  <source media="(prefers-color-scheme: dark) and (max-width: 800px)" srcset="https://gitdata.xuanhun520.com/api/starimg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date&theme=dark" />
+  <source  media="(prefers-color-scheme: light) and (max-width: 800px)" srcset="https://gitdata.xuanhun520.com/api/starimg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date&theme=light" />
+  <img style="width: 800px; height: 533px;" alt="Star History Chart" src="https://gitdata.xuanhun520.com/api/starimg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date&theme=dark" />
+</picture>
+</a>
+
+
 <p align="center">
   <a href="https://star-history.com/#zouyuxuan122/Deepseek-Harness-EAC&Date">
     <img src="https://api.star-history.com/svg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date" alt="Star History Chart">
