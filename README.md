@@ -272,3 +272,5 @@ research/                     # 第三方微信/桥接协议调研资料
 ## License
 
 MIT。基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）。内置皮肤版权归原作者所有（见上方皮肤许可表）。
+
+<!-- 咕咕嘎嘎 -->
