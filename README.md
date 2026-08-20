@@ -247,8 +247,18 @@ research/                     # 第三方微信/桥接协议调研资料
 
 ## Contributors
 
-- [@zouyuxuan122](https://github.com/zouyuxuan122) — 项目发起者与维护者
-- [@Luoye-hb](https://github.com/Luoye-hb) — Linux 多发行版打包支持（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)）
+感谢每一位贡献者：
+
+<!-- readme: contributors -start -->
+<!-- readme: contributors -end -->
+
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#zouyuxuan122/Deepseek-Harness-EAC&Date">
+    <img src="https://api.star-history.com/svg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date" alt="Star History Chart">
+  </a>
+</p>
 
 ## License
 

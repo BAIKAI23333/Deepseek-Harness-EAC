@@ -197,6 +197,21 @@ openclaw-dsh-bridge/          # WeChat bridge plugin (optional, research-grade)
 research/                     # Third-party WeChat / bridge protocol research
 ```
 
+## Contributors
+
+Thanks to every contributor:
+
+<!-- readme: contributors -start -->
+<!-- readme: contributors -end -->
+
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#zouyuxuan122/Deepseek-Harness-EAC&Date">
+    <img src="https://api.star-history.com/svg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date" alt="Star History Chart">
+  </a>
+</p>
+
 ## License
 
 MIT. Based on [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (MIT). Built-in skins are owned by their original authors (see the skin license table above).
