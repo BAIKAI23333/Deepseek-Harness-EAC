@@ -1,5 +1,5 @@
-/**
- * picturereader core — the entire business logic in ONE self-contained module.
+﻿/**
+ * picturereader core 鈥?the entire business logic in ONE self-contained module.
  *
  * The plugin loads this module dynamically with a cache-busting query on every
  * tool execution (see `importCore` in tool.js), so edits to this file take
@@ -398,7 +398,7 @@ export const AUTO_PALETTE_FRACTIONS = { full: 0.2, basic: 0.03 };
  * Convert a grid-coordinate focus `[row0, col0, row1, col1]` into a fraction
  * region. Rows/cols are INCLUSIVE bounds of the full-image grid that a
  * previous `image_scan` output used (gridWidth = size, gridHeight follows the
- * image aspect — see the "grid coords" line in the render). This lets the
+ * image aspect 鈥?see the "grid coords" line in the render). This lets the
  * model zoom by saying "rows 8-14, cols 15-30" instead of hand-computing
  * 0..1 fractions.
  * @param focus - `[row0, col0, row1, col1]` inclusive grid coordinates.
@@ -420,7 +420,7 @@ export function resolveFocus(focus, gridWidth, gridHeight) {
     throw new Error('image_scan: focus must span at least 2 rows and 2 columns (row1 > row0, col1 > col0)');
   }
   if (row1 >= gridHeight || col1 >= gridWidth) {
-    throw new Error(`image_scan: focus out of range — the grid is ${gridWidth}x${gridHeight} (rows 0..${gridHeight - 1}, cols 0..${gridWidth - 1})`);
+    throw new Error(`image_scan: focus out of range 鈥?the grid is ${gridWidth}x${gridHeight} (rows 0..${gridHeight - 1}, cols 0..${gridWidth - 1})`);
   }
   return [
     col0 / gridWidth,
@@ -556,7 +556,7 @@ export function analyzeImage(rgba, imgWidth, imgHeight, { size, mode, region, pa
   // downsampled cells) so small colored details (pink blossoms, red banners,
   // cyan water) are reported at their TRUE area share instead of being diluted
   // into a gray cell average. Always uses the full 14-color palette, plus a
-  // hue-family breakdown (BY HUE ONLY — survives dark/desaturated colors).
+  // hue-family breakdown (BY HUE ONLY 鈥?survives dark/desaturated colors).
   const { colors: pixelColors, hues: pixelHues } = pixelColorStats(rgba, imgWidth, imgHeight, [rx0, ry0, rx1, ry1]);
   // Colored fraction judged by hue, not by the palette gate: a misty scene
   // whose colors are all dark/desaturated still counts as colorful.
@@ -579,7 +579,7 @@ export function analyzeImage(rgba, imgWidth, imgHeight, { size, mode, region, pa
   const resolvedMode = mode === 'auto' ? (coloredFraction >= COLOR_MODE_FRACTION ? 'color' : 'ascii') : mode;
 
   // When the caller explicitly wants the color grid (mode="color"), auto must
-  // not fall to the achromatic gray palette — the color grid needs colors.
+  // not fall to the achromatic gray palette 鈥?the color grid needs colors.
   const effectivePaletteKey = requestedPalette === 'auto' && resolvedMode === 'color' && paletteKey === 'gray'
     ? 'basic'
     : paletteKey;
@@ -671,7 +671,7 @@ export const MAX_RENDERED_REGIONS = 8;
 /**
  * Connected-color-region analysis (blob detection) on the classified grid:
  * 8-connected flood fill over same-color cells. The output is pure,
- * deterministic image structure — the MODEL does the semantic interpretation
+ * deterministic image structure 鈥?the MODEL does the semantic interpretation
  * ("a large round green blob with rough texture on a thin brown stem" -> tree).
  * @param cells - the sparse cell array from `analyzeImage` (holes = transparent).
  * @param gridWidth - grid width in cells.
@@ -789,7 +789,7 @@ function colorStats(cells, paletteKey, contentCells) {
  * banners are reported instead of being diluted into gray.
  *
  * Also returns `hues`: hue-FAMILY shares (red/orange/yellow/green/cyan/blue/
- * purple/pink/achromatic), which are insensitive to darkness — a dark olive
+ * purple/pink/achromatic), which are insensitive to darkness 鈥?a dark olive
  * hillside that the 14-color palette would fold into "black" is still
  * reported as green-family 12%.
  * @param rgba - RGBA `Buffer`.
@@ -1103,7 +1103,7 @@ export function runOcr(pngPath, { language } = {}) {
  * @param ext - lowercase extension ('.png' etc.).
  * @param options - `{ region, language, engine }`. engine: 'windows'
  *   (Windows.Media.Ocr, default), 'paddle' (PaddleOCR via the local
- *   paddle_venv) or 'rapid' (RapidOCR via the local rapid_venv) — Paddle and
+ *   paddle_venv) or 'rapid' (RapidOCR via the local rapid_venv) 鈥?Paddle and
  *   Rapid are far better at glowing/curved/game-rendered text.
  * @returns `{ width, height, lines }`.
  */
@@ -1116,7 +1116,7 @@ export async function ocrImage(buffer, ext, { region, language, engine = 'window
   }
   const pngBytes = encodePng(work.data, work.width, work.height);
   // WSL compat: powershell.exe (Windows OCR) cannot reach a WSL /tmp path and
-  // GetFileFromPathAsync rejects forward slashes — write the temp PNG under
+  // GetFileFromPathAsync rejects forward slashes 鈥?write the temp PNG under
   // /mnt/c/Windows/Temp and hand Windows a backslash path.
   const isWsl = process.platform === 'linux' && /microsoft/i.test(release());
   const tmpBase = isWsl ? '/mnt/c/Windows/Temp' : tmpdir();
@@ -1167,7 +1167,7 @@ export async function paddleAvailable(python = paddlePython()) {
 /**
  * Run PaddleOCR on a PNG file via the local paddle_venv. Strongly better than
  * Windows OCR for glowing, curved, or game-rendered text (verified on the
- * ENDFIELD "勇于探索叩问苍穹" banner). Model load takes ~2s per call.
+ * ENDFIELD "鍕囦簬鎺㈢储鍙╅棶鑻嶇┕" banner). Model load takes ~2s per call.
  * @param pngPath - absolute path to the PNG.
  * @returns `{ lines: [{ text, score, x, y, width, height }] }` (box aggregated).
  */
@@ -1187,9 +1187,9 @@ export function runPaddleOcr(pngPath) {
     '        if i < len(polys):',
     '            pts = [[int(float(v)) for v in pt] for pt in polys[i]]',
     '            xs = [pt[0] for pt in pts]; ys = [pt[1] for pt in pts]',
-    '            box = {"x": min(xs), "y": min(ys), "w": max(xs)-min(xs), "h": max(ys)-min(ys)}',
+    '            box = {"x": min(xs), "y": min(ys), "width": max(xs)-min(xs), "height": max(ys)-min(ys)}',
     '        else:',
-    '            box = {"x": 0, "y": 0, "w": 0, "h": 0}',
+    '            box = {"x": 0, "y": 0, "width": 0, "height": 0}',
     "        score = round(float(scores[i]), 3) if i < len(scores) else 0.0",
     "        lines.append({'text': t, 'score': score, **box})",
     "out = json.dumps({'lines': lines}, ensure_ascii=False)",
@@ -1264,7 +1264,7 @@ export async function rapidAvailable(python = rapidPython()) {
 
 /**
  * Run RapidOCR on a PNG file via the local rapid_venv. Uses the bundled
- * det/rec/cls ONNX models (no network download on first run — verified on
+ * det/rec/cls ONNX models (no network download on first run 鈥?verified on
  * rapidocr_onnxruntime 1.2.3). Better than Windows OCR for glowing, curved,
  * or game-rendered text.
  * @param pngPath - absolute path to the PNG (forward slashes recommended).
@@ -1346,7 +1346,7 @@ export function renderOcr(value) {
 
 /**
  * Sample a small region as an NxN grid of EXACT pixels (one sample per cell,
- * taken at the cell center — not an average). Together with the contrast
+ * taken at the cell center 鈥?not an average). Together with the contrast
  * statistic this lets the model judge local material: smooth gradients (skin,
  * sky), high-contrast stripes (metal, wood grain), periodic repeats (fabric),
  * high-frequency noise (foliage).
@@ -1369,7 +1369,7 @@ export function samplePixels(rgba, imgWidth, imgHeight, region, size = 8) {
   const regionH = y1 - y0;
   if (regionW < grid || regionH < grid) {
     throw new Error(
-      `image_sample: the region is only ${regionW}x${regionH}px — too small for a ${grid}x${grid} sample; enlarge the region or use a smaller size`
+      `image_sample: the region is only ${regionW}x${regionH}px 鈥?too small for a ${grid}x${grid} sample; enlarge the region or use a smaller size`
     );
   }
   const points = [];
@@ -1524,3 +1524,4 @@ export function structuralHints(cells, gridWidth, gridHeight, paletteKey) {
   hints.push(`left-right symmetry ${Math.round(symmetry * 100)}%${symmetry >= 0.5 ? ' (suggestive of manufactured/constructed shapes)' : ''}`);
   return hints;
 }
+

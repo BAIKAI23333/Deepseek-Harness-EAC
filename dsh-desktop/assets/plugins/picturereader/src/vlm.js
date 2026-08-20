@@ -1,4 +1,4 @@
-/**
+﻿/**
  * VLM (Vision Language Model) bridge for picturereader.
  *
  * Talks to any OpenAI-compatible chat-completions endpoint that accepts
@@ -131,13 +131,13 @@ async function readDshPicturereaderConfig() {
   return null;
 }
 
-// Read config: priority env → picturereader namespace → legacy tool-vision namespace
+// Read config: priority env 鈫?picturereader namespace 鈫?legacy tool-vision namespace
 const dshConfig = await readDshToolVisionConfig();
 const dshPictConfig = await readDshPicturereaderConfig();
 
 // ---------------------------------------------------------------------------
 // GLM-4V-Flash: free built-in vision model from Zhipu AI
-// https://open.bigmodel.cn — register to get your API key
+// https://open.bigmodel.cn 鈥?register to get your API key
 // ---------------------------------------------------------------------------
 
 /** GLM-4V-Flash default endpoint (OpenAI-compatible). */
@@ -177,7 +177,7 @@ let serverStartPromise = null;
 let serverChild = null;
 
 /**
- * Effective API key: runtime explicit key → runtime env var → static default.
+ * Effective API key: runtime explicit key 鈫?runtime env var 鈫?static default.
  * @param {object} rt - runtime config (may be undefined).
  * @returns {string}
  */
@@ -192,7 +192,7 @@ function effectiveApiKey(rt) {
 }
 
 /**
- * Effective endpoint base URL: runtime explicit → static default.
+ * Effective endpoint base URL: runtime explicit 鈫?static default.
  * @param {object} rt
  * @returns {string}
  */
@@ -202,18 +202,18 @@ function effectiveBase(rt) {
 
 /**
  * Check if VLM is configured (has a base URL and API key for cloud endpoints).
- * 隐私模式（privacy）为硬门禁：即使配置了外部 API 也返回 false，绝不外呼。
+ * 闅愮妯″紡锛坧rivacy锛変负纭棬绂侊細鍗充娇閰嶇疆浜嗗閮?API 涔熻繑鍥?false锛岀粷涓嶅鍛笺€?
  * @returns {boolean} true when VLM endpoint is configured and ready to use.
  */
 export function isVlmConfigured() {
   const rt = getRuntimeConfig();
   if (rt?.mode === 'privacy') return false;
-  // 选配（vlm_enabled）未勾选：即使配置了端点/Key 也视为未启用外部 VLM。
+  // 閫夐厤锛坴lm_enabled锛夋湭鍕鹃€夛細鍗充娇閰嶇疆浜嗙鐐?Key 涔熻涓烘湭鍚敤澶栭儴 VLM銆?
   if (rt?.vlm?.enabled === false) return false;
   const base = effectiveBase(rt);
   if (base.length === 0) return false;
   // Cloud endpoints require an API key
-  const isLocal = isManagedEndpoint(base, DEFAULT_PORT);
+  const isLocal = isLocalEndpoint(base);
   if (!isLocal && effectiveApiKey(rt).length === 0) return false;
   return true;
 }
@@ -242,6 +242,15 @@ export async function probe(baseURL, timeoutMs = 3000) {
   }
 }
 
+/**
+ * Check if the endpoint is on localhost (no API key required).
+ * @param {string} baseURL - the VLM endpoint base URL.
+ * @returns {boolean} true when it's a local endpoint.
+ */
+function isLocalEndpoint(baseURL) {
+  const u = baseURL.replace(/\/v1$/, '').replace(/\/+$/, '');
+  return /^http:\/\/(127\.0\.0\.1|localhost):\d+$/.test(u);
+}
 /**
  * Check if the endpoint is a managed local server.
  * @param {string} baseURL - the VLM endpoint base URL.
@@ -403,7 +412,7 @@ export async function sendVisionRequest(config, images, prompt) {
   } else if (/\/v\d+$/.test(base)) {
     endpoint = `${base}/chat/completions`;
   } else {
-    // OpenAI 兼容端点统一用 /v1/chat/completions（LM Studio / llama-server / 云端网关等）
+    // OpenAI 鍏煎绔偣缁熶竴鐢?/v1/chat/completions锛圠M Studio / llama-server / 浜戠缃戝叧绛夛級
     endpoint = `${base}/v1/chat/completions`;
   }
   const res = await fetch(endpoint, {
@@ -450,3 +459,4 @@ export function defaultVlmConfig(overrides = {}) {
     ...overrides,
   };
 }
+
