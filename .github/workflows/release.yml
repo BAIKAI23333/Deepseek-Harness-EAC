@@ -7,8 +7,7 @@ name: Release
 on:
   push:
     tags:
-      ◦ 'v*'
-
+      - 'v*'
 
 permissions:
   contents: write
@@ -26,12 +25,10 @@ jobs:
       run:
         working-directory: dsh-desktop
     steps:
-      ◦ name: 检出代码（标签指向的提交）
-
+      - name: 检出代码（标签指向的提交）
         uses: actions/checkout@v4
 
-      ◦ name: 从标签提取版本号
-
+      - name: 从标签提取版本号
         id: tag
         shell: bash
         run: |
@@ -46,16 +43,14 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "标签: ${tag} -> 版本号: ${version}"
 
-      ◦ name: 安装 Node.js（含 npm 缓存）
-
+      - name: 安装 Node.js（含 npm 缓存）
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 
-      ◦ name: 缓存 Electron 二进制
-
+      - name: 缓存 Electron 二进制
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\electron\Cache
@@ -63,8 +58,7 @@ jobs:
           restore-keys: |
             dsh-electron-win-x64-
 
-      ◦ name: 缓存 electron-builder 工具链
-
+      - name: 缓存 electron-builder 工具链
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\electron-builder\Cache
@@ -72,28 +66,22 @@ jobs:
           restore-keys: |
             dsh-electron-builder-win-x64-
 
-      ◦ name: 安装依赖
-
+      - name: 安装依赖
         run: npm ci
 
-      ◦ name: 获取内置运行时（node.exe + npm CLI）
-
+      - name: 获取内置运行时（node.exe + npm CLI）
         run: npm run fetch-runtime
 
-      ◦ name: 将标签版本号写入 package.json
-
+      - name: 将标签版本号写入 package.json
         run: npm version ${{ steps.tag.outputs.version }} --no-git-tag-version --allow-same-version
 
-      ◦ name: 运行测试
-
+      - name: 运行测试
         run: npm test
 
-      ◦ name: 构建产物（portable + NSIS 安装包 + SHA256SUMS）
-
+      - name: 构建产物（portable + NSIS 安装包 + SHA256SUMS）
         run: npm run dist
 
-      ◦ name: 创建 GitHub Release 并上传产物
-
+      - name: 创建 GitHub Release 并上传产物
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
