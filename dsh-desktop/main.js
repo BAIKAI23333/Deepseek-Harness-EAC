@@ -3174,7 +3174,9 @@ const COMPANION_PLUGINS = [
   // 拖入文件到对话（V4.1，用户建议）：文本/代码文件拖进输入框自动注入
   // 内容（上限 256KB），图片/二进制/超大文件注入路径提示配合
   // inspect_image 与文件工具；纯客户端实现（host 半边 no-op）。
-  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop' },
+  // 默认禁用 —— 与内置 picturereader 的「粘贴即用/图片桥自动分析」入口
+  // 语义重叠，避免拖入图片时重复/竞争注入。
+  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop', disabled: true },
   // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
   // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
   // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
@@ -3185,7 +3187,9 @@ const COMPANION_PLUGINS = [
   // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
   // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
   // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。
-  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste' },
+  // 默认禁用 —— 与内置 picturereader 的「粘贴即用/图片桥自动分析」入口
+  // 语义重叠，避免粘贴图片时重复/竞争注入。
+  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
 ];
 
 // ---------------------------------------------------------------------------
