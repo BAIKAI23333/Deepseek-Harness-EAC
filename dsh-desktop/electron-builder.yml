@@ -37,6 +37,7 @@ files:
   - builtin-collision.js
   - plugin-manager-state.js
   - plugin-guard.js
+  - rescue-agent.js
   - preset-sync.js
   - error-detail.js
   - bundle-integrity.js

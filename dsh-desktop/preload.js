@@ -107,6 +107,18 @@ const dshDesktop = {
     restart: () => ipcRenderer.invoke('chrome:recovery-restart'),
     exportLogs: () => ipcRenderer.invoke('chrome:export-logs'),
   },
+  // 崩溃救援（rescue-agent.js）：服务器死后仍可用的轻量 agent。
+  // 救援页从这里取状态、确认发送清单、发起 AI 诊断、逐项批准执行
+  // 白名单动作（restore/disable/remove/repair/safe-mode/retry）、开关
+  // 壳层安全模式、重启服务。
+  rescue: {
+    getState: () => ipcRenderer.invoke('rescue:state'),
+    confirm: () => ipcRenderer.invoke('rescue:confirm'),
+    diagnose: (selections, userNote) => ipcRenderer.invoke('rescue:diagnose', { selections, userNote }),
+    apply: (suggestion) => ipcRenderer.invoke('rescue:apply', { suggestion }),
+    setSafeMode: (on) => ipcRenderer.invoke('safe-mode:set', { on }),
+    retry: () => ipcRenderer.invoke('rescue:retry'),
+  },
 };
 
 contextBridge.exposeInMainWorld('dshDesktop', dshDesktop);

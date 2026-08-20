@@ -30,6 +30,7 @@ const structuredLogger = require('./logger');
 const balance = require('./balance');
 const { healProfileModuleShadowing } = require('./profile-module-heal');
 const { createGuard } = require('./plugin-guard');
+const rescueAgent = require('./rescue-agent');
 const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
 const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
@@ -932,7 +933,206 @@ async function startAndShowGuarded(overlays = []) {
     // encodingMismatch 让整棵插件树起不来（Issue #77）—— 同样是体检看不到
     // 的数据层问题，一并走 preRetry 归档相反格式文件后重试。
     { preRetry: bootRescuePreRetry }
-  );
+  ).then((url) => {
+    // 健康启动：清零跨会话崩溃计数（救援模式阈值随之解除）。
+    clearRescueState();
+    return url;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 崩溃救援（rescue-agent.js）：服务器死后仍可用的轻量 agent。
+//
+//   · 救援状态（崩溃计数 / 最近一次启动失败文案）落盘 <home>/guard/
+//     rescue-state.json —— 应用级崩溃重启后仍能接续判断；
+//   · 安全模式状态 <home>/guard/safe-mode.json —— 壳层直接改写 patch 为
+//     只含核心行（不依赖任何插件存活），退出时从 guard 快照恢复；
+//   · 全部救援动作经 rescue-agent 白名单校验 + rescueBusy 互斥；
+//   · 诊断内容发送给 AI 前由用户在救援页确认（可逐项取消勾选）。
+// ---------------------------------------------------------------------------
+let rescueBusy = false;
+
+function guardDirPath() {
+  return path.join(dshHome || path.join(os.homedir(), '.dsh'), 'guard');
+}
+
+function rescueStateFile() {
+  return path.join(guardDirPath(), 'rescue-state.json');
+}
+
+function safeModeStateFile() {
+  return path.join(guardDirPath(), 'safe-mode.json');
+}
+
+function writeJsonSafe(file, value) {
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const tmp = file + '.tmp-' + Date.now();
+    fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
+    try { fs.renameSync(tmp, file); } catch {
+      fs.rmSync(file, { force: true, maxRetries: 3 });
+      fs.renameSync(tmp, file);
+    }
+  } catch (err) {
+    log('rescue', '写状态文件失败: ' + String((err && err.message) || err));
+  }
+}
+
+// 崩溃循环计数（跨会话持久化）：每次启动失败记录，成功启动清零。
+function recordBootFailureNow(errText) {
+  const file = rescueStateFile();
+  const prev = readJsonFile(file, null);
+  const next = rescueAgent.recordBootFailure(prev);
+  next.lastErrText = String(errText || '').slice(0, 8000);
+  next.lastErrAt = new Date().toISOString();
+  writeJsonSafe(file, next);
+  return next;
+}
+
+function shouldEnterRescueNow(state) {
+  return rescueAgent.shouldEnterRescue(state || readJsonFile(rescueStateFile(), null));
+}
+
+function clearRescueState() {
+  try { fs.rmSync(rescueStateFile(), { force: true }); } catch {}
+}
+
+// 壳层安全模式：备份（guard 快照）→ patch 只留核心行；退出从快照恢复。
+function safeModeStatus() {
+  const st = readJsonFile(safeModeStateFile(), null);
+  return st && st.active === true ? st : null;
+}
+
+function safeModeSet(on) {
+  if (serverProc && serverProc.exitCode === null && !serverProc.killed && !restartingServer) {
+    return { ok: false, error: 'service-running', hint: '请先停止 Web 服务（或从救援页进入安全模式）' };
+  }
+  if (on) {
+    const st = safeModeStatus();
+    if (st) return { ok: false, error: 'already-on', hint: '安全模式已在启用状态' };
+    const g = ensureGuard();
+    const snap = g.snapshot('safe-mode-before');
+    if (!snap) return { ok: false, error: '安全模式备份失败（无法创建 guard 快照）' };
+    const patchFile = path.join(desktopProfileDir(), 'cordis.patch.yml');
+    let text = '';
+    try { text = fs.readFileSync(patchFile, 'utf8'); } catch {}
+    const rows = (() => { try { return pluginManagerCollect(); } catch { return []; } })();
+    const coreIds = rows.filter((r) => r.core).map((r) => r.id);
+    const { patch, removed } = rescueAgent.safeModePatch(text, coreIds);
+    try {
+      if (patch !== text) fs.writeFileSync(patchFile, patch, 'utf8');
+    } catch (err) {
+      return { ok: false, error: '写入安全模式配置失败: ' + String((err && err.message) || err) };
+    }
+    writeJsonSafe(safeModeStateFile(), {
+      active: true,
+      enteredAt: new Date().toISOString(),
+      snapshotId: snap.id,
+      removed: removed.length,
+    });
+    log('rescue', '安全模式已开启（核心 ' + coreIds.length + ' 个，移除 ' + removed.length + ' 个插件行）');
+    return { ok: true, restartRequired: true, removed: removed.length, core: coreIds.length };
+  }
+  const st = safeModeStatus();
+  if (!st) return { ok: false, error: 'not-on', hint: '安全模式未启用' };
+  const res = ensureGuard().restore(st.snapshotId);
+  if (!res.ok) return res;
+  try { fs.rmSync(safeModeStateFile(), { force: true }); } catch {}
+  log('rescue', '安全模式已退出（恢复快照 ' + st.snapshotId + '）');
+  return { ok: true, restartRequired: true };
+}
+
+// 诊断上下文收集（单项失败按空处理，绝不抛）。
+function buildRescueDiagnosis() {
+  try {
+    const g = ensureGuard();
+    const state = readJsonFile(rescueStateFile(), null);
+    return rescueAgent.collectDiagnosis({
+      dshHome: dshHome || path.join(os.homedir(), '.dsh'),
+      profileDir: desktopProfileDir(),
+      logsDir,
+      profile: desktopProfile(),
+      versions: { app: APP_VERSION, dsh: dshVersion(), source: dshVersionSource() },
+      plugins: () => { try { return pluginManagerCollect(); } catch { return []; } },
+      snapshots: () => g.listSnapshots(),
+      lastGood: () => g.lastGoodSnapshot(),
+      incidents: () => g.listIncidents().slice(0, 6),
+      readIncident: (id) => { const r = g.readIncident(id); return r && r.ok ? r.content : null; },
+      health: () => g.healthCheck().findings,
+      attribution: () => {
+        const errText = state && state.lastErrText;
+        if (!errText) return null;
+        try { return g.attributeBootFailure(errText); } catch { return null; }
+      },
+      lastErrText: () => (state && state.lastErrText) || '',
+    });
+  } catch (err) {
+    log('rescue', '诊断上下文收集失败: ' + String((err && err.message) || err));
+    return null;
+  }
+}
+
+// AI 建议执行器（只接受 rescue-agent 白名单动作，逐项人工批准后调用）。
+async function rescueExecuteSuggestion(s) {
+  const g = ensureGuard();
+  switch (s.action) {
+    case 'restore': {
+      if (serverProc && serverProc.exitCode === null && !serverProc.killed && !restartingServer) {
+        return { ok: false, error: 'service-running', hint: '请先重启服务（回滚需在重启间隙执行）' };
+      }
+      const r = g.restore(s.params.snapshotId);
+      return r.ok
+        ? { ok: true, result: '已回滚到快照 ' + s.params.snapshotId, restartRequired: true }
+        : { ok: false, error: String((r && r.error) || '回滚失败') };
+    }
+    case 'disable': {
+      const row = pluginManagerCollect().find((x) => x.id === s.params.pluginId);
+      if (!row) return { ok: false, error: '未知插件: ' + s.params.pluginId };
+      if (!row.toggleable) return { ok: false, error: '该插件不可关闭: ' + s.params.pluginId };
+      const r = pluginManagerSetEnabled(s.params.pluginId, false);
+      return r.ok
+        ? { ok: true, result: '已停用插件 ' + s.params.pluginId, restartRequired: true }
+        : { ok: false, error: String((r && r.error) || '停用失败') };
+    }
+    case 'remove': {
+      const r = pluginManagerSetRemoved(s.params.pluginId, true);
+      return r.ok
+        ? { ok: true, result: '已卸载插件 ' + s.params.pluginId, restartRequired: true }
+        : { ok: false, error: String((r && r.error) || '卸载失败') };
+    }
+    case 'repair': {
+      const r = g.repair();
+      const applied = (r && r.applied) || [];
+      return { ok: true, result: applied.length ? '已应用修复: ' + applied.join('；') : '体检未发现可修复项' };
+    }
+    case 'safe-mode': {
+      const r = safeModeSet(s.params.on);
+      return r.ok
+        ? { ok: true, result: s.params.on ? '已开启安全模式（重启服务生效）' : '已退出安全模式（重启服务生效）', restartRequired: true }
+        : r;
+    }
+    case 'retry': {
+      if (serverProc && serverProc.exitCode === null && !serverProc.killed && !restartingServer) {
+        const r = await restartWebServiceCore();
+        return r.ok ? { ok: true, result: '服务已重启: ' + r.url } : r;
+      }
+      const url = await startAndShowGuarded();
+      return { ok: true, result: '服务已启动: ' + url };
+    }
+    case 'export':
+      return { ok: true, result: '已提示用户导出诊断 zip（导出在「导出日志」按钮）' };
+    default:
+      return { ok: false, error: 'unknown action: ' + s.action };
+  }
+}
+
+function showRescuePage() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.loadFile(path.join(__dirname, 'assets', 'recovery.html')).catch(() => {});
+  } catch (err) {
+    log('recovery', '进入救援页失败: ' + String((err && err.message) || err));
+  }
 }
 
 // V4.4：守护启动 preRetry 汇聚 —— 把两类「体检看不到的数据/配置层修复」
@@ -1045,6 +1245,15 @@ function applyKoffiPreflightAsync() {
 }
 
 function handleBootFailure(err) {
+  // 崩溃循环计数（跨会话落盘）：窗口内连续多次失败 → 不再弹对话框骚扰，
+  // 直接进救援模式（救援页有完整手动/自动修复能力）。
+  const crashState = recordBootFailureNow(String((err && err.message) || err));
+  if (shouldEnterRescueNow(crashState)) {
+    log('guard', `连续 ${crashState.bootFailures} 次启动失败（窗口内），进入救援模式`);
+    showRescuePage();
+    scheduleClientUpdateRescue();
+    return;
+  }
   const ov = updater.overlayBinPath(updCtx());
   if (ov && fs.existsSync(ov)) {
     // V4.1 更新保障②：上次更新保留的上一版本备份可用时，优先提供
@@ -1053,6 +1262,7 @@ function handleBootFailure(err) {
     // V4.2 插件即时提醒：报错文案归因到 profile 里的插件时，提供
     // 「停用插件 X 并重试」（写盘停用，重启不还原）；另有最后良好快照时
     // 提供「回滚到最后良好快照并重试」。两项都失败才轮到版本级回退。
+    // V4.4：第一按钮永远是「进入救援模式」（完整查看/修复/AI 诊断）。
     let blame = null;
     let blameRow = null;
     try {
@@ -1070,6 +1280,7 @@ function handleBootFailure(err) {
     const btnDisable = blameRow && blameRow.toggleable ? '停用插件 ' + blameRow.name + ' 并重试' : null;
     const btnRollback = lastGood ? '回滚到最后良好快照并重试' : null;
     const buttons = [
+      '进入救援模式',
       ...(btnDisable ? [btnDisable] : []),
       ...(btnRollback ? [btnRollback] : []),
       ...(prev ? ['回退到上一版本并重试', '回退到内置版本', '重试', '退出'] : ['回退到内置版本并重试', '重试', '退出']),
@@ -1083,6 +1294,7 @@ function handleBootFailure(err) {
     }
     if (prev) detailLines.push('', `可回退到上一版本（v${prev.version}）或内置版本继续使用。`);
     else detailLines.push('', '可回退到内置版本继续使用。');
+    detailLines.push('', '也可进入救援模式：查看日志/快照/事故报告，或让 AI 诊断后按建议修复。');
     showBox({
       type: 'error',
       title: 'DeepSeek Harness 启动失败',
@@ -1094,6 +1306,11 @@ function handleBootFailure(err) {
     }).then(({ response }) => {
       let i = 0;
       const take = () => i++;
+      // 第一按钮：进入救援模式（完整修复能力 + AI 诊断）。
+      if (response === take()) {
+        showRescuePage();
+        return;
+      }
       // 归因到插件时，优先给「停用插件」——
       if (btnDisable && response === take()) {
         try {
@@ -2107,6 +2324,124 @@ function registerChromeIpc() {
     if (payload?.intent !== 'restart-service') return { ok: false, error: 'missing-intent' };
     if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
     return restartWebServiceCore();
+  });
+
+  // ── 崩溃救援（rescue-agent.js）：服务器死后仍可用的轻量 agent。 ────────
+  // 救援页（assets/recovery.html）从这里取状态、确认发送清单、发起 AI 诊断、
+  // 逐项批准执行白名单动作、开关安全模式、重启服务。
+  ipcMain.handle('rescue:state', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return null;
+    const home = dshHome || path.join(os.homedir(), '.dsh');
+    const crash = readJsonFile(rescueStateFile(), null);
+    let attribution = null;
+    try {
+      if (crash && crash.lastErrText) attribution = ensureGuard().attributeBootFailure(crash.lastErrText);
+    } catch {}
+    let snapshots = [];
+    let incidents = [];
+    let lastGood = null;
+    try {
+      const g = ensureGuard();
+      snapshots = g.listSnapshots().slice(0, 20);
+      incidents = g.listIncidents().slice(0, 20);
+      lastGood = g.lastGoodSnapshot();
+    } catch {}
+    return {
+      appVersion: APP_VERSION,
+      dshVersion: dshVersion(),
+      agentSource: dshVersionSource(),
+      profile: desktopProfile(),
+      logsDir,
+      aiReady: !!balance.readApiKey(home),
+      busy: rescueBusy,
+      safeMode: safeModeStatus(),
+      serverAlive: !!(serverProc && serverProc.exitCode === null && !serverProc.killed),
+      crash,
+      threshold: rescueAgent.DEFAULT_OPTS.BOOT_FAILURE_THRESHOLD,
+      snapshots,
+      incidents,
+      lastGood,
+      attribution,
+    };
+  });
+
+  ipcMain.handle('rescue:confirm', (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    const diag = buildRescueDiagnosis();
+    if (!diag) return { ok: false, error: '诊断上下文收集失败' };
+    return { ok: true, sendManifest: diag.sendManifest, totalBytes: diag.totalBytes };
+  });
+
+  ipcMain.handle('rescue:diagnose', async (event, opts = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    if (rescueBusy) return { ok: false, error: 'busy' };
+    const diag = buildRescueDiagnosis();
+    if (!diag) return { ok: false, error: '诊断上下文收集失败' };
+    const selections = Array.isArray(opts && opts.selections) ? opts.selections : [];
+    const userNote = String((opts && opts.userNote) || '').slice(0, 2000);
+    // 按用户确认清单裁剪后发送（取消勾选的内容绝不发送）。
+    const payload = rescueAgent.filterDiagnosisPayload(diag.payload, diag.sendManifest, selections);
+    const apiKey = balance.readApiKey(dshHome || path.join(os.homedir(), '.dsh'));
+    if (!apiKey) {
+      return { ok: false, error: 'no-key', hint: '未找到 DEEPSEEK_API_KEY（环境变量或 ~/.dsh/.credentials.yaml）' };
+    }
+    rescueBusy = true;
+    try {
+      const messages = [
+        { role: 'system', content: rescueAgent.buildDiagnosisPrompt(payload) },
+        ...(userNote ? [{ role: 'user', content: '补充信息：' + userNote }] : []),
+      ];
+      const r = await rescueAgent.chatCompletions({
+        apiKey,
+        model: rescueAgent.DEFAULT_OPTS.MODEL,
+        messages,
+        timeoutMs: rescueAgent.DEFAULT_OPTS.AI_TIMEOUT_MS,
+      });
+      if (!r.ok) return r;
+      const parsed = rescueAgent.parseAiResponse(r.content);
+      if (!parsed.ok) return parsed;
+      log('rescue', `AI 诊断完成：${parsed.suggestions.length} 条建议`);
+      return parsed;
+    } finally {
+      rescueBusy = false;
+    }
+  });
+
+  ipcMain.handle('rescue:apply', async (event, { suggestion } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    if (rescueBusy) return { ok: false, error: 'busy' };
+    rescueBusy = true;
+    try {
+      return await rescueAgent.applySuggestion(
+        suggestion,
+        (s) => rescueExecuteSuggestion(s),
+        (t, m) => log(t, m)
+      );
+    } finally {
+      rescueBusy = false;
+    }
+  });
+
+  ipcMain.handle('safe-mode:set', async (event, { on } = {}) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    if (rescueBusy) return { ok: false, error: 'busy' };
+    rescueBusy = true;
+    try {
+      return safeModeSet(on === true);
+    } finally {
+      rescueBusy = false;
+    }
+  });
+
+  ipcMain.handle('rescue:retry', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    if (rescueBusy) return { ok: false, error: 'busy' };
+    rescueBusy = true;
+    try {
+      return await rescueExecuteSuggestion({ action: 'retry', params: {}, reason: '用户手动重试', risk: 'low' });
+    } finally {
+      rescueBusy = false;
+    }
   });
 
   // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
