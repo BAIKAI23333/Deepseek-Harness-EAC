@@ -252,6 +252,19 @@ research/                     # 第三方微信/桥接协议调研资料
   <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
     <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
   </a>
+</p>
+
+### QQ 交流群
+
+<p align="center">
+  <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC 交流群二维码（群号：523412163）" width="360" />
+</p>
+
+<p align="center">QQ群：<strong>523412163</strong></p>
+
+### Bug 反馈
+
+遇到问题时，请前往 [Bug 反馈网站](https://eac.dtyg123.dpdns.org/) 提交反馈。
 
 ## Star History
 
