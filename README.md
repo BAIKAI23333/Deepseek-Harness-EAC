@@ -261,21 +261,13 @@ research/                     # 第三方微信/桥接协议调研资料
 
 ## Star History
 
-
-<a href="https://gitdata.xuanhun520.com/?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date">
-<picture >
-  <source media="(prefers-color-scheme: dark) and (max-width: 800px)" srcset="https://gitdata.xuanhun520.com/api/starimg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date&theme=dark" />
-  <source  media="(prefers-color-scheme: light) and (max-width: 800px)" srcset="https://gitdata.xuanhun520.com/api/starimg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date&theme=light" />
-  <img style="width: 800px; height: 533px;" alt="Star History Chart" src="https://gitdata.xuanhun520.com/api/starimg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date&theme=dark" />
-</picture>
+<a href="https://www.star-history.com/?repos=zouyuxuan122%2FDeepseek-Harness-EAC&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&theme=dark&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=zouyuxuan122/Deepseek-Harness-EAC&type=date&legend=bottom-right&sealed_token=5SkHr7TORH0WuK6eeH5IP-Q2hISGL0m3EDvMKDG6hAUNQssgWBUixIuZWP_ygvty93H_loEZ8JUEgXKy8xGAuH4-mq_DTlClZbM_mOYiomJbfc3zANNWFg" />
+ </picture>
 </a>
-
-
-<p align="center">
-  <a href="https://star-history.com/#zouyuxuan122/Deepseek-Harness-EAC&Date">
-    <img src="https://api.star-history.com/svg?repos=zouyuxuan122/Deepseek-Harness-EAC&type=Date" alt="Star History Chart">
-  </a>
-</p>
 
 ## License
 
