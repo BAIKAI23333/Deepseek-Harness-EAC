@@ -14,7 +14,45 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 影响治理 + 内置接管同名市场包）→
 4.3.0（本版：内置插件更新 + 插件市场「更新」标签 + 市场插件更新）→
 4.4.0（本版：修复设置页「Skills 与 MCP → 打开目录」失效 + 安装版更新
-4 目录备份/回滚 + 结构化日志 + 插件自写 patch 行保护）。
+4 目录备份/回滚 + 结构化日志 + 插件自写 patch 行保护）→
+4.6.0（本版：AI 主动修复 —— 救援页一键自动诊断、自动执行修复、自动重启）→
+
+## [4.6.0] · 2026-08-20
+
+### 新增：AI 主动修复（一键全自动）
+- 救援页新增「AI 自动修复」按钮：一键串联 诊断 → AI 分析 → 自动执行修复 →
+  自动重启 全链路，最多迭代两轮；高风险动作（回滚/卸载）自动跳过，多轮
+  修复后仍无法启动则自动兜底（回滚最后良好快照 + 开启安全模式），过程
+  逐轮展示在救援页。
+- AI 可直接编辑白名单配置文件修复根因（`edit-file`）：仅限
+  `settings.yaml` 与 profile 的 `package.json`、`pnpm-lock.yaml`、
+  `pnpm-workspace.yaml`、`cordis.patch.yml`、`.dsh-builtin-plugins.json`，
+  支持最小化行级编辑（replace-line / delete-line / insert-after）与整文件
+  重建；写前快照备份、写后强制校验 YAML/JSON 可解析，非法内容绝不落盘。
+- 新增 `resync` 动作：一键重装/修复 profile 模块树（内置插件树同步 +
+  模块遮蔽清理）。
+- 诊断上下文新增全局 `settings.yaml`（快照与规则体检都不覆盖的配置面，
+  AI 主动修复的主要作战对象），纳入发送清单可选勾选。
+- 验证：`test/rescue-auto-repair.test.mjs`（自动修复循环）、
+  `test/rescue-agent.test.mjs`（编辑白名单/行级编辑/可解析校验）、
+  `test/rescue-integration.test.mjs`（IPC/桥接/救援页接线）覆盖。
+
+4.5.0（本版：崩溃救援模式 + 内置识图引擎更换为 picturereader）。
+
+## [4.5.0] — 2026-08-20
+
+### 新增：崩溃救援模式（日志/快照/安全模式/AI 诊断修复）
+- 启动失败不再束手无策：自动收集诊断包（日志尾部 / 事故报告 / profile 快照 /
+  插件清单），一键进入安全模式（禁用问题插件后再启动），并提供 AI 诊断修复
+  建议；完整视图可逐项查看与修复，事故现场全程留痕。
+- 验证：`test/rescue-agent.test.mjs`、`test/rescue-integration.test.mjs` 覆盖
+  诊断收集、安全模式降级、修复链路与看门狗集成。
+
+### 更换：内置识图引擎（dsh-tool-vision → picturereader）
+- 原内置 `dsh-tool-vision` 由社区成熟插件 `picturereader` 接管（PR #105）：
+  保留 `inspect_image` 工具语义，能力扩展为图片批量处理、文档转图、视觉问答，
+  并提供独立的视觉模型设置入口。
+- 配套测试：`tool-vision-stream-guard` 相应迁移至 picturereader 链路。
 
 ## [4.4.1] — 2026-08-20
 
