@@ -86,6 +86,10 @@ const dshDesktop = {
     set: (model, prices) => ipcRenderer.invoke('dsh:balance-prices-set', { model, prices }),
     reset: (model) => ipcRenderer.invoke('dsh:balance-prices-reset', { model }),
   },
+  // 获取所有可用模型列表（用于余额插件的价格设置页）
+  balanceModels: {
+    list: () => ipcRenderer.invoke('dsh:balance-models'),
+  },
   // 「文件」视图的还原请求：changes = [{path, op, oldText, newText}]（逆序）。
   revertFiles: (changes) => ipcRenderer.invoke('dsh:file-revert', { changes }),
   // 「全部文件」视图：用系统默认程序打开项目文件。

@@ -2851,7 +2851,7 @@ function registerChromeIpc() {
   ipcMain.handle('dsh:balance-prices-set', async (event, { model, prices } = {}) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
     const m = String(model || '');
-    if (!balance.DEFAULT_PRICES[m]) return { ok: false, error: '未知模型: ' + m };
+    if (!m) return { ok: false, error: '模型名称不能为空' };
     try {
       const cleaned = balance.sanitizePrices(prices);
       const ctx = updCtx();
@@ -2880,6 +2880,122 @@ function registerChromeIpc() {
       return { ok: true };
     } catch (err) {
       return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  // 获取所有可用模型列表（用于余额插件的价格设置页）
+  // 直接从 settings.yaml 的 llm-pi-ai.providers 中读取所有配置的模型
+  ipcMain.handle('dsh:balance-models', async (event) => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: 'unauthorized' };
+    try {
+      const home = dshHome || path.join(os.homedir(), '.dsh');
+      const settingsPath = path.join(home, 'settings.yaml');
+      if (!fs.existsSync(settingsPath)) {
+        return { ok: true, models: [] };
+      }
+      const text = fs.readFileSync(settingsPath, 'utf8');
+      const models = [];
+
+      // 简单的 YAML 解析：提取 llm-pi-ai.providers 下的所有模型
+      const lines = text.split(/\r?\n/);
+      let inProviders = false;
+      let providerIndent = -1;
+      let currentProvider = '';
+      let inModels = false;
+      let modelsIndent = -1;
+      let currentModel = null;
+
+      for (const line of lines) {
+        // 跳过空行和注释
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+
+        // 计算缩进
+        const indent = line.search(/\S/);
+
+        // 检测 llm-pi-ai.providers 块
+        if (/^llm-pi-ai\s*:/i.test(line)) {
+          inProviders = true;
+          providerIndent = -1;
+          continue;
+        }
+
+        // 在 llm-pi-ai 块内检测 providers
+        if (inProviders && /^\s+providers\s*:/i.test(line)) {
+          providerIndent = indent;
+          continue;
+        }
+
+        // 如果在 providers 块内
+        if (providerIndent >= 0) {
+          // 如果缩进小于等于 providers 的缩进，说明离开了 providers 块
+          if (indent <= providerIndent && line.trim()) {
+            // 检查是否是新的顶级配置块
+            if (/^[a-z]/i.test(line.trim())) {
+              break;
+            }
+            continue;
+          }
+
+          // 检测 provider 名称（缩进比 providers 多 2-4 个空格，排除 models/baseURL/apiKeyEnv 等字段）
+          const providerMatch = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([a-z][\\w-]*)\\s*:`));
+          if (providerMatch && !inModels && !['models', 'baseurl', 'apikeyenv', 'displayname', 'api'].includes(providerMatch[1].toLowerCase())) {
+            currentProvider = providerMatch[1];
+            continue;
+          }
+
+          // 检测 models 块
+          if (/^\s+models\s*:/i.test(line) && indent > providerIndent) {
+            inModels = true;
+            modelsIndent = indent;
+            continue;
+          }
+
+          // 在 models 块内
+          if (inModels) {
+            // 如果缩进小于等于 models 的缩进，说明离开了 models 块
+            if (indent <= modelsIndent && line.trim()) {
+              inModels = false;
+              currentModel = null;
+              // 重新检测 provider
+              const reProvider = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([\\w][\\w-]*)\\s*:`));
+              if (reProvider) {
+                currentProvider = reProvider[1];
+              }
+              continue;
+            }
+
+            // 检测 model 条目（- id: xxx）
+            const modelMatch = line.match(/^\s+-\s+id\s*:\s*(\S+)/);
+            if (modelMatch) {
+              const modelId = modelMatch[1].replace(/^["']|["']$/g, '');
+              currentModel = { id: modelId, name: modelId, provider: currentProvider };
+              models.push(currentModel);
+              continue;
+            }
+
+            // 检测 model 的 name 字段
+            const nameMatch = line.match(/^\s+name\s*:\s*(.+)/);
+            if (nameMatch && currentModel) {
+              currentModel.name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+              continue;
+            }
+          }
+        }
+      }
+
+      // 按 model id 去重（保留第一个遇到的 provider）
+      const seen = new Set();
+      const uniqueModels = [];
+      for (const m of models) {
+        if (!seen.has(m.id)) {
+          seen.add(m.id);
+          uniqueModels.push(m);
+        }
+      }
+
+      return { ok: true, models: uniqueModels };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err), models: [] };
     }
   });
 
