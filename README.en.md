@@ -206,6 +206,27 @@ Thanks to every contributor:
   </a>
 </p>
 
+### Community Groups
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ Community Group 2 QR code" width="320" />
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC WeChat community group QR code" width="320" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>QQ Community Group 2</strong><br />Group number: 1021296425</td>
+    <td align="center"><strong>WeChat Community Group</strong></td>
+  </tr>
+</table>
+
+### Bug Reports
+
+To report a bug or request a feature, visit [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/).
+
 
 ## Star History
 

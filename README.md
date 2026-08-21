@@ -259,14 +259,14 @@ research/                     # 第三方微信/桥接协议调研资料
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群二维码" width="320" />
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 2 二维码" width="320" />
     </td>
     <td align="center" width="50%">
       <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
     </td>
   </tr>
   <tr>
-    <td align="center"><strong>QQ 交流群</strong><br />群号：523412163</td>
+    <td align="center"><strong>QQ 交流群 2</strong><br />群号：1021296425</td>
     <td align="center"><strong>微信交流群</strong></td>
   </tr>
 </table>
