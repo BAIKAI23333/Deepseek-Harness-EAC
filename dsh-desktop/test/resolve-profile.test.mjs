@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveProfile } from '../assets/plugins/dsh-webui-market/lib/host.js';
+import { resolveProfile } from '../assets/plugins/dsh-unified-market/lib/host.js';
 
 // 防呆（v4.2，用户反馈问题 6）：插件安装报
 //   [error] spawn C:\Program Files\...\resources\node\node.exe ENOENT

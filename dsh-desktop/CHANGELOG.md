@@ -16,6 +16,14 @@ DeepSeek Harness（dsh）的 Windows 桌面客户端：内置独立 Node 运行�
 4.4.0（本版：修复设置页「Skills 与 MCP → 打开目录」失效 + 安装版更新
 4 目录备份/回滚 + 结构化日志 + 插件自写 patch 行保护）→
 4.6.0（本版：AI 主动修复 —— 救援页一键自动诊断、自动执行修复、自动重启）→
+next（统一插件市场：以 dsh-unified-market 取代 webui-market / zat-market /
+旧 npm 市场三源合一 —— 精选目录 + GitHub dsh-plugin 生态 + npm 检索；
+EAC 特化（web-desktop profile 归一化）；试装验证 + 冲突预检 + 安装前快照 +
+allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + 自动更新三档 +
+更新进度窗口；Windows 文件锁排队与「服务启动早期」自动消费（含修复主进程
+排队消费对 update 类任务遗漏）；本地链接（link:/file:）插件从上游接管更新
+（junction EPERM 处理 + 失败回滚）；24h 发布保护期过滤；市场自身经官方
+内置插件更新自更新）→
 
 ## [4.6.0] · 2026-08-20
 

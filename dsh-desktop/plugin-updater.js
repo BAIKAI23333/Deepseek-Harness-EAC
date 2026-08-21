@@ -21,7 +21,7 @@
 //   · engines.dsh 门槛：新包要求的内核版本高于当前 dsh → 拒绝
 //   · npm 下载加 --ignore-scripts，绝不执行第三方安装脚本
 //   · 合并以当前资产副本为底、npm 包覆盖其上：保留 EAC 附加文件（如
-//     dsh-webui-market 的离线目录快照 data/），只增不删
+//     dsh-unified-market 的离线目录快照 data/），只增不删
 //   · 单插件失败/未上架/404 → 优雅降级，绝不阻塞
 
 const path = require('node:path');

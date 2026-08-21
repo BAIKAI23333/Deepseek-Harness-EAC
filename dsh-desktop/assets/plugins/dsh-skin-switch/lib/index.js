@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+﻿import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, sep } from "node:path";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -21,7 +21,7 @@ import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
 
 // 桌面端 v4 起默认运行在专属 profile（web-desktop），main.js 通过
 // DSH_DESKTOP_PROFILE 环境变量把实际 profile 名传给 dsh web 子进程（与
-// dsh-dock-settings / dsh-webui-market 的 host 半边同一约定）。皮肤行必须
+// dsh-dock-settings / dsh-unified-market 的 host 半边同一约定）。皮肤行必须
 // 读写服务实际使用的 profile，否则 apply 写进旧 web profile、重启后皮肤
 // 不变。独立 CLI 安装（无该变量或值非法）仍用原生 web profile。
 function profileName() {

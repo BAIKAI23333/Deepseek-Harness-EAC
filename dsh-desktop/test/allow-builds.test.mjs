@@ -1,4 +1,4 @@
-import test from 'node:test';
+﻿import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 //   dsh plugin add github:X 失败 → 只打印 "allowBuilds 加白名单" 提示。
 // 本测试覆盖 pnpm 封锁提示的多形态解析与 pnpm-workspace.yaml 的行级编辑。
 
-const mod = await import(pathToFileURL(join('assets', 'plugins', 'dsh-webui-market', 'lib', 'allow-builds.mjs')).href);
+const mod = await import(pathToFileURL(join('assets', 'plugins', 'dsh-unified-market', 'lib', 'allow-builds.mjs')).href);
 const { parseBlockedBuildKeys, readAllowBuilds, ensureAllowBuilds } = mod;
 
 function tmp() {

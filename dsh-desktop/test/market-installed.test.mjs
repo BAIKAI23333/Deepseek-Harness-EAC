@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:
 
 // Import the ESM host module; cordis interface (name/inject/apply) is not
 // exercised here — only the installed-state helpers.
-const host = await import('../assets/plugins/dsh-webui-market/lib/host.js');
+const host = await import('../assets/plugins/dsh-unified-market/lib/host.js');
 const { normalizeRepoUrl, readInstalledProvenance, matchInstalledPackage } = host;
 
 const writePkg = (dir, rel, json) => {
