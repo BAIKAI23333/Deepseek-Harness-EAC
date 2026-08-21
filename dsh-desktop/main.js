@@ -4081,14 +4081,16 @@ function pluginManagerSetEnabled(id, enabled) {
   return { ok: true };
 }
 
-// 曾内置、现已从内置清单移除的插件（tdai-memory：唯一携带 node_modules 的
-// 内置插件，v4.5 起退役 —— 体积 ~310MB 占安装包近半，且 vendor 任一小缺失
-// 即 import 失败拖垮插件树）。老用户 profile 可能残留其 patch 行、node_modules
-// 副本与 package.json 依赖：行在包被清会拖垮插件树，包在行在则退役插件继续
-// 加载。启动时统一清理，避免任何残留路径。
+// 曾内置、现已从内置清单移除的插件。老用户 profile 可能残留其 patch 行、
+// node_modules 副本与 package.json 依赖：行在包被清会拖垮插件树，包在行在则
+// 退役插件继续加载。旧市场还会与 dsh-unified-market 重复注册 /api/dsh-market，
+// 使 dsh web 以 code=1 退出。启动时统一清理这些精确的历史内置条目。
 const RETIRED_BUILTIN_PLUGINS = [
   { id: 'tdai-memory', name: 'dsh-tdai-memory' },
   { id: 'auto-compact', name: 'dsh-auto-compact' },
+  { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },
+  { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin' },
+  { id: 'zat-market', name: 'zat-dsh-engine' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
