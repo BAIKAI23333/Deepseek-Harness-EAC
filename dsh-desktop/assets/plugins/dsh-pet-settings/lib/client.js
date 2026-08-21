@@ -216,12 +216,12 @@ window.__ModuleLoader__.load({
 
     // ── 注册 ─────────────────────────────────────────────────
     function apply(ctx) {
-      ctx.effect(() => ctx.slots.register({
+      ctx.slots.inject('settings.section', () => ctx.slots.register({
         name: 'settings.section',
         id: 'pet-settings',
         order: 8,
         label: () => '桌宠',
-      }, PetSettingsSection), 'dsh-pet-settings: pet settings section');
+      }, PetSettingsSection));
     }
 
     exports.apply = apply;
