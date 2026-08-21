@@ -3301,12 +3301,12 @@ const COMPANION_PLUGINS = [
   // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
   // 可在「设置 → 插件 → 管理」关闭。
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  // 拖入文件到对话（V4.1，用户建议）：文本/代码文件拖进输入框自动注入
-  // 内容（上限 256KB），图片/二进制/超大文件注入路径提示配合
-  // inspect_image 与文件工具；纯客户端实现（host 半边 no-op）。
-  // 默认禁用 —— 与内置 picturereader 的「粘贴即用/图片桥自动分析」入口
-  // 语义重叠，避免拖入图片时重复/竞争注入。
-  { id: 'file-drop', name: 'dsh-file-drop', dir: 'dsh-file-drop', disabled: true },
+  // 拖入文件/文件夹到对话（EAC 特化版，取代原 dsh-file-drop）：文本/代码
+  // 文件内容自动注入（≤256KB）、二进制/超大文件注入完整路径提示、文件夹
+  // 识别 + 降级提示；去掉对图片的接管（与内置 picturereader 的图片入口无
+  // 冲突，故默认启用而非原插件的 disabled）。纯客户端实现（host 半边 no-op）。
+  // 独立发布：https://github.com/jing-hy/dsh-file-drop-eac（issue #141）。
+  { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
   // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
   // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
   // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
