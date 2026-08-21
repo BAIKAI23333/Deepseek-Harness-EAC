@@ -3313,6 +3313,8 @@ const COMPANION_PLUGINS = [
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
   // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
+  // V4.6.1 起侧边栏 display/order 由 nav-custom 单一写者接管，groups 只保留页内折叠。
+  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
   // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
   // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
   // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。

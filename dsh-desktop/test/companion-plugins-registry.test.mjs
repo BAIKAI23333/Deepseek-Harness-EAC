@@ -9,6 +9,12 @@
 // 两者的包目录与功能代码都随包分发，唯独缺一行注册 —— 无任何报错，只能
 // 靠用户感知。本测试让这类丢失在 CI 直接红。
 //
+// V4.6 架构现状：settings-groups 仍是活插件（V4.6.1 起只负责常规页页内
+// 折叠，侧边栏归 nav-custom 单一写者），必须保持注册；plugin-marketplace
+// 则已被 dsh-unified-market 取代并列入 RETIRED_BUILTIN_PLUGINS（启动时清
+// 理残留）—— 守卫方向相反：它绝不能回到 COMPANION_PLUGINS，否则与统一市
+// 场重复注册 /api/dsh-market，dsh web 直接以退出码 1 崩溃。
+//
 // 注意：匹配只看 COMPANION_PLUGINS 数组切片；RETIRED_BUILTIN_PLUGINS 等
 // 其他清单里的同名行不算数（那正是 auto-compact 该待的地方）。
 
@@ -61,8 +67,12 @@ test('every registration row with dir points at a real vendored package', () => 
   assert.deepEqual(bad, [], '注册行指向不存在的插件目录');
 });
 
-test('regression: settings-groups and plugin-marketplace stay registered', () => {
+test('regression: settings-groups stays registered, retired marketplace never returns', () => {
   const slice = companionSlice();
-  assert.match(slice, /id:\s*'settings-groups'/, '侧边栏普通/高级分组（Bug #58）');
-  assert.match(slice, /id:\s*'plugin-marketplace'/, '插件更新标签页（v4.3）');
+  assert.match(slice, /id:\s*'settings-groups'/, '侧边栏普通/高级分组（Bug #58）—— V4.6.1 起负责常规页页内折叠');
+  const retiredStart = main.indexOf('const RETIRED_BUILTIN_PLUGINS');
+  assert.ok(retiredStart >= 0, 'RETIRED_BUILTIN_PLUGINS must exist in main.js');
+  const retiredSlice = main.slice(retiredStart, main.indexOf('];', retiredStart));
+  assert.match(retiredSlice, /id:\s*'plugin-marketplace'/,
+    '旧插件市场必须保持退役 —— 复活会与 dsh-unified-market 重复注册 /api/dsh-market（dsh web 退出码 1）');
 });
