@@ -279,43 +279,43 @@ research/                     # 第三方微信/桥接协议调研资料
 
 | 插件名 | 插件文本/说明 |
 | --- | --- |
-| dsh-auto-compact | 自动压缩（DSH Desktop 配套插件）：监听会话 contextPressure 投影，接近上下文上限（默认 80%，可调）时自动发送 /compact —— 默认开启，对话不再撑爆上下文 |
-| @deepseek-ai/dsh-balance（提供者：deepseek-ai） | DeepSeek 账户余额 + 本轮会话费用估算 + 价格设置（DSH Desktop 配套客户端插件：对话统计栏 dock + 设置页「价格设置」自定义 Token 价格） |
-| dsh-better-sidebar（提供者：omdsh-dev） | DSH web plugin: a VSCode-like right sidebar (explorer / editor / terminal / git / browser), isolated per conversation session. Exposes a service for other plugins to register sidebar tabs and file viewers. |
-| dsh-change-review | AI 变更审核（DSH Desktop 配套插件）：监控会话的文件更改投影（fileChanges），手动或自动向当前对话发送审核请求，让 AI 复查自己刚做的改动（正确性 / 安全性 / 目标一致性），配合「文件」页的一键还原使用 |
-| @deepseek-ai/dsh-client-file-changes（提供者：deepseek-ai） | 「文件」视图：会话文件更改追踪 + 一键还原（数据来自 dsh-file-changes 投影，还原由 DSH Desktop 壳执行） |
-| dsh-compact | Request-path context compaction with bounded overflow recovery for DeepSeek Harness |
-| @deepseek-ai/dsh-conversation-tweaks（提供者：deepseek-ai） | DSH Desktop 配套会话体验：设置-通用里隐藏长篇对话输出 + 会话右侧导航滑轨 |
-| dsh-dafeiyu（提供者：QCYTSN） | A desktop-native BigFish companion driven by DeepSeek Harness session events. |
-| dsh-dock-settings | Skills and MCP management for the dsh web GUI: browse installed skills (with source badges and directory shortcuts) and add/edit/remove @deepseek-ai/dsh-mcp-client rows in the profile patch layer |
-| @deepseek-ai/dsh-easy-setup（提供者：deepseek-ai） | 设置页快速配置（DSH Desktop 配套插件）：视觉模型提供商/模型一键选择、soul.md 人设可视化编辑、从 Codex/Claude Code 目录一键迁移 skills+MCP+记忆 |
-| @deepseek-ai/dsh-file-changes（提供者：deepseek-ai） | 会话文件更改投影（fileChanges）：折叠 tool/result 的 meta.diffs，为「文件」视图与回退提供数据 |
-| dsh-file-drop-eac | 拖入文件/文件夹到对话（Deepseek Harness EAC 特化版，替代已弃用的 dsh-file-drop）：文本/代码文件内容自动注入输入框（体积上限内），二进制/超大文件注入完整路径提示；去掉对图片的接管（交给视觉桥避免重复注入冲突）；新增对文件夹的接管（识别并给出可操作降级提示）。纯客户端实现（host 半边 no-op）。 |
-| @deepseek-ai/dsh-float-window（提供者：deepseek-ai） | DSH Desktop 配套浮窗：把会话弹出到独立窗口，实现分屏多任务 |
-| dsh-font-custom | 外观自定义（DSH Desktop 配套插件）：设置页直接调整界面字体家族、字号与文字/代码颜色，实时预览、按主题变量覆盖、localStorage 持久化 |
-| dsh-image-paste | 图片粘贴发送（DSH Desktop 配套插件）：在对话输入框按 Ctrl/Cmd+V 粘贴剪贴板里的图片时，自动把图片保存到临时目录并把完整路径注入输入框（配合 inspect_image 视觉工具发送），多张图片合并提示；纯客户端 + 一个受控 IPC。 |
-| dsh-message-rewind | Trae-style message rewind for the dsh web GUI: edit any sent user message and regenerate from that point (forks the session at the previous completed turn) |
-| @vlln/dsh-navbar（提供者：vlln） | 对话节点导航条——user 消息快速跳转（自渲染 DOM，官方 client 通道） |
-| dsh-offpeak（提供者：christophersmith2737-commits） | Peak-hour price guard for DeepSeek API tidal pricing: intercept sends during peak hours (Beijing 09:00-12:00 / 14:00-18:00) and schedule them to run at off-peak prices. / DeepSeek 峰谷定价高峰拦截提醒：高峰时段拦截发送，定时到低价时段自动执行。 |
-| @deepseek-ai/dsh-openclaw-bridge（提供者：deepseek-ai） | DSH plugin bridging WeChat official ClawBot / OpenClaw gateways into DSH agent sessions, with a ClawBot settings section in the DSH settings page |
-| dsh-pet（提供者：PC2005-cloud） | A floating desktop pet for the DeepSeek Harness Web UI: idle breathing, occasional direction turns, random actions, and screen wandering. |
-| dsh-pet-settings | 桌宠设置分区（DSH Desktop 配套插件）：在设置页新增「桌宠」分区，集中管理页面桌宠（dsh-pet 开关，大小/位置在桌宠齿轮面板调整）与大肥鱼桌面伴侣（启用、角色大小、空闲微动作频率、减少动态，走 dsh-dafeiyu config 端点，即时生效）。 |
-| @deepseek-ai/dsh-plugin-manager（提供者：deepseek-ai） | DSH Desktop 配套插件：设置页「插件」栏——列出全部内置插件及其作用（含核心组件），配套插件可一键关闭（写入 web profile 的 cordis.patch.yml disabled 条目，重启生效） |
-| dsh-plugin-shield | 插件保护中心（DSH Desktop 配套插件）：快照/一键回滚/健康检查/事故报告，经桌面壳 IPC 驱动内置 plugin-guard 引擎 —— 融合 dsh-plugin-guard / dsh-web-plugin-manager / dsh-plugin-healthcheck 三大社区保护插件并内置 |
-| dsh-plugin-wizard | 插件选择向导（DSH Desktop 配套插件）：从设置页重新打开内置插件选择向导，按需启用/停用内置插件。 |
-| @deepseek-ai/dsh-prompt-custom（提供者：deepseek-ai） | 在 DSH 设置页自定义官方内核注入的提示词（替换整体/追加，应用到 standard 完整 Agent 基准预设） |
-| dsh-session-manager | 对话删除与归档管理（DSH Desktop 内置）：会话行菜单删除按钮 + 设置内「归档对话管理」面板（恢复/删除）。 |
-| dsh-settings-groups | 设置页「常规」页内高级选项折叠（DSH Desktop 配套插件）：把低频使用的选项行（外观/语言/权限预设等，按行标题关键词识别）收进页面底部可折叠的「高级选项」组，默认收起，localStorage 持久化展开状态。纯客户端实现。 |
-| dsh-settings-nav-custom | 设置页左侧边栏自定义（DSH Desktop 配套插件）：设置面板底部「自定义边栏」——按需显示/隐藏与排序设置页左侧导航项（通用/模型/外观/插件/市场等 settings.section 条目），localStorage 持久化，默认全显零行为改变。纯客户端实现。 |
-| @dsh-external/dsh-side-session（提供者：dsh-external） | DSH 临时会话：独立悬浮窗，自动导入当前主对话上下文，发起不污染主会话的临时追问 |
-| @deepseek-ai/dsh-skin-switch（提供者：deepseek-ai） | 设置页「皮肤」tab（DSH Desktop 配套插件）：列出并切换内置皮肤（dsh-web-ui 系列 / dsh-deep-whale maid-atelier），host 半边以 Typert Remote 重写 cordis.patch.yml 的 ui-skin-* 激活行 |
-| dsh-soul-md（提供者：Scorp1o117） | DeepSeek Harness 的 soul.md 风格人设卡插件：把 markdown 人设文件注入系统提示词（soul:persona），文件变更热重载，让 Agent 边干活边角色扮演；附 Web UI 设置栏。 |
-| @deepseek-ai/dsh-terminal（提供者：deepseek-ai） | DSH Desktop 配套终端：与对话/轨迹/文件并列的会话内交互式命令行（SSE 流式，非 PTY） |
-| @deepseek-ai/dsh-third-party-thinking（提供者：deepseek-ai） | 让接入的第三方模型也能在使用时调整思考强度（reasoning effort）：为未声明推理能力的 OpenAI 兼容第三方模型注入 off/high/max 思考强度控件，并把所选档位注入到请求体 |
-| dsh-undo-savepoint | DSH undo/rollback system: snapshot config files on change, undo/redo the last action from the WebUI or by chat, and roll back broken plugin trees without reinstalling. Works even when DSH fails to boot (offline CLI + GUI). |
-| dsh-unified-market（提供者：jing-hy） | 统一插件市场（Unified Plugin Market for DeepSeek Harness）：聚合精选目录（awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm registry 三源；对 DSH Desktop（EAC）特化（web-desktop profile）；来源白名单 + 冲突预检 + 试装验证；后台自动检测 + 可配置自动升级 + 市场自更新；一键检查/全部更新/逐个更新，更新进度窗口 |
-| dsh-web-mobile-fix（提供者：AcidGr） | Mobile layout fixes for the DeepSeek Harness Web UI: settings panel, popups, sidebar, and session header on narrow (≤700px) screens. Pure client-side CSS overlay. |
-| picturereader（提供者：jing-hy） | Unified image understanding plugin for DeepSeek Harness (DSH). Visual twin adapter for native thumbnails + auto-analysis on any text-only model (incl. pi-ai providers); privacy/smart/strict routing; local tools (scan/OCR×3 engines/crop/palette/compare/batch); document-to-image (pdf/word/excel/ppt); optional external VLM bridge. |
+| dsh-auto-compact | 自动压缩：接近上下文上限时自动发送 /compact |
+| @deepseek-ai/dsh-balance | 账户余额、费用估算与价格设置 |
+| dsh-better-sidebar（提供者：omdsh-dev） | VSCode 风格右侧栏，支持资源管理器/编辑器/终端/Git/浏览器 |
+| dsh-change-review | AI 变更审核：自动复查文件改动 |
+| @deepseek-ai/dsh-client-file-changes | 文件视图：会话文件更改追踪与一键还原 |
+| dsh-compact | 请求路径上下文压缩与溢出恢复 |
+| @deepseek-ai/dsh-conversation-tweaks | 隐藏长篇输出 + 会话右侧导航滑轨 |
+| dsh-dafeiyu（提供者：QCYTSN） | 大肥鱼桌面伴侣 |
+| dsh-dock-settings | Skills 与 MCP 设置管理 |
+| @deepseek-ai/dsh-easy-setup | 快速配置：视觉模型、soul.md、迁移 |
+| @deepseek-ai/dsh-file-changes | 会话文件更改投影 |
+| dsh-file-drop-eac | 拖放文件/文件夹到对话 |
+| @deepseek-ai/dsh-float-window | 会话弹出独立窗口 |
+| dsh-font-custom | 字体与文字/代码颜色自定义 |
+| dsh-image-paste | 剪贴板图片粘贴发送 |
+| dsh-message-rewind | 消息改写并从此处重新生成 |
+| @vlln/dsh-navbar（提供者：vlln） | 对话节点导航条：user 消息快速跳转 |
+| dsh-offpeak（提供者：christophersmith2737-commits） | DeepSeek 峰谷价格拦截提醒 |
+| @deepseek-ai/dsh-openclaw-bridge | 微信 ClawBot / OpenClaw 桥接 |
+| dsh-pet（提供者：PC2005-cloud） | 页面悬浮桌宠 |
+| dsh-pet-settings | 桌宠设置分区 |
+| @deepseek-ai/dsh-plugin-manager | 插件管理：列出/启停内置插件 |
+| dsh-plugin-shield | 插件保护：快照/回滚/体检 |
+| dsh-plugin-wizard | 插件选择向导 |
+| @deepseek-ai/dsh-prompt-custom | 自定义内核提示词 |
+| dsh-session-manager | 会话删除与归档管理 |
+| dsh-settings-groups | 设置页高级选项折叠 |
+| dsh-settings-nav-custom | 设置页左侧边栏自定义 |
+| @dsh-external/dsh-side-session（提供者：dsh-external） | 临时会话：不污染主会话的独立追问 |
+| @deepseek-ai/dsh-skin-switch | 内置皮肤切换 |
+| dsh-soul-md（提供者：Scorp1o117） | soul.md 人设卡注入 |
+| @deepseek-ai/dsh-terminal | 会话内交互式命令行 |
+| @deepseek-ai/dsh-third-party-thinking | 第三方模型思考强度控件 |
+| dsh-undo-savepoint | 配置快照与撤销/回滚 |
+| dsh-unified-market | 统一插件市场：聚合三源 |
+| dsh-web-mobile-fix（提供者：AcidGr） | 移动端布局修复 |
+| picturereader | 统一图片理解插件 |
 
 感谢所有插件提供者对本项目与开源社区的贡献；由于插件数量众多，未能逐一统计到所有插件来源，对此表示歉意；欢迎所有插件提供者添加交流群，以便一同交流、共同进步。
 
