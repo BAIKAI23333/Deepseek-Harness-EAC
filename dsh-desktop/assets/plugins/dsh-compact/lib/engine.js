@@ -10,6 +10,15 @@ import {
   toBasicResolvedConfig,
 } from './policy.js'
 
+// 输出截断类失败码：适配器把 finish reason（max_tokens/length）包装成
+// request error 抛出时的 code 别名。恢复路径与上下文溢出一致——压缩后重试；
+// 否则用户手动「继续」只会在同预算上继续堆上下文、必然再次截断（#54 死循环）。
+const OUTPUT_TRUNCATION_CODES = new Set(['max-tokens', 'max_tokens', 'length'])
+
+function isOverflowCode(code) {
+  return code === CONTEXT_WINDOW_EXCEEDED_CODE || OUTPUT_TRUNCATION_CODES.has(code)
+}
+
 function publishStatus(ctx, sessionId, patch) {
   const status = compactStatus.set(sessionId, patch)
   try { ctx.emit?.('dsh-compact/status', status) } catch {}
@@ -39,10 +48,22 @@ export async function summarizeWithToolFreeFallback(summarize, input, onRetry = 
 export function registerAutomaticCompaction(ctx, engine) {
   const overflowRetries = new WeakMap()
   const overflowAgents = new WeakMap()
+  const outputOverflowPending = new WeakSet()
 
   const offPreStep = ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
     if (signal.aborted || !engine.policyFor(agent).enabled) return next()
     try {
+      // 输出截断兜底：turn/end 已持久化截断事实时，先强制压缩再放行请求，
+      // 避免用户「继续」把上下文越堆越大（#54）。失败绝不中断用户 turn。
+      if (outputOverflowPending.delete(agent.session)) {
+        try {
+          const forced = await engine.compactIfNeeded(agent, 'context-overflow', signal)
+          if (forced !== null) logResult(ctx, forced, 'output overflow')
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          ctx.logger?.warn?.(`dsh-compact output overflow compaction failed: ${message}; continuing the turn`)
+        }
+      }
       const result = await engine.compactIfNeeded(agent, 'pressure', signal)
       if (result !== null) logResult(ctx, result, 'step pressure')
     } catch (error) {
@@ -57,9 +78,17 @@ export function registerAutomaticCompaction(ctx, engine) {
   })
 
   const offSessionEvent = ctx.on('session/event', (session, event) => {
-    if (event.type !== 'assistant/message') return
-    const agent = overflowAgents.get(session)
-    if (agent !== undefined) overflowRetries.delete(agent)
+    if (event.type === 'assistant/message') {
+      const agent = overflowAgents.get(session)
+      if (agent !== undefined) overflowRetries.delete(agent)
+      return
+    }
+    // turn/end 的 data.reason.kind 是持久化的结束原因（官方「已达到输出
+    // token 上限」提示读同一字段）：输出截断时标记会话，下一次 pre-step
+    // 先强制压缩再放行请求。
+    if (event.type === 'turn/end' && OUTPUT_TRUNCATION_CODES.has(event?.data?.reason?.kind)) {
+      outputOverflowPending.add(session)
+    }
   })
 
   const offSessionDisposed = ctx.on('session/disposed', (session) => {
@@ -67,7 +96,7 @@ export function registerAutomaticCompaction(ctx, engine) {
   })
 
   const offRequestError = ctx.on('agent/request-error', async ({ agent, failure, signal }, next) => {
-    if (failure.code !== CONTEXT_WINDOW_EXCEEDED_CODE || signal.aborted) return next()
+    if (!isOverflowCode(failure.code) || signal.aborted) return next()
     const policy = engine.policyFor(agent)
     if (!policy.enabled || !policy.recoverOnOverflow || policy.maxOverflowRetries === 0) return next()
     overflowAgents.set(agent.session, agent)
@@ -92,7 +121,7 @@ export function registerAutomaticCompaction(ctx, engine) {
       return next()
     }
     if (signal.aborted || agent.session.surface.replaceGeneration <= generation) return next()
-    if (result !== null) logResult(ctx, result, 'context overflow recovery')
+    if (result !== null) logResult(ctx, result, failure.code === CONTEXT_WINDOW_EXCEEDED_CODE ? 'context overflow recovery' : 'output overflow recovery')
     overflowRetries.set(agent, retries + 1)
     return { kind: 'retry' }
   })
