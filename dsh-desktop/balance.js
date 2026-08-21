@@ -128,10 +128,28 @@ function readApiKey(dshHome) {
 
 // 当前默认模型（~/.dsh/settings.yaml 的 agent-default-model.model），
 // 决定按哪一档价格估算本轮费用。
+// 修复：先定位 agent-default-model 块，再在该块内匹配 model 行，
+// 避免匹配到其他配置块（如 describe-image）的 model 字段。
 function readActiveModel(dshHome) {
   try {
     const text = fs.readFileSync(path.join(dshHome, 'settings.yaml'), 'utf8');
-    const m = text.match(/^\s*model\s*:\s*(\S+)/m);
+    // 找到 agent-default-model: 块的起始位置
+    const blockMatch = text.match(/^agent-default-model\s*:/m);
+    if (!blockMatch) return '';
+    const blockStart = blockMatch.index + blockMatch[0].length;
+    // 找到下一个同级或更高级的 key（缩进 <= 0 的行），作为块的结束
+    const rest = text.slice(blockStart);
+    const lines = rest.split(/\r?\n/);
+    let blockContent = '';
+    for (const line of lines) {
+      // 跳过空行
+      if (!line.trim()) { blockContent += line + '\n'; continue; }
+      // 如果缩进为 0（新的顶级 key），则块结束
+      if (/^\S/.test(line)) break;
+      blockContent += line + '\n';
+    }
+    // 在 agent-default-model 块内匹配 model 行
+    const m = blockContent.match(/^\s*model\s*:\s*(\S+)/m);
     if (m) return m[1];
   } catch {}
   return '';
