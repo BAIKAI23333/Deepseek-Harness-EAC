@@ -2650,8 +2650,8 @@ function registerChromeIpc() {
     }
   });
 
-  // 插件更新（V4.3，设置页「插件 → 更新」标签，dsh-plugin-marketplace 插件
-  // 消费）：内置插件上游更新 —— 检测清单 / 手动更新单个 / 自动更新开关。
+  // 插件更新（设置页「插件 → 更新」，由 dsh-unified-market 统一市场消费）：
+  // 内置插件上游更新 —— 检测清单 / 手动更新单个 / 自动更新开关。
   // 数据与动作都在主进程完成（npm 镜像链 + 覆盖层），Web 端只做展示。
   ipcMain.handle('dsh:plugin-updates', async (event, { force = false } = {}) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) return null;
@@ -3196,8 +3196,12 @@ const COMPANION_PLUGINS = [
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
   { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
-  // 社区插件市场（awesome-dsh-plugin.com 目录）：内置分发，替换早期 npm 检索版市场。
-  { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin', dir: 'dsh-webui-market' },
+  // 统一插件市场（dsh-unified-market，内置）：聚合精选目录
+  // （awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm 检索三源；
+  // EAC 特化（web-desktop profile），试装验证 + 冲突预检 + 后台自动更新 +
+  // 自动更新排队与启动消费 + 市场自更新。取代曾被内置的 webui-market /
+  // zat-market / 旧 npm 市场（各自 profile 定位错误或重复，已从清单移除）。
+  { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
   // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
@@ -3227,11 +3231,6 @@ const COMPANION_PLUGINS = [
   // 值沿用包内 cordis.patch.yml 的出厂默认。
   // 默认禁用 —— 需要页面桌宠时在「设置 → 插件 → 管理」或「桌宠」分区开启。
   { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet', config: { size: 260, position: 'bottom-right' }, disabled: true },
-  // 第二插件市场 Zat-DSH Engine（GitHub releases 分发，v0.5.0 vendor 自
-  // 源码 tag）：GitHub dsh-plugin topic 检索 + 中文简介 + 国内镜像兜底。
-  // 运行时依赖 zod ^4 由 profiles 闭包（junction 指向 app node_modules，
-  // 内含 zod 4.4.3）解析，无需 vendor。
-  { id: 'zat-market', name: 'zat-dsh-engine', dir: 'zat-dsh-engine' },
   // 设置页「Skills 与 MCP」分区：Skills 目录浏览（来源徽标/打开目录）+
   // MCP 服务增删改（读写 profile patch 中的 dsh-mcp-client 行）+ 从
   // Claude Code / Codex 一键导入 MCP 配置。
@@ -3327,7 +3326,7 @@ const COMPANION_PLUGINS = [
 //
 // 只登记「上游仍在 npm / GitHub 发布」的社区插件 —— 内置分发的副本可以
 // 跟随上游修复而更新。EAC 独占插件（package.json 标记 private，如
-// dsh-balance / dsh-terminal）绝不登记；zat-market 自带 selfupdate 不登记。
+// dsh-balance / dsh-terminal）绝不登记。
 // 运行时 npm 404（未上架/改名）优雅降级为「无上游」，绝不阻塞。
 // ---------------------------------------------------------------------------
 const PLUGIN_UPDATE_SOURCES = {
@@ -3338,7 +3337,8 @@ const PLUGIN_UPDATE_SOURCES = {
   'dsh-navbar': { npm: '@vlln/dsh-navbar' },
   'mobile-fix': { npm: 'dsh-web-mobile-fix' },
   'offpeak': { npm: 'dsh-offpeak' },
-  'dsh-market-plugin': { npm: '@sanqi-normal/dsh-webui-market-plugin' },
+  // 统一市场（unified-market）：npm 已发布，正式纳入官方内置插件更新。
+  'unified-market': { npm: 'dsh-unified-market' },
   'dsh-session-manager': { npm: 'dsh-session-manager' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
@@ -3468,7 +3468,7 @@ function copyPluginPackage(profileDirP, src, name) {
   // 内置插件自带的嵌套 node_modules（vendored 运行时依赖）：放在包内部，
   // pnpm 重写 profile node_modules 顶层时不会波及，插件保持自包含。
   copyDir('node_modules');
-  // dsh-webui-market 的离线目录快照（官网不可达时的兜底数据）。
+  // dsh-unified-market 的离线目录快照（官网不可达时的兜底数据）。
   copyDir('data');
   // dsh-pet / dsh-dafeiyu 等带运行时静态资源的插件（宠物动画 webp/png 帧、
   // PyInstaller helper 等）。
@@ -3585,9 +3585,9 @@ function finishMarketMarker(marker, job, attempts, ok, tail) {
 // ---------------------------------------------------------------------------
 // 第三方插件构建产物保留（V4）：pnpm 重写 profile node_modules 后，把快照
 // 里「磁盘上消失」的文件补回去。实现与市场 host 半边共用一份（ESM）：
-// assets/plugins/dsh-webui-market/lib/artifact-keep.mjs。
+// assets/plugins/dsh-unified-market/lib/artifact-keep.mjs。
 // ---------------------------------------------------------------------------
-const ARTIFACT_KEEP_MODULE = path.join(__dirname, 'assets', 'plugins', 'dsh-webui-market', 'lib', 'artifact-keep.mjs');
+const ARTIFACT_KEEP_MODULE = path.join(__dirname, 'assets', 'plugins', 'dsh-unified-market', 'lib', 'artifact-keep.mjs');
 let artifactKeepMod = null;
 
 async function artifactKeep() {
@@ -3602,8 +3602,8 @@ async function artifactKeep() {
 }
 
 // V4.2：pnpm allowBuilds 自动放行（排队任务 + 守护启动失败链共用同一份
-// ESM：assets/plugins/dsh-webui-market/lib/allow-builds.mjs）。
-const ALLOW_BUILDS_MODULE = path.join(__dirname, 'assets', 'plugins', 'dsh-webui-market', 'lib', 'allow-builds.mjs');
+// ESM：assets/plugins/dsh-unified-market/lib/allow-builds.mjs）。
+const ALLOW_BUILDS_MODULE = path.join(__dirname, 'assets', 'plugins', 'dsh-unified-market', 'lib', 'allow-builds.mjs');
 let allowBuildsMod = null;
 
 async function allowBuilds() {

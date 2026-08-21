@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+﻿import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { Remote, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";
@@ -17,7 +17,7 @@ import { buildMigrationPrompt, resolvePersonaPath } from "./logic.js";
  *   - migrationPrompt — the instruction the one-click migration flow copies
  *     into a fresh session whose workspace is a Codex / Claude Code folder.
  *
- * Same strict-descriptor registration as dsh-plugin-marketplace: the
+ * Same strict-descriptor registration as dsh-unified-market: the
  * companion copy is not the same module instance as the host's typert
  * packages, so SRC markers stay invisible across instances and the endpoint
  * must be registered into the host-side typert local store explicitly.

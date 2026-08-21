@@ -20,11 +20,9 @@ whenToUse: 用户询问 DSH Desktop / EAC 客户端功能（窗口、托盘、�
 
 ## 插件（设置 → 插件）
 
-- 两个插件市场并存：
-  - **插件市场**（dsh-webui-market）：awesome-dsh-plugin.com 精选目录，安装前有试装验证；
-  - **Zat 市场**（zat-dsh-engine）：GitHub `dsh-plugin` topic 检索，中文简介，国内镜像兜底。
+- **统一市场**（dsh-unified-market）：三源合一的插件市场 —— 🎯 精选目录（awesome-dsh-plugin.com）+ 🐙 GitHub `dsh-plugin` 生态 + 📦 npm 检索；安装前有试装验证 + 冲突预检；支持已下载插件更新面板（一键全部更新/逐个更新）、自动更新三档开关、更新进度窗口。
 - 卡片标「**已内置**」的插件随客户端分发、每次启动自动同步：不能也不需要从市场安装/卸载。
-- 安装/卸载后一般需重启 Web 服务生效；Windows 文件锁导致的排队任务会在下次服务重启时自动完成。
+- 安装/卸载/更新后一般需重启 Web 服务生效；Windows 文件锁导致的排队任务会在下次服务重启时自动完成；本地链接（`link:`/`file:`）插件的更新会从上游接管安装（本地目录保留）。
 
 ## 桌面宠物
 

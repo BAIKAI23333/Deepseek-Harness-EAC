@@ -67,7 +67,7 @@ const dshDesktop = {
     // V4.2：移除（卸载语义）/恢复内置插件，返回 { ok, restartRequired }。
     setRemoved: (id, removed) => ipcRenderer.invoke('dsh:plugin-set-removed', { id, removed }),
   },
-  // 插件更新（V4.3，dsh-plugin-marketplace「更新」标签）：内置插件上游更新
+  // 插件更新（dsh-unified-market 统一市场「更新」）：内置插件上游更新
   // —— 清单 / 手动更新单个 / 自动更新开关（默认关，仅提示）。
   pluginUpdates: {
     list: (force = false) => ipcRenderer.invoke('dsh:plugin-updates', { force }),

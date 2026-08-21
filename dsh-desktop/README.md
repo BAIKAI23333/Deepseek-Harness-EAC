@@ -134,8 +134,7 @@
 
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
-| `dsh-webui-market` | 社区插件市场：浏览 awesome-dsh-plugin.com 收录的全部插件，一键安装/卸载（含安装前试启动探测）；目录中已被客户端内置的插件显示「已内置」徽标并拒绝重复安装 | 设置 → 插件 → 插件市场 |
-| `zat-dsh-engine` | 第二插件市场（Zat 可视化市场）：GitHub `dsh-plugin` topic 检索、中文插件简介、国内镜像兜底 | 设置 → 插件 → Zat 标签页 |
+| `dsh-unified-market` | 统一插件市场：三源合一（awesome-dsh-plugin.com 精选目录 + GitHub `dsh-plugin` 生态 + npm 检索），安装走试装验证 + 冲突预检；已下载插件更新面板（一键全部/逐个更新）、自动更新三档、更新进度窗口、市场自更新 | 设置 → 插件 → 统一市场 |
 | `dsh-plugin-manager`（v4） | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停 | 设置 → 插件 → 管理 |
 | `dsh-message-rewind` | 对话回退（Trae 风格）：悬停任意用户消息 →「编辑并回退」→ 从该消息之前分叉新会话并自动重发编辑后内容，原会话保留 | 对话界面（消息 hover 按钮） |
 | `dsh-dock-settings` | Skills 与 MCP 管理：技能目录浏览（EAC 内置/用户来源徽标、打开目录）+ MCP 服务增删改（stdio / streamable-http），保存后一键重启生效 | 设置 → Skills 与 MCP |
@@ -246,8 +245,8 @@ dsh-desktop/
 ├── assets/               # 加载页、更新进度页、图标、托盘图标、配套 dsh 插件
 │   └── plugins/          # 桌面壳配套（dsh-balance、dsh-file-changes、dsh-terminal、
 │                         # dsh-easy-setup、dsh-skin-switch）+ 内置社区插件
-│                         # （dsh-webui-market、dsh-tool-vision、
-│                         # dsh-soul-md、dsh-web-mobile-fix，含 vendor 与自包含依赖）
+│                         # （dsh-unified-market、dsh-soul-md、dsh-web-mobile-fix，
+│                         # 含 vendor 与自包含依赖）
 │                         # 全部自动同步进 web profile
 ├── scripts/
 │   ├── fetch-node.js     # 内置 node.exe 复制脚本

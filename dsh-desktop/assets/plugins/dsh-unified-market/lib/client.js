@@ -1,11 +1,13 @@
-// Browser half of the persistent plugin market. Loaded through the web
-// plugin loader (window.__ModuleLoader__); React comes from the platform
-// module table. Talks to the Host half over the /api/dsh-market HTTP route.
+// Browser half of the unified plugin market（DSH Desktop 内置，EAC 特化）。
+// 三源：精选目录（awesome-dsh-plugin.com）/ GitHub dsh-plugin 生态 / npm registry。
+// Loaded through the web plugin loader (window.__ModuleLoader__); React comes
+// from the platform module table. Talks to the Host half over the
+// /api/dsh-unified-market HTTP route.
 //
 // Install/uninstall run as background ops on the Host: the panel submits, gets
 // an op id, and polls. The op lives in a fixed modal overlay (never lost by
 // scrolling), can be minimized to a status chip, and survives page refreshes.
-window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', factory: (require) => {
+window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
   var module = { exports: {} }; var exports = module.exports;
 
   const React = require('react')
@@ -13,7 +15,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
   const h = React.createElement
 
   function api(method, params) {
-    return fetch('/api/dsh-market', {
+    return fetch('/api/dsh-unified-market', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(Object.assign({ method }, params || {})),
@@ -114,7 +116,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       updateFail: '更新检测失败', updLocal: '本地链接',
       running: '执行中…（pnpm 安装可能需要一段时间）',
       cmdLabel: '安装命令（来自官网，含目标 profile）:', noCmd: '（无官方安装命令）',
-      hint: '安装后需重启 Web 服务生效；GitHub 源会执行包内 prepare 脚本（pnpm allowBuilds 需放行）。安装进 web 前会做两层安全把关：① 只允许安装精选目录收录的源；② 试装验证——在临时环境实际启动一次，确认 web 能正常启动才写入真实 profile。验证失败会给出真实启动错误且不改动现有安装；简单插件装好后会自动热挂载（无需重启）。确实需要强制安装时可勾选"跳过安全检查"（风险自负）。',
+      hint: '安装后需重启 Web 服务生效；GitHub 源会执行包内 prepare 脚本（pnpm allowBuilds 自动放行）。安装进当前生效 profile（EAC 桌面壳为 web-desktop）前有多重把关：内置包拦截、冲突预检、以及试装验证——在临时环境实际启动一次，确认 web 能正常启动才写入真实 profile；验证失败会给出真实启动错误且不改动现有安装；简单插件装好后会自动热挂载（无需重启）。确实需要强制安装时可勾选"跳过安全检查"（风险自负）。',
       gh: 'GitHub ↗', envLine: '环境', parseFail: '解析失败', fetchFail: '抓取失败',
       submit: '提交任务…', probing: '试装验证中…（临时环境实际启动验证 web 可正常启动后才安装，约 1~6 分钟）', min: '最小化到后台', kill: '终止任务', back: '返回',
       stDone: '完成', stFailed: '失败', stKilled: '已终止', stTimeout: '超时终止',
@@ -128,7 +130,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       builtin: '已内置', builtinHint: '该插件已随客户端内置分发，每次启动自动同步，无需安装', stBuiltin: '内置插件',
       scanTitle: '安装前冲突预检', scanRun: '预检中…', scanWarn: '注意', scanRefuse: '已拒绝',
       scanForce: '勾选"跳过安全检查"可强制安装（风险自负）。',
-      marketBanner: '两个插件市场并存：本页为精选目录（awesome-dsh-plugin.com）；另一个「Zat 可视化市场」（GitHub dsh-plugin 检索 + 中文简介）已内置，见 设置 → 插件 中的 Zat 标签页。',
+      marketBanner: '统一插件市场（DSH Desktop 内置）：精选目录（awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm 检索三源合一。安装走双保险（来源白名单 + 试装验证，可在「详情」查看说明）；「统一管理」提供 检查更新 / 自动更新开关（仅提示或自动升级）；市场自身随官方「内置插件更新」自更新。',
     },
     en: {
       search: 'Search plugins…', all: 'All', instFilter: 'Installed', detail: 'Details', collapse: 'Collapse',
@@ -155,7 +157,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       builtin: 'Built-in', builtinHint: 'Shipped with the client and re-synced on every launch — no install needed', stBuiltin: 'Built-in plugin',
       scanTitle: 'Pre-install conflict check', scanRun: 'Checking…', scanWarn: 'Note', scanRefuse: 'Refused',
       scanForce: 'Tick "skip safety checks" to force-install (at your own risk).',
-      marketBanner: 'Two plugin markets coexist: this page is the curated catalog (awesome-dsh-plugin.com); the bundled "Zat" market (GitHub dsh-plugin search + bilingual intros) has its own tab under Settings → Plugins.',
+      marketBanner: 'Unified plugin market (bundled with DSH Desktop): curated catalog (awesome-dsh-plugin.com) + GitHub dsh-plugin ecosystem + npm registry in one place. Installs are double-gated (source whitelist + trial boot, see Details). The tool bar provides check updates / auto-update (notify or auto) / health scan / one-click repair. The market itself updates through the official built-in plugin updater.',
     },
   }
   const t = (k) => { const m = STR[LOCALE]; return (m && m[k] !== undefined) ? m[k] : (STR.zh[k] !== undefined ? STR.zh[k] : k) }
@@ -177,7 +179,8 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
 .mkts-livechip:hover{border-color:var(--dsw-alias-label-dimmed)}
 .mkts-livechip-done{color:var(--dsw-alias-state-success-primary)}
 .mkts-livechip-err{color:var(--dsw-alias-label-error)}
-.mkts-chips{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l2)}
+.mkts-chips{display:flex;flex-wrap:wrap;gap:6px;padding-bottom:10px;border-bottom:1px solid var(--dsw-alias-border-l2);align-items:center}
+.mkts-catsel{appearance:auto;font:inherit;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:3px 8px;max-width:220px}
 .mkts-chip{font-size:12px;color:var(--dsw-alias-label-secondary);background:none;white-space:nowrap;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;padding:2px 10px;cursor:pointer}
 .mkts-chip small{color:var(--dsw-alias-label-tertiary);font-size:10px}
 .mkts-chip:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed)}
@@ -230,6 +233,28 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
 .mkts-site a{color:var(--dsw-static-deepseek-500);text-decoration:none}
 .mkts-site a:hover{text-decoration:underline}
 .mkts-skipcheck{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--dsw-alias-label-secondary);margin-top:8px;cursor:pointer}
+.mkts-srcbar{display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.mkts-toolbar{display:flex;gap:6px;align-items:center;margin:8px 0 12px;flex-wrap:wrap;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:8px 10px;background:var(--dsw-alias-bg-layer-3)}
+.mkts-tool-label{font-size:12px;font-weight:600;color:var(--dsw-alias-label-secondary);margin-right:4px}
+.mkts-autoswitch{display:inline-flex;gap:4px;align-items:center;font-size:12px;color:var(--dsw-alias-label-secondary);flex-wrap:wrap}
+.mkts-self{font-size:11px;color:var(--dsw-alias-label-tertiary);margin-left:auto;cursor:help}
+.mkts-health{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:8px 12px;margin-bottom:12px;background:var(--dsw-alias-bg-layer-3)}
+.mkts-health-item{font-size:12px;color:var(--dsw-alias-label-secondary);padding:4px 0;line-height:1.5}
+.mkts-hl-err{color:var(--dsw-alias-label-error)}
+.mkts-hl-warn{color:var(--dsw-alias-label-warning)}
+.mkts-hl-ok{color:var(--dsw-alias-state-success-primary)}
+.mkts-more{margin-top:8px;text-align:center}
+.mkts-updates{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:8px 12px;margin:0 0 12px;background:var(--dsw-alias-bg-layer-3)}
+.mkts-updates-msg{font-size:12px;color:var(--dsw-alias-state-success-primary);padding:4px 0 8px}
+.mkts-update-row{margin-bottom:6px}
+.mkts-progress{border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px 12px;margin:0 0 12px;background:color-mix(in srgb,var(--dsw-static-deepseek-500) 8%,transparent)}
+.mkts-progress.ok{border-color:color-mix(in srgb,var(--dsw-alias-state-success-primary) 55%,transparent)}
+.mkts-progress-head{font-size:13px;font-weight:600;margin-bottom:6px}
+.mkts-progress-close{appearance:none;background:none;border:none;color:var(--dsw-alias-label-tertiary);font-size:13px;cursor:pointer;float:right;padding:0 2px;line-height:1}
+.mkts-progress-close:hover{color:var(--dsw-alias-label-primary)}
+.mkts-progress-cur{font-size:12px;color:var(--dsw-alias-label-secondary);margin-bottom:4px}
+.mkts-progress-count{font-size:11px;color:var(--dsw-alias-label-tertiary);margin-bottom:6px}
+.mkts-progress-out{background:#161616;color:#cfcfcf;border-radius:8px;padding:6px 8px;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:11px;margin:0}
 `
 
   function MarketPanel() {
@@ -242,6 +267,18 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
     const [sortBy, setSortBy] = useState('default')
     const [open, setOpen] = useState(null)
     const [op, setOp] = useState(null)
+    // ── 统一市场扩展状态（三源 + 自动更新 + 自更新）──
+    const [srcMode, setSrcMode] = useState('catalog') // catalog | github | npm
+    const [ghPage, setGhPage] = useState(1)
+    const [ghData, setGhData] = useState(null)
+    const [npmData, setNpmData] = useState(null)
+    const [autoState, setAutoState] = useState(null)
+    const [selfInfo, setSelfInfo] = useState(null)
+    const [busyTool, setBusyTool] = useState('')
+    const [updateMsg, setUpdateMsg] = useState('')
+    const [updProgress, setUpdProgress] = useState(null)
+    const updTimerRef = useRef(null)
+    useEffect(() => () => { if (updTimerRef.current) clearInterval(updTimerRef.current) }, [])
     const pollStop = useRef(false)
     useEffect(() => () => { pollStop.current = true }, [])
 
@@ -263,6 +300,92 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
     }
 
     useEffect(() => { probe() }, [])
+
+    // ── 统一市场扩展：自助状态 + 三源数据加载 ──
+    useEffect(() => {
+      api('sources', {}).then((r) => { if (r && r.ok) setSelfInfo(r.self || null) }).catch(() => {})
+      api('autoState', {}).then((r) => { if (r && r.ok) setAutoState(r) }).catch(() => {})
+    }, [])
+    useEffect(() => {
+      if (srcMode !== 'github') return
+      let alive = true
+      api('github', { q: query, page: ghPage }).then((r) => {
+        if (!alive) return
+        setGhData((prev) => r && r.ok
+          ? { ...r, items: (prev && prev.items && r.page > 1 ? prev.items.concat(r.items || []) : (r.items || [])) }
+          : (r || { ok: false, items: [], total: 0, page: 1, hasMore: false, message: r && r.message ? r.message : 'GitHub 检索失败' }))
+      }).catch(() => { if (alive) setGhData({ ok: false, items: [], total: 0, page: 1, hasMore: false, message: 'GitHub 检索失败' }) })
+      return () => { alive = false }
+    }, [srcMode, query, ghPage])
+    useEffect(() => {
+      if (srcMode !== 'npm') return
+      let alive = true
+      api('npm', { q: query }).then((r) => { if (alive) setNpmData(r && r.ok ? r : { ok: false, items: [], total: 0, message: 'npm 检索失败' }) })
+        .catch(() => { if (alive) setNpmData({ ok: false, items: [], total: 0, message: 'npm 检索失败' }) })
+      return () => { alive = false }
+    }, [srcMode, query])
+
+    const setAutoUpdateMode = (m) => {
+      setBusyTool('auto')
+      api('setAutoUpdate', { autoUpdate: m }).then((r) => {
+        setAutoState(r && r.ok ? { autoUpdate: r.autoUpdate, lastAutoCheckAt: (autoState && autoState.lastAutoCheckAt) || null, lastAutoCheckCount: (autoState && autoState.lastAutoCheckCount) || 0 } : autoState)
+        setBusyTool('')
+      }).catch(() => setBusyTool(''))
+    }
+    const runCheckNow = () => {
+      setBusyTool('check')
+      api('checkNow', {}).then((r) => {
+        setBusyTool('')
+        if (r && r.ok) setData((d) => ({ ...d, updates: Object.assign({}, d.updates, { 'web': r.updates, [r.profile]: r.updates }) }))
+      }).catch(() => setBusyTool(''))
+    }
+    // 一键全部更新：启动后台批量更新并轮询进度窗口，完成后自动重查并显示结果。
+    const updateAllStart = () => {
+      setBusyTool('')
+      setUpdateMsg('')
+      setUpdProgress({ phase: 'running', total: 0, done: 0, failed: 0, idx: 0, current: null, output: '', finished: false })
+      if (updTimerRef.current) clearInterval(updTimerRef.current)
+      updTimerRef.current = setInterval(() => {
+        api('updateProgress', {}).then((r) => {
+          if (!r || !r.ok || !r.progress) return
+          const p = r.progress
+          setUpdProgress(p)
+          if (p.finished) {
+            clearInterval(updTimerRef.current)
+            updTimerRef.current = null
+            api('checkNow', {}).then((r2) => {
+              if (r2 && r2.ok) setData((d) => ({ ...d, updates: Object.assign({}, d.updates, { 'web': r2.updates, [r2.profile]: r2.updates }) }))
+            }).catch(() => {})
+            const hasFail = (p.failed && p.failed.length) > 0
+            const hasPending = (p.pending && p.pending.length) > 0
+            setUpdateMsg((p.ok && !hasFail ? '✅ ' : '⚠️ ') + (LOCALE === 'zh'
+              ? '全部更新完成：成功 ' + (p.done || []).length + ' 个' + ((p.skipped && p.skipped.length) ? '，跳过 ' + p.skipped.length + '（本地链接）' : '') + (hasPending ? '，排队 ' + p.pending.length + '（重启服务后自动完成）' : '') + (hasFail ? '，失败 ' + p.failed.length + '：' + p.failed.join('、') : '')
+              : 'Update all done: ' + (p.done || []).length + ' ok' + ((p.skipped && p.skipped.length) ? ', skipped ' + p.skipped.length + ' (local link)' : '') + (hasPending ? ', queued ' + p.pending.length + ' (finish on service restart)' : '') + (hasFail ? ', failed ' + p.failed.length + ': ' + p.failed.join(', ') : '')))
+            // 失败/排队时保留进度窗展示错误原因，不自动关闭；全成功才自动收起。
+            if (!hasFail && !hasPending) {
+              setTimeout(() => setUpdProgress(null), 4000)
+            }
+          }
+        }).catch(() => {})
+      }, 900)
+    }
+    const runUpdateAll = () => {
+      setBusyTool('updateAll')
+      setUpdateMsg('')
+      api('updateAll', {}).then((r) => {
+        if (!r || !r.ok) {
+          setBusyTool('')
+          setUpdateMsg(String((r && (r.error || r.output)) || (LOCALE === 'zh' ? '更新失败' : 'update failed')).slice(0, 160))
+          return
+        }
+        if (r.started) {
+          updateAllStart()
+        } else {
+          setBusyTool('')
+          setUpdateMsg(r.message || (r.busy ? (LOCALE === 'zh' ? '已有更新任务进行中' : 'update already running') : ''))
+        }
+      }).catch(() => setBusyTool(''))
+    }
 
     useEffect(() => {
       let alive = true
@@ -504,6 +627,146 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
         ) : null,
       )) : null
 
+    // ── 统一市场扩展渲染函数（GitHub/npm 源列表、管理工具条、健康结果）──
+    const renderGhList = () => {
+      const d = ghData
+      if (!d) return h('div', { className: 'mkts-hint' }, LOCALE === 'zh' ? '正在加载 GitHub 生态…' : 'Loading GitHub ecosystem…')
+      if (!d.ok) return h('div', { className: 'mkts-err' }, d.message || 'error')
+      if (d.items.length === 0) return h('div', { className: 'mkts-hint' }, t('noMatch'))
+      return [
+        d.items.map((it) => {
+          const ghUrl = it.htmlUrl || ('https://github.com/' + it.fullName)
+          return h('div', { key: it.fullName, className: 'mkts-item' },
+            h('span', { className: 'mkts-avatar', 'aria-hidden': 'true' }, String(it.name || '?').trim().charAt(0).toUpperCase() || '?'),
+            h('div', { className: 'mkts-main' },
+              h('h3', null,
+                h('a', { href: ghUrl, target: '_blank', rel: 'noopener noreferrer' }, it.fullName),
+                h('span', { className: 'mkts-stars' }, '★ ' + (it.stars || 0)),
+                h('span', { className: 'mkts-by' }, (it.language ? (it.language + ' · ') : '') + (it.updatedAt ? String(it.updatedAt).slice(0, 10) : '')),
+                h('a', { className: 'mkts-gh', href: ghUrl, target: '_blank', rel: 'noopener noreferrer' }, t('gh')),
+              ),
+              it.description ? h('p', { className: 'mkts-desc' }, it.description) : null,
+            ),
+            h('div', { className: 'mkts-actions' },
+              it.builtin
+                ? h('span', { className: 'mkts-state mkts-state-builtin', title: t('builtinHint') }, t('builtin'))
+                : (it.installed
+                    ? h(React.Fragment, null,
+                        h('span', { className: 'mkts-state mkts-state-on' }, t('instFilter')),
+                        h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-danger', onClick: () => runOp('uninstall', it.installedName || it.name, it.name, 'web') }, t('uninstall')))
+                    : h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-primary', onClick: () => runOp('install', 'github:' + it.fullName, it.name, 'web') }, t('install'))),
+            ),
+          )
+        }),
+        d.hasMore ? h('div', { className: 'mkts-more' },
+          h('button', { className: 'mkts-cmdbtn', onClick: () => setGhPage((p) => p + 1) }, LOCALE === 'zh' ? '加载更多' : 'Load more')) : null,
+      ]
+    }
+
+    const renderNpmList = () => {
+      const d = npmData
+      if (!d) return h('div', { className: 'mkts-hint' }, LOCALE === 'zh' ? '正在加载 npm 生态…' : 'Loading npm ecosystem…')
+      if (!d.ok) return h('div', { className: 'mkts-err' }, d.message || 'error')
+      if (d.items.length === 0) return h('div', { className: 'mkts-hint' }, t('noMatch'))
+      return d.items.map((it) => h('div', { key: it.fullName, className: 'mkts-item' },
+        h('div', { className: 'mkts-main' },
+          h('h3', null,
+            h('a', { href: it.htmlUrl || ('https://www.npmjs.com/package/' + it.fullName), target: '_blank', rel: 'noopener noreferrer' }, it.fullName),
+            h('span', { className: 'mkts-stars' }, 'v' + (it.version || '?')),
+          ),
+          it.description ? h('p', { className: 'mkts-desc' }, it.description) : null,
+        ),
+        h('div', { className: 'mkts-actions' },
+          it.builtin
+            ? h('span', { className: 'mkts-state mkts-state-builtin', title: t('builtinHint') }, t('builtin'))
+            : (it.installed
+                ? h(React.Fragment, null,
+                    h('span', { className: 'mkts-state mkts-state-on' }, t('instFilter')),
+                    h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-danger', onClick: () => runOp('uninstall', it.fullName, it.fullName, 'web') }, t('uninstall')))
+                : h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-primary', onClick: () => runOp('install', it.fullName, it.fullName, 'web') }, t('install'))),
+        ),
+      ))
+    }
+
+    const renderToolbar = () => {
+      const mode = autoState && autoState.autoUpdate
+      const btn = (key, label, handler) => h('button', { key, className: 'mkts-cmdbtn', disabled: busyTool !== '', onClick: handler }, (busyTool === key ? (LOCALE === 'zh' ? '处理中…' : '…') : label))
+      const updMap = data.updates && data.updates['web'] ? data.updates['web'] : null
+      const updCount = updMap ? Object.values(updMap).filter((u) => u && u.updateAvailable).length : 0
+      const allBtn = updCount > 0
+        ? h('button', { key: 'updateAll', className: 'mkts-cmdbtn mkts-cmdbtn-primary', disabled: busyTool !== '', onClick: runUpdateAll },
+          busyTool === 'updateAll' ? (LOCALE === 'zh' ? '更新中…' : 'Updating…') : (LOCALE === 'zh' ? '⬆ 全部更新 (' + updCount + ')' : '⬆ Update all (' + updCount + ')'))
+        : null
+      return h('div', { className: 'mkts-toolbar' },
+        h('span', { className: 'mkts-tool-label' }, LOCALE === 'zh' ? '⚙ 统一管理' : 'Manage'),
+        btn('check', LOCALE === 'zh' ? '检查更新' : 'Check updates', runCheckNow),
+        allBtn,
+        h('span', { className: 'mkts-autoswitch' },
+          (LOCALE === 'zh' ? '自动更新' : 'Auto-update') + ': ',
+          [['off', LOCALE === 'zh' ? '关闭' : 'Off'], ['notify', LOCALE === 'zh' ? '仅提示' : 'Notify'], ['auto', LOCALE === 'zh' ? '自动升级' : 'Auto']].map(([m, label]) =>
+            h('button', { key: m, className: 'mkts-chip' + (mode === m ? ' mkts-chip-on' : ''), onClick: () => setAutoUpdateMode(m) }, label)),
+        ),
+        selfInfo ? h('span', { className: 'mkts-self', title: selfInfo.message || '' }, (selfInfo.hasUpdate ? '↑ ' : '') + '市场 v' + (selfInfo.version || '?')) : null,
+      )
+    }
+
+    // 已下载插件更新面板：列出本 profile 所有已装插件及更新状态，
+    // 支持选择性逐个更新；「检查更新」后刷新。
+    const renderUpdatesPanel = () => {
+      const updMap = data.updates && data.updates['web'] ? data.updates['web'] : null
+      if (!updMap) return null
+      const entries = Object.entries(updMap).filter(([, u]) => u && u.updateAvailable)
+      if (entries.length === 0) return null
+      return h('div', { className: 'mkts-updates' },
+        h('div', { className: 'mkts-sec' },
+          (LOCALE === 'zh' ? '可更新插件' : 'Updatable plugins'),
+          h('small', null, entries.length + (LOCALE === 'zh' ? ' 个' : '')),
+        ),
+        updateMsg ? h('div', { className: 'mkts-updates-msg' }, updateMsg) : null,
+        entries.map(([name, u]) => {
+          const uo = u || {}
+          const verText = uo.kind === 'linked'
+            ? (uo.version || '?') + ' → v' + String(uo.latest || '').slice(0, 14) + ' (本地链接)'
+            : (uo.version || uo.current || '?') + ' → v' + String(uo.latest || '').slice(0, 14)
+          return h('div', { key: name, className: 'mkts-item mkts-update-row' },
+            h('div', { className: 'mkts-main' },
+              h('h3', null, name, h('span', { className: 'mkts-stars' }, uo.kind === 'github' ? '🐙' : (uo.kind === 'linked' ? '🔗' : '📦'))),
+              h('p', { className: 'mkts-desc' }, verText),
+            ),
+            h('div', { className: 'mkts-actions' },
+              h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-primary', title: (uo.kind === 'linked' ? (LOCALE === 'zh' ? '本地链接：更新后将切换为上游安装（本地目录与源码保留）' : 'Local link: updating will switch to upstream install (local dir kept)') : undefined),
+                onClick: () => { setUpdateMsg(''); runOp('update', name, name, 'web') } },
+                t('updateBtn') + (uo.latest ? ' (v' + String(uo.latest).slice(0, 8) + ')' : '')),
+            ),
+          )
+        }),
+      )
+    }
+
+    // 全部更新进度窗口：后台批量更新的实时进度（当前项 x/y、成功/失败/排队、最近输出）。
+    // 失败或排队时窗口保留（不自动关闭），便于查看错误原因，可手动关闭。
+    const renderProgressWindow = () => {
+      if (!updProgress) return null
+      const p = updProgress
+      const running = !p.finished
+      const hasFail = !running && (p.failed && p.failed.length) > 0
+      const hasPending = !running && (p.pending && p.pending.length) > 0
+      const title = running
+        ? (LOCALE === 'zh' ? '⬆ 正在全部更新…' : 'Updating all…')
+        : (hasFail ? (LOCALE === 'zh' ? '⚠️ 更新完成（有失败）' : 'Done with failures') : (LOCALE === 'zh' ? '全部更新完成' : 'Update all done'))
+      return h('div', { className: 'mkts-progress' + (p.ok === true ? ' ok' : '') },
+        h('div', { className: 'mkts-progress-head' },
+          title,
+          h('button', { className: 'mkts-progress-close', onClick: () => setUpdProgress(null), title: (LOCALE === 'zh' ? '关闭' : 'Close') }, '✕'),
+        ),
+        (running && p.current) ? h('div', { className: 'mkts-progress-cur' },
+          (p.total ? (LOCALE === 'zh' ? '第 ' + (p.idx || 0) + '/' + p.total + ' 个：' : (p.idx || 0) + '/' + p.total + ': ') : '') + p.current) : null,
+        h('div', { className: 'mkts-progress-count' },
+          '✅ ' + (p.done || []).length + (LOCALE === 'zh' ? ' · ⏳ ' : ' · ⏳ ') + (p.pending || []).length + (LOCALE === 'zh' ? ' · ❌ ' : ' · ✗ ') + (p.failed || []).length),
+        (p.output) ? h('pre', { className: 'mkts-progress-out' }, String(p.output).slice(-900)) : null,
+      )
+    }
+
     const liveChip = op && op.minimized ? h('button', {
       className: 'mkts-livechip' + (op.phase === 'done' ? (op.ok ? ' mkts-livechip-done' : ' mkts-livechip-err') : ''),
       onClick: restoreOp,
@@ -529,6 +792,10 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
         h('span', null, ' ↗'),
       ),
       modal,
+      h('div', { className: 'mkts-srcbar' },
+        [['catalog', LOCALE === 'zh' ? '🎯 精选目录' : 'Curated'], ['github', '🐙 GitHub'], ['npm', '📦 npm']].map(([m, label]) =>
+          h('button', { key: m, className: 'mkts-chip' + (srcMode === m ? ' mkts-chip-on' : ''), onClick: () => { setSrcMode(m); setGhPage(1); setOpen(null) } }, label)),
+      ),
       h('div', { className: 'mkts-finder' },
         h('div', { className: 'mkts-row1' },
           h('input', { className: 'mkts-search', placeholder: t('search'), value: query, onChange: (e) => setQuery(e.target.value) }),
@@ -536,15 +803,11 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
           h('span', { className: 'mkts-count' }, filtered.length + ' / ' + (data.plugins || []).length),
         ),
         h('div', { className: 'mkts-chips' },
-          (data.cats || []).map((c) => h('button', {
-            key: c.id,
-            className: 'mkts-chip' + (cat === c.id && !showInstalled ? ' mkts-chip-on' : ''),
-            onClick: () => { setCat(c.id); setShowInstalled(false) },
-          }, (c.id === 'all' ? t('all') : c.label), ' ', h('small', null, c.count))),
-          h('button', {
-            className: 'mkts-chip' + (showInstalled ? ' mkts-chip-on' : ''),
-            onClick: () => { setShowInstalled(!showInstalled); setCat('all') },
-          }, t('instFilter'), ' ', h('small', null, installedCount)),
+          h('select', { className: 'mkts-catsel', value: showInstalled ? '__inst__' : (cat || 'all'), onChange: (e) => { const v = e.target.value; if (v === '__inst__') { setShowInstalled(true); setCat('all') } else { setShowInstalled(false); setCat(v) } } },
+            h('option', { value: 'all', key: 'all' }, t('all')),
+            h('option', { value: '__inst__', key: '__inst__' }, (LOCALE === 'zh' ? '已安装 (' : 'Installed (') + installedCount + ')'),
+            (data.cats || []).filter((c) => c.id !== 'all').map((c) => h('option', { key: c.id, value: c.id }, c.label + ' (' + c.count + ')')),
+          ),
           h('div', { className: 'mkts-sort' },
             [['default', t('sortDefault')], ['hot', t('sortHot')], ['new', t('sortNew')]].map(([key, label]) =>
               h('button', { key, className: sortBy === key ? 'on' : '', onClick: () => setSortBy(key) }, label))),
@@ -552,8 +815,10 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       ),
       data.phase === 'loading' ? h('div', null, t('loading')) : null,
       data.phase === 'error' ? h('div', { className: 'mkts-err' }, data.error) : null,
-      data.phase === 'ready' ? h('div', { className: 'mkts-marketbanner' }, t('marketBanner')) : null,
-      data.phase === 'ready' ? groups.map((g) => h('div', { key: g.id },
+      renderToolbar(),
+      renderProgressWindow(),
+      renderUpdatesPanel(),
+      data.phase === 'ready' && srcMode === 'catalog' ? groups.map((g) => h('div', { key: g.id },
         g.label ? h('div', { className: 'mkts-sec' }, g.label, h('small', null, g.items.length)) : null,
         g.items.map((p, i) => {
           const inst = isInstalled(p, data.installed)
@@ -611,7 +876,9 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
           )
         }),
       )) : null,
-      data.phase === 'ready' && filtered.length === 0 ? h('div', { className: 'mkts-hint' }, t('noMatch')) : null,
+      srcMode === 'github' ? renderGhList() : null,
+      srcMode === 'npm' ? renderNpmList() : null,
+      data.phase === 'ready' && srcMode === 'catalog' && filtered.length === 0 ? h('div', { className: 'mkts-hint' }, t('noMatch')) : null,
     )
   }
 
@@ -631,7 +898,7 @@ window.__ModuleLoader__.load({ id: '@sanqi-normal/dsh-webui-market-plugin', fact
       return () => { const el = document.getElementById(id); if (el) el.remove() }
     }, 'market-style')
     slots.inject('settings.plugins.tab', () => slots.register(
-      { name: 'settings.plugins.tab', id: 'market', order: 5, label: () => (LOCALE === 'zh' ? '插件市场' : 'Plugin Market') },
+      { name: 'settings.plugins.tab', id: 'market', order: 5, label: () => (LOCALE === 'zh' ? '🛒 统一市场' : '🛒 Unified Market') },
       MarketPanel,
     ))
   }

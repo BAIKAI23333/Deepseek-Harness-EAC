@@ -1,4 +1,4 @@
-// Host half of dsh-dock-settings. Registers one HTTP route (/api/dsh-dock):
+﻿// Host half of dsh-dock-settings. Registers one HTTP route (/api/dsh-dock):
 //   skills.list — scan the dsh user skill roots (~/.dsh/skills, ~/.agents/skills),
 //                 parse SKILL.md / flat *.md frontmatter, mark EAC-managed dirs.
 //   mcp.list    — parse @deepseek-ai/dsh-mcp-client rows out of the profile's
@@ -427,5 +427,5 @@ export function apply(ctx) {  const webServer = ctx.get('webServer')
   })
 }
 
-// Test hooks (mirrors dsh-webui-market): cordis only reads name/inject/apply.
+// Test hooks (mirrors dsh-unified-market): cordis only reads name/inject/apply.
 export { splitBlocks, blockField, parseMcpBlock, emitMcpRow, readMcpRows, validateRow, parseFrontmatter, importFromClaude, importFromCodexToml }
