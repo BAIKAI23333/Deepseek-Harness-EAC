@@ -48,11 +48,12 @@ test('schemastery (the plugin\'s only missing server dep) is declared', () => {
 });
 
 test('desktop profile initialization resolves the DSH home before linking schemastery', () => {
-  const main = readFileSync(join(ROOT, 'main.js'), 'utf8');
-  const start = main.indexOf('function ensureDesktopProfileInit()');
-  const end = main.indexOf('\n}\n', start);
-  const body = main.slice(start, end);
-  assert.match(body, /const home = dshHome \|\| path\.join\(os\.homedir\(\), '\.dsh'\)/,
+  // ADR 0002：实现迁至 lib/desktop/profile.js（L2 业务服务层）。
+  const src = readFileSync(join(ROOT, 'lib', 'desktop', 'profile.js'), 'utf8');
+  const start = src.indexOf('function ensureDesktopProfileInit()');
+  const end = src.indexOf('\n}\n', start);
+  const body = src.slice(start, end);
+  assert.match(body, /const home = ctx\.getDshHome\(\) \|\| path\.join\(os\.homedir\(\), '\.dsh'\)/,
     'ensureDesktopProfileInit must define home before path.join(home, ...)');
   assert.match(body, /path\.join\(home, 'profiles', 'node_modules'\)/);
 });
@@ -73,7 +74,8 @@ test('after-pack injects closure-unreachable deps into the bundled dsh package',
 });
 
 test('COMPANION_PLUGINS registers dsh-better-sidebar', () => {
-  const mainSrc = readFileSync(join(ROOT, 'main.js'), 'utf8');
+  // ADR 0002：注册表迁至 lib/desktop/companion-sync.js。
+  const mainSrc = readFileSync(join(ROOT, 'lib', 'desktop', 'companion-sync.js'), 'utf8');
   assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(mainSrc),
     'COMPANION_PLUGINS entry missing');
 });

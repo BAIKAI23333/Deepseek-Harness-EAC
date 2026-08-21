@@ -7,7 +7,9 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import * as CompactAgent from '../assets/plugins/dsh-compact/lib/agent.js'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-const main = readFileSync(join(root, 'main.js'), 'utf8')
+// ADR 0002：注册表迁至 lib/desktop/companion-sync.js，启停文案迁至 plugin-ops.js。
+const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.js'), 'utf8')
+const pluginOpsSrc = readFileSync(join(root, 'lib', 'desktop', 'plugin-ops.js'), 'utf8')
 
 test('dsh-compact integration: new plugin is bundled and old browser trigger is retired', () => {
   assert.match(main, /\{ id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' \}/)
@@ -27,7 +29,7 @@ test('dsh-compact integration: new plugin is bundled and old browser trigger is 
 test('dsh-compact integration: package is core because managed presets depend on it', async () => {
   const onboarding = await import('../scripts/onboarding.js')
   assert.equal(onboarding.default.CORE_PLUGIN_IDS.has('compact'), true)
-  assert.match(main, /核心插件不可停用/)
+  assert.match(pluginOpsSrc, /核心插件不可停用/)
 })
 
 test('dsh-compact integration: every managed preset exposes one composite compact entry', async () => {

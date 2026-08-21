@@ -138,9 +138,10 @@ test('dsh-soul-md schema: path 带默认值，不再是 required', () => {
   assert.doesNotMatch(src, /path:\s*z\.string\(\)\.required\(\)/, 'path 不能是 required 无默认');
 });
 
-// main.js 侧双保险：新增行必须显式写 config，且启动时 heal 存量坏行。
-test('main.js: soul-md 行带 config + 启动时执行存量 heal', () => {
-  const src = readFileSync(join(root, 'main.js'), 'utf8');
+// 壳层侧双保险：新增行必须显式写 config，且启动时 heal 存量坏行。
+// ADR 0002：注册表与 sync 实现迁至 lib/desktop/companion-sync.js。
+test('companion-sync: soul-md 行带 config + 启动时执行存量 heal', () => {
+  const src = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.js'), 'utf8');
   assert.match(src, /id:\s*'soul-md',[^\n]*config:\s*\{\s*path:\s*'soul\.md'\s*\}/);
   assert.match(src, /healSoulMdPatchRow\(patch\)/);
   assert.match(src, /block \+= configLinesFor\(p\.config\)/);

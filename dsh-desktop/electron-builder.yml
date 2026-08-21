@@ -49,6 +49,16 @@ files:
   - watchdog.js
   - shortcut-maintenance.js
   - preload.js
+  # L2 业务服务层模块（ADR 0002）：main.js 顶层 require 的 lib/desktop/*。
+  - lib/desktop/file-roots.js
+  - lib/desktop/proc.js
+  - lib/desktop/runtime-paths.js
+  - lib/desktop/profile.js
+  - lib/desktop/guard-box.js
+  - lib/desktop/runtime-patches.js
+  - lib/desktop/companion-sync.js
+  - lib/desktop/plugin-ops.js
+  - lib/desktop/market.js
   - assets/**/*
   # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
   # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。
