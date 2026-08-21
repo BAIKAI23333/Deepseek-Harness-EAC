@@ -51,6 +51,19 @@ async function runUntilLog(args, needle, timeoutMs = 12000) {
     }
   }
   if (existsSync(logFile)) out = readFileSync(logFile, 'utf8');
+  // 竞态修复：读到目标日志行时子进程可能尚未触发 exit 事件（exitCode 仍为
+  // null），直接返回会把 null 当成真实退出码，导致本用例在 CI 上偶发失败
+  // （`null !== 0`，见 run 32472320868）。这里等待退出事件（进程通常已自退，
+  // 或已被 finally 中的 kill 终止），2s 兜底避免挂死。
+  if (child.exitCode === null) {
+    await Promise.race([
+      new Promise((resolve) => {
+        child.once('exit', resolve);
+        child.once('error', resolve);
+      }),
+      sleep(2000),
+    ]);
+  }
   return { log: out, code: child.exitCode };
 }
 
