@@ -136,39 +136,27 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 
 ### 效率工具（配套插件体系）
 
-- **插件保护中心（v3.1 新增，内置 plugin-guard 引擎）**：融合社区三大保护插件
-  （[lxzy-7/dsh-plugin-guard](https://github.com/lxzy-7/dsh-plugin-guard) 快照回滚、
-  [LX2000WASD/dsh-web-plugin-manager](https://github.com/LX2000WASD/dsh-web-plugin-manager) 安装守卫、
-  [chenw2759-wq/dsh-plugin-healthcheck](https://github.com/chenw2759-wq/dsh-plugin-healthcheck) 静态体检）
-  并内置到桌面壳：每次安装与启动前自动快照 profile 配置（保留 10 份）；启动失败自动
-  体检（模块遮蔽 / patch 行 / junction 归属 / 高危静态扫描）→ 修复 → 重试 → 回滚到
-  最后良好快照 → 事故报告；设置页「插件保护」可手动快照 / 回滚 / 体检 / 修复。
-- **与原生 CLI 完全共存（v3.1 根治）**：桌面端运行在专属 `web-desktop` profile
-  （会话/API Key 仍共享 DSH_HOME），插件树互不干扰；共享模块 junction 的归属自动
-  巡检修复，原生 `npx dsh` 与桌面端交替使用不再互相破坏。
-- **外观自定义（v3.1 新增，dsh-font-custom）**：设置页「外观 · 字体与颜色」——
-  界面/代码字体、字号、文字与代码颜色实时自定义，localStorage 持久化。
-- **自动压缩（v3.1 新增，dsh-auto-compact，默认开启）**：对话接近上下文上限
-  （默认 80%，可调）时自动执行官方 `/compact`，空闲触发、失败静默重试。
-- **人设卡完整管理（v3.1 升级）**：设置页「人设卡」——6 张内置预设一键应用、
-  我的卡片库（保存/应用/删除）、当前卡片实时编辑热重载。
-- **MCP 一键导入（v3.1 升级，dsh-dock-settings）**：MCP 管理页新增「从 Claude /
-  Codex 导入」，勾选合并 `~/.claude.json` 与 `~/.codex/config.toml` 的 MCP 服务器。
-- **DeepSeek 余额小部件**：对话底部统计栏显示「本轮 ¥X · 余额 ¥Y」，点击跳转充值，15 分钟自动刷新
-- **文件更改追踪 + 一键还原**：「文件」标签页查看本会话全部文件改动（新建/修改/删除 + 行级 diff）并逐文件/全部还原；数据只读复用会话日志，稳定不受升级影响
-- **会话内终端**：「终端」标签页在当前会话项目目录启动持久 PowerShell（SSE 流式、命令历史、断线重连），中文编码干净
-- **项目文件树 + HTML/端口预览**：VSCode 风格文件树，站内预览 HTML/本地端口服务（仅回环）
-- **社区插件市场（v2 新增，dsh-webui-market）**：设置 → 插件 → 市场，浏览 awesome-dsh-plugin.com 收录的 dsh 插件并一键安装/卸载到 profile；安装/卸载任务在服务重启窗口期排队执行，不打断当前会话
-- **外置视觉模型（v2 新增，dsh-tool-vision）**：`inspect_image` 工具把本地图片或图片 URL 发给任意 OpenAI 兼容视觉端点（qwen-vl / GLM-4V / Ollama 等），看图回答直接带回对话
-- **soul.md 人设热重载（v2 新增，dsh-soul-md）**：markdown 人设文件注入系统提示词（`soul:persona`），文件变更即时热重载，Agent 边干活边角色扮演
-- **移动端布局修复（v2 新增，dsh-web-mobile-fix）**：窄屏（≤400px）下设置面板、弹窗、侧栏、会话头布局修复，纯前端 CSS，不影响桌面布局
-- **快速配置（dsh-easy-setup）**：视觉模型提供商/模型一键选择、`soul.md` 人设可视化编辑、从 Codex / Claude Code 目录一键迁移 skills + MCP + 记忆
-- **双重自动更新**：官方 dsh agent 更新（npm overlay）+ 客户端封装自更新，均经用户同意，失败自动回退
-- **稳定性自愈**：`profile-module-heal` 自动修复 profile 模块遮蔽问题（真实目录与 pnpm 链接双形态，如 `prompt section already registered`、「设置命名空间不可用」、模型列表/模式切换失效）；`plugin-guard` 守护启动失败链路（体检 → 修复 → 回滚 → 事故报告）；重启服务时等待旧进程完全退出（释放文件锁）再启动新服务，插件包（含自带 vendor 依赖）随安装包原样分发
-- **临时对话（v4 新增，dsh-side-session）**：DSH 临时会话：独立悬浮窗，自动导入当前主对话上下文，发起不污染主会话的临时追问
-- **自定义第三方模型思考强度（v4 新增，dsh-third-party-thinking）**：让接入的第三方模型也能在使用时调整思考强度
-- **对话节点导航条（v4 新增，dsh-navbar）**：user 消息快速跳转
-- **微信ClawBot**(v4.1新增)：一键将Deepseek-Harness-EAC接入ClawBot
+- **插件保护中心（v3.1，plugin-guard）**：融合[快照回滚](https://github.com/lxzy-7/dsh-plugin-guard)、[安装守卫](https://github.com/LX2000WASD/dsh-web-plugin-manager)和[静态体检](https://github.com/chenw2759-wq/dsh-plugin-healthcheck)，自动完成快照、修复、重试、回滚与事故报告，也支持手动操作。
+- **原生 CLI 共存（v3.1）**：桌面端使用独立 `web-desktop` profile，与 `npx dsh` 共享会话和 API Key，但插件互不干扰。
+- **外观自定义（v3.1，dsh-font-custom）**：实时调整界面与代码的字体、字号和颜色，并自动保存。
+- **自动压缩（v3.1，dsh-auto-compact）**：上下文接近上限时自动执行 `/compact`，阈值可调，失败静默重试。
+- **人设卡管理（v3.1）**：内置 6 张预设，支持保存、应用、删除和实时编辑。
+- **MCP 一键导入（v3.1，dsh-dock-settings）**：从 Claude 和 Codex 配置中选择并合并 MCP 服务器。
+- **DeepSeek 余额**：显示本轮费用与账户余额，支持跳转充值和自动刷新。
+- **文件追踪与还原**：查看会话中的文件改动和行级 diff，支持逐个或全部还原。
+- **会话内终端**：在项目目录中使用持久 PowerShell，支持流式输出、历史记录和断线重连。
+- **文件树与预览**：提供 VSCode 风格文件树，并可站内预览 HTML 和本地端口服务。
+- **社区插件市场（v2，dsh-webui-market）**：浏览并一键安装或卸载社区插件，不打断当前会话。
+- **视觉模型（v2，dsh-tool-vision）**：通过 `inspect_image` 调用 OpenAI 兼容视觉模型分析本地或在线图片。
+- **soul.md 热重载（v2，dsh-soul-md）**：将 Markdown 人设注入系统提示词，并在文件变化后即时生效。
+- **移动端适配（v2，dsh-web-mobile-fix）**：优化窄屏下的设置、弹窗、侧栏和会话布局。
+- **快速配置（dsh-easy-setup）**：选择视觉模型、编辑 `soul.md`，并从 Codex 或 Claude Code 迁移 skills、MCP 和记忆。
+- **双重自动更新**：支持 dsh agent 与桌面客户端更新，失败时自动回退。
+- **稳定性自愈**：自动修复模块遮蔽、插件启动和文件锁问题，并随安装包完整分发插件依赖。
+- **临时对话（v4，dsh-side-session）**：在独立悬浮窗中基于当前上下文追问，不污染主会话。
+- **第三方模型思考强度（v4，dsh-third-party-thinking）**：支持调整第三方模型的思考强度。
+- **对话导航（v4，dsh-navbar）**：快速跳转到各条用户消息。
+- **微信 ClawBot（v4.1）**：一键接入 Deepseek-Harness-EAC。
 
 ---
 
@@ -274,6 +262,58 @@ research/                     # 第三方微信/桥接协议调研资料
 ### Bug 反馈
 
 遇到 Bug，或有希望我们增加的功能，请前往 [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/)。
+
+### 以下为使用插件名单，感谢插件制作者们的奉献
+
+| 插件名 | 插件说明 |
+| --- | --- |
+| dsh-auto-compact | 自动压缩：接近上下文上限时自动发送 /compact |
+| @deepseek-ai/dsh-balance | 账户余额、费用估算与价格设置 |
+| dsh-better-sidebar（提供者：omdsh-dev） | VSCode 风格右侧栏，支持资源管理器/编辑器/终端/Git/浏览器 |
+| dsh-change-review | AI 变更审核：自动复查文件改动 |
+| @deepseek-ai/dsh-client-file-changes | 文件视图：会话文件更改追踪与一键还原 |
+| dsh-compact | 请求路径上下文压缩与溢出恢复 |
+| @deepseek-ai/dsh-conversation-tweaks | 隐藏长篇输出 + 会话右侧导航滑轨 |
+| dsh-dafeiyu（提供者：QCYTSN） | 大肥鱼桌面伴侣 |
+| dsh-deep-whale（提供者：Small-tailqwq） | 深海女仆工坊 maid-atelier 皮肤来源 |
+| dsh-dock-settings | Skills 与 MCP 设置管理 |
+| @deepseek-ai/dsh-easy-setup | 快速配置：视觉模型、soul.md、迁移 |
+| @deepseek-ai/dsh-file-changes | 会话文件更改投影 |
+| dsh-file-drop-eac | 拖放文件/文件夹到对话 |
+| @deepseek-ai/dsh-float-window | 会话弹出独立窗口 |
+| dsh-font-custom | 字体与文字/代码颜色自定义 |
+| dsh-image-paste | 剪贴板图片粘贴发送 |
+| dsh-message-rewind | 消息改写并从此处重新生成 |
+| @vlln/dsh-navbar（提供者：vlln） | 对话节点导航条：user 消息快速跳转 |
+| dsh-offpeak（提供者：christophersmith2737-commits） | DeepSeek 峰谷价格拦截提醒 |
+| @deepseek-ai/dsh-openclaw-bridge | 微信 ClawBot / OpenClaw 桥接 |
+| dsh-pet（提供者：PC2005-cloud） | 页面悬浮桌宠 |
+| dsh-pet-settings | 桌宠设置分区 |
+| dsh-plugin-guard（提供者：lxzy-7） | 插件安装前快照、回滚与启动守护 |
+| dsh-plugin-healthcheck（提供者：chenw2759-wq） | 插件静态体检与风险检查 |
+| @deepseek-ai/dsh-plugin-manager | 插件管理：列出/启停内置插件 |
+| dsh-plugin-shield | 插件保护：快照/回滚/体检 |
+| dsh-plugin-wizard | 插件选择向导 |
+| @deepseek-ai/dsh-prompt-custom | 自定义内核提示词 |
+| dsh-session-manager | 会话删除与归档管理 |
+| dsh-settings-groups | 设置页高级选项折叠 |
+| dsh-settings-nav-custom | 设置页左侧边栏自定义 |
+| @dsh-external/dsh-side-session（提供者：dsh-external） | 临时会话：不污染主会话的独立追问 |
+| @deepseek-ai/dsh-skin-switch | 内置皮肤切换 |
+| dsh-soul-md（提供者：Scorp1o117） | soul.md 人设卡注入 |
+| @deepseek-ai/dsh-terminal | 会话内交互式命令行 |
+| @deepseek-ai/dsh-third-party-thinking | 第三方模型思考强度控件 |
+| dsh-tool-vision（提供者：Scorp1o117） | OpenAI 兼容视觉模型图片分析 |
+| dsh-undo-savepoint | 配置快照与撤销/回滚 |
+| dsh-unified-market | 统一插件市场：聚合三源 |
+| dsh-web-plugin-manager（提供者：LX2000WASD） | 插件安装守卫与健康检查入口 |
+| dsh-web-mobile-fix（提供者：AcidGr） | 移动端布局修复 |
+| dsh-web-ui（提供者：zhu1090093659） | 9 款内置 Web UI 皮肤来源 |
+| dsh-webui-market（提供者：Sanqi-normal） | 社区插件目录与一键安装/卸载 |
+| picturereader | 统一图片理解插件 |
+
+感谢所有插件提供者对本项目与开源社区的奉献；由于插件数量众多，我们很抱歉，未能逐一统计到所有插件与其来源；如有插件的拥有者看到了自己所做的插件，欢迎您告知我们并添加到致谢名单中，也欢迎添加我们的交流群，以便一同交流、共同进步。
+
 
 ## Star History
 
