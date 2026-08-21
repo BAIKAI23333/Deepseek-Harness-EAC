@@ -29,6 +29,27 @@ test('main.js runs the watchdog lifecycle: run-state write, spawn, clean-exit ma
   assert.ok(/startWatchdog\(\);/.test(mainSrc), 'startWatchdog() is never called');
 });
 
+test('main.js detects the previous run before replacing run-state.json', () => {
+  const detect = mainSrc.indexOf('const uncleanPrev = detectUncleanPreviousRun();');
+  const write = mainSrc.indexOf('writeRunState();', detect);
+  const watchdog = mainSrc.indexOf('startWatchdog();', write);
+  assert.ok(detect >= 0, 'previous-run detection missing');
+  assert.ok(write > detect, 'current run-state must be written after previous-run detection');
+  assert.ok(watchdog > write, 'watchdog must start after current run-state is written');
+  assert.ok(mainSrc.indexOf('autoRollbackClientIfCrashed(uncleanPrev);', detect) > watchdog);
+  assert.ok(mainSrc.indexOf('if (uncleanPrev) notifyUncleanRestart(uncleanPrev);', detect) > watchdog);
+});
+
+test('unclean previous-run predicate respects clean exit and PID boundaries', () => {
+  const predicate = (prev, currentPid) => Boolean(
+    prev && prev.cleanExit !== true && prev.pid && Number(prev.pid) !== currentPid,
+  );
+  assert.equal(predicate({ pid: 41, cleanExit: false }, 42), true);
+  assert.equal(predicate({ pid: 41, cleanExit: true }, 42), false);
+  assert.equal(predicate({ pid: 42, cleanExit: false }, 42), false);
+  assert.equal(predicate({ pid: 0, cleanExit: false }, 42), false);
+});
+
 test('main.js registers the heartbeat IPC and polls heartbeats', () => {
   assert.ok(mainSrc.includes("'dsh:renderer-heartbeat'"), 'heartbeat IPC channel missing');
   assert.ok(/checkHeartbeats\(\)/.test(mainSrc), 'checkHeartbeats() loop missing');
