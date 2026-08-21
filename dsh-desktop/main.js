@@ -2188,7 +2188,7 @@ async function showAbout() {
     message: 'Deepseek Harness EAC（封装版本 ' + APP_VERSION + '）',
     detail: 'DeepSeek Harness 桌面客户端\n\nagent 版本：' + dshVersion() + '（' + dshVersionSource() + '）\n数据目录：' + userDataDir + '\nDSH_HOME：' + (dshHome || '（dsh 默认）') +
       '\n\n项目仓库：\n  GitHub: ' + urls.github + '\n  Gitee:  ' + urls.gitee +
-      '\n\n交流群：EAC 交流群（群号 523412163）\n反馈问题：⋯ 菜单 → 反馈建议',
+      '\n\n交流群：dsh EAC 交流群 2（群号 1021296425）\n反馈问题：⋯ 菜单 → 反馈建议',
     buttons: ['复制 GitHub 地址', '复制 Gitee 地址', '确定'],
   });
   if (response === 0) clipboard.writeText(urls.github);
