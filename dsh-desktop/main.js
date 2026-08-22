@@ -29,7 +29,6 @@ const pluginUpdater = require('./plugin-updater');
 const structuredLogger = require('./logger');
 const balance = require('./balance');
 const rescueAgent = require('./rescue-agent');
-const bundleIntegrity = require('./bundle-integrity');
 const { RendererRecovery } = require('./renderer-recovery');
 const { restrictedPortOf, chooseStableWebPort } = require('./stable-port');
 const { createStreamWriteGuard } = require('./stream-write-guard');
@@ -115,6 +114,58 @@ companionSyncMod.init({
 });
 pluginOpsMod.init({ log });
 marketMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
+const shortcutsMod = require('./lib/desktop/shortcuts');
+const junctionPatrolMod = require('./lib/desktop/junction-patrol');
+const clientUpdateMod = require('./lib/desktop/client-update');
+const previewMod = require('./lib/desktop/static-preview');
+const {
+  maintainShortcuts,
+  migrateFromSharedWebProfile,
+  warnTempRun,
+  applyLegacySkinChoice,
+} = shortcutsMod;
+const { startJunctionWatchdog } = junctionPatrolMod;
+const { runClientUpdateFlow, offerPendingClientUpdate } = clientUpdateMod;
+const { getPreviewStaticPort, startPreviewStaticServer, verifyBundledModules } = previewMod;
+shortcutsMod.init({
+  log,
+  showBox: (opts) => showBox(opts),
+  getUserDataDir: () => userDataDir,
+  getDshHome: () => dshHome,
+});
+junctionPatrolMod.init({
+  log,
+  isQuitting: () => quitting,
+  isRestartingServer: () => restartingServer,
+  getServerProc: () => serverProc,
+  showMainWindow: () => showMainWindow(),
+});
+clientUpdateMod.init({
+  log,
+  showBox: (opts) => showBox(opts),
+  isQuitting: () => quitting,
+  getAppVersion: () => APP_VERSION,
+  getUserDataDir: () => userDataDir,
+  getDshHome: () => dshHome,
+  showUpdateWindow: (version, kind) => showUpdateWindow(version, kind),
+  makeUpdateProgressPusher: (win) => makeUpdateProgressPusher(win),
+  // 客户端更新交接前的退出序列（原 runClientUpdateFlow / offerPendingClientUpdate 内联逻辑）：
+  // 置退出标记 → 落 cleanExit → 中止 updater/会话监听 → 等待 dsh 进程树真正退出。
+  prepareQuitForClientUpdate: async () => {
+    quitting = true;
+    forceQuit = true;
+    markCleanExit();
+    updater.abort();
+    if (sessionWatcher) sessionWatcher.stop();
+    await killTreeAndWait(serverProc);
+    serverProc = null;
+  },
+});
+previewMod.init({
+  log,
+  showBox: (opts) => showBox(opts),
+  exitDamaged: () => { forceQuit = true; markCleanExit(); app.exit(1); },
+});
 
 const IS_WIN = process.platform === 'win32';
 const APP_VERSION = app.getVersion();
@@ -143,7 +194,6 @@ let desktopLog = null;
 let desktopLogGuard = null;
 let tray = null;
 let forceQuit = false;
-let clientUpdateBusy = false;
 let balanceCache = null;
 let balanceTimer = null;
 let restartingServer = false;
@@ -2041,7 +2091,7 @@ function registerChromeIpc() {
       shortcutPolicy: s.shortcutPolicy === 'never' ? 'never' : 'auto',
       iconDataUri,
       repoUrls: urls,
-      staticPort: previewStaticPort,
+      staticPort: getPreviewStaticPort(),
     };
   });
 
@@ -2982,703 +3032,8 @@ function startBalanceLoop() {
 
 
 // ---------------------------------------------------------------------------
-// 快捷方式维护：修复「没有桌面快捷方式 / 快捷方式指向的文件消失」，
-// 并让快捷方式图标跟随图标设计更新（.lnk 单独指定 icon.ico）。
-// ---------------------------------------------------------------------------
-
-// 图标设计版本：更换图标时 +1，触发所有快捷方式图标刷新。
-const SHORTCUT_ICON_VERSION = 'whale-2';
-
-function shortcutIconPath() {
-  // 复制到 userData 保证路径稳定（便携版 exe 解压目录每次启动都会变）。
-  const ico = path.join(userDataDir, 'icon.ico');
-  try {
-    const src = path.join(__dirname, 'assets', 'icon.ico');
-    if (!fs.existsSync(src)) return '';
-    if (!fs.existsSync(ico) || fs.statSync(src).size !== fs.statSync(ico).size) {
-      fs.copyFileSync(src, ico);
-    }
-    return ico;
-  } catch (err) {
-    log('boot', '复制快捷方式图标失败: ' + err.message);
-    return path.join(__dirname, 'assets', 'icon.ico');
-  }
-}
-
-// V4 修复「更换快捷方式图标后重启又多出一个快捷方式」：
-//   旧逻辑只认「桌面\Deepseek Harness EAC.lnk」这个精确文件名。用户换
-//   图标时通常删掉旧 .lnk 自建一个新的（名字几乎必然不同），下次启动
-//   existsSync 判定缺失 → 再造一个标准名快捷方式 → 桌面上出现两个。
-//   且图标版本分支会无条件 replace，把用户自定义图标静默还原成默认。
-// 新逻辑：
-//   1. 按「.lnk 的 target 是否指向本应用 exe」识别既有快捷方式（任意
-//      文件名都算）—— 只要桌面上存在一个指向我们的 .lnk 就不再新建；
-//   2. 图标刷新只在 .lnk 的 icon 仍指向我们自管的 icon.ico（即用户没有
-//      自定义图标）时进行，用户自定义图标绝不覆盖；
-//   3. settings.shortcutPolicy = 'never' 时完全不碰桌面快捷方式（⋯ 菜
-//      单可切换），开始菜单快捷方式仍维护（系统通知的前置条件）。
-function listLnkFiles(dir) {
-  try {
-    return fs.readdirSync(dir, { withFileTypes: true })
-      .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.lnk'))
-      .map((e) => path.join(dir, e.name));
-  } catch { return []; }
-}
-
-function readLnkSafe(p) {
-  try { return shell.readShortcutLink(p); } catch { return null; }
-}
-
-function lnkTargetsApp(lnkPath, target) {
-  return shortcutTargetsApp(readLnkSafe(lnkPath), target);
-}
-
-function lnkUsesManagedIcon(lnkPath, ico) {
-  if (!ico) return false;
-  const link = readLnkSafe(lnkPath);
-  if (!link) return false;
-  // 无自定义图标（icon 为空，用 target 自带）视为可接管。
-  if (!link.icon) return true;
-  return path.resolve(String(link.icon)).toLowerCase() === path.resolve(ico).toLowerCase();
-}
-
-function collectDesktopShortcutEntries(dirs) {
-  const rows = [];
-  for (const { scope, dir } of dirs) {
-    for (const filePath of listLnkFiles(dir)) {
-      rows.push({ scope, dir, filePath, link: readLnkSafe(filePath) });
-    }
-  }
-  return rows;
-}
-
-function maintainShortcuts() {
-  if (!app.isPackaged || !IS_WIN) return;
-  // E2E / 自动化：跳过快捷方式维护（临时 exe 不得改写真实开始菜单/桌面
-  // 快捷方式的指向）。与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同一约定。
-  if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
-  try {
-    const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
-    const settings = updater.loadSettings(updCtx());
-    const policy = settings.shortcutPolicy === 'never' ? 'never' : 'auto';
-    const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
-    const APP_TITLE = 'Deepseek Harness EAC';
-    const userDesktopDir = app.getPath('desktop');
-    const desktopDirs = desktopShortcutDirs(userDesktopDir, process.env.PUBLIC);
-    const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
-    const desktop = path.join(userDesktopDir, STANDARD_SHORTCUT_NAME);
-    const ico = shortcutIconPath();
-    const opts = {
-      target,
-      description: RUNTIME_SHORTCUT_DESCRIPTION,
-      ...(ico ? { icon: ico, iconIndex: 0 } : {}),
-      appUserModelId: 'com.deepseek.dsh.desktop',
-    };
-    const portable = Boolean(process.env.PORTABLE_EXECUTABLE_FILE);
-    let changed = false;
-    // 清理旧名称（DSH Desktop）快捷方式：改名后它们指向的 exe 已不存在。
-    const legacyShortcuts = [path.join(linksDir, 'DSH Desktop.lnk')];
-    for (const { dir } of desktopDirs) legacyShortcuts.push(path.join(dir, 'DSH Desktop.lnk'));
-    for (const legacy of legacyShortcuts) {
-      try { if (fs.existsSync(legacy)) { fs.rmSync(legacy); changed = true; } } catch {}
-    }
-    let desktopEntries = collectDesktopShortcutEntries(desktopDirs);
-    // exe 被移动过或图标设计更新：开始菜单照常维护；桌面仅刷新便携版
-    // 运行时原样生成的快捷方式。安装版桌面快捷方式统一交给 NSIS，用户
-    // 改名/换图标/加参数后的快捷方式也不再覆盖。
-    const targetMoved = settings.shortcutTarget && settings.shortcutTarget !== target;
-    const iconOutdated = settings.shortcutIcon !== SHORTCUT_ICON_VERSION;
-    if (targetMoved || iconOutdated) {
-      const startMenuOwn = fs.existsSync(startMenu)
-        && shortcutTargetsApp(readLnkSafe(startMenu), target, targetMoved ? settings.shortcutTarget : null);
-      if (startMenuOwn && (targetMoved || lnkUsesManagedIcon(startMenu, ico))) {
-        try { shell.writeShortcutLink(startMenu, 'replace', opts); changed = true; } catch {}
-      }
-      if (portable && policy !== 'never') {
-        let desktopRefreshed = false;
-        for (const entry of desktopEntries) {
-          const kind = classifyManagedShortcut(entry, {
-            target,
-            previousTarget: targetMoved ? settings.shortcutTarget : null,
-            managedIcon: ico,
-          });
-          if (kind !== 'runtime') continue;
-          try {
-            shell.writeShortcutLink(entry.filePath, 'replace', opts);
-            changed = true;
-            desktopRefreshed = true;
-          } catch {}
-        }
-        if (desktopRefreshed) desktopEntries = collectDesktopShortcutEntries(desktopDirs);
-      }
-    }
-    // 开始菜单快捷方式：系统通知（Toast）的前置条件，按 target 匹配维护。
-    const startMenuOk = fs.existsSync(startMenu) && lnkTargetsApp(startMenu, target);
-    if (!startMenuOk) {
-      try { shell.writeShortcutLink(startMenu, 'create', opts); changed = true; } catch {}
-    }
-    // 桌面快捷方式采用单一创建者：安装版只由 NSIS 创建，便携版才由
-    // 运行时创建。扫描个人桌面 + 公共桌面，旧版留下的重复项只删除可
-    // 明确识别为软件原样生成的 .lnk；用户改名/换图标/加参数的一律保留。
-    const desktopPlan = planDesktopShortcutMaintenance({
-      entries: desktopEntries,
-      target,
-      previousTarget: targetMoved ? settings.shortcutTarget : null,
-      managedIcon: ico,
-      portable,
-      policy,
-    });
-    for (const duplicate of desktopPlan.removals) {
-      try {
-        fs.rmSync(duplicate);
-        changed = true;
-        log('boot', '已清理软件生成的重复桌面快捷方式: ' + duplicate);
-      } catch (err) {
-        log('boot', '清理重复桌面快捷方式失败（已保留）: ' + duplicate + ': ' + err.message);
-      }
-    }
-    if (desktopPlan.create) {
-      try { shell.writeShortcutLink(desktop, 'create', opts); changed = true; } catch {}
-    }
-    if (changed) {
-      settings.shortcutTarget = target;
-      settings.shortcutIcon = SHORTCUT_ICON_VERSION;
-      updater.saveSettings(updCtx(), settings);
-      log('boot', '快捷方式已维护（开始菜单/桌面 → ' + target + '，图标 ' + SHORTCUT_ICON_VERSION + '）');
-    }
-  } catch (err) {
-    log('boot', '快捷方式维护失败: ' + err.message);
-  }
-}
-
-function warnTempRun() {
-  if (!app.isPackaged || !IS_WIN || !process.env.PORTABLE_EXECUTABLE_DIR) return;
-  // E2E（scripts/e2e-v4.js）从临时目录跑便携版：告警弹窗会卡住无头验证。
-  if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
-  const dir = process.env.PORTABLE_EXECUTABLE_DIR.toLowerCase();
-  const tmp = os.tmpdir().toLowerCase();
-  if (dir === tmp || dir.startsWith(tmp + path.sep)) {
-    showBox({
-      type: 'warning',
-      title: '正在从临时目录运行',
-      message: '当前便携版位于系统临时目录。',
-      detail: '临时目录中的文件可能被系统自动清理，导致快捷方式失效或程序“消失”。\n建议把 Deepseek Harness EAC exe 移动到固定位置（如桌面或 D 盘）后再运行。',
-      buttons: ['知道了'],
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 一次性迁移：桌面端从共享 web profile 切到专属 web-desktop profile。
-//
-// 只做三件事，全部幂等：
-//   1. 记住用户在旧 profile 里启用的皮肤（迁移后在专属 profile 里复活）；
-//   2. 清掉旧 web profile 里桌面端写入的配套插件行 + 拷贝的配套包 + 内置
-//      清单标记 —— 原生 CLI 从此加载干净的 web profile（冲突面消除）；
-//   3. 标记 settings.desktopProfileMigrated，永不重复执行。
-// 用户用市场装进旧 profile 的插件（package.json bundles）是原生端资产，
-// 一律不动；桌面端如需继续使用，重新从市场安装即可（有保护中心兜底）。
-function migrateFromSharedWebProfile() {
-  try {
-    const s = updater.loadSettings(updCtx());
-    if (s.desktopProfileMigrated) return;
-    s.desktopProfileMigrated = new Date().toISOString();
-    updater.saveSettings(updCtx(), s); // 先落标记：即使下面失败也不反复折腾
-    if (s.shareWebProfile === true) return; // 用户显式选择共享模式
-
-    const home = dshHome || path.join(os.homedir(), '.dsh');
-    const oldDir = path.join(home, 'profiles', 'web');
-    const marker = path.join(oldDir, '.dsh-builtin-plugins.json');
-    if (!fs.existsSync(marker)) return; // 旧版本从没在共享 profile 跑过桌面端
-    const builtinNames = readJsonFile(marker)?.names || [];
-
-    // 1) 提取用户启用的皮肤行 id。
-    let enabledSkin = null;
-    const patchFile = path.join(oldDir, 'cordis.patch.yml');
-    let oldPatch = '';
-    try { oldPatch = fs.readFileSync(patchFile, 'utf8'); } catch { oldPatch = ''; }
-    {
-      const lines = oldPatch.split(/\r?\n/);
-      for (let i = 0; i < lines.length; i++) {
-        const m = /^- id: (ui-skin-[\w-]+)\s*$/.exec(lines[i]);
-        if (!m) continue;
-        let disabled = false;
-        for (let j = i + 1; j < lines.length; j++) {
-          if (/^- /.test(lines[j])) break;
-          if (/^\s+disabled:\s*true/.test(lines[j])) disabled = true;
-        }
-        if (!disabled) enabledSkin = m[1];
-      }
-    }
-
-    // 2) 清理旧 profile 的桌面端痕迹。
-    const rowIdSet = new Set();
-    for (const p of COMPANION_PLUGINS) rowIdSet.add(p.id);
-    for (const id of extractPatchRowIds(oldPatch)) {
-      if (/^ui-skin-[\w-]+$/.test(id)) rowIdSet.add(id);
-    }
-    const cleaned = removePatchRowsById(oldPatch, rowIdSet);
-    if (cleaned.removed.length) fs.writeFileSync(patchFile, cleaned.patch);
-    for (const name of builtinNames) {
-      try { fs.rmSync(path.join(oldDir, 'node_modules', ...String(name).split('/')), { recursive: true, force: true, maxRetries: 2 }); } catch {}
-    }
-    try { fs.rmSync(marker, { force: true }); } catch {}
-    log('boot', '已迁移到桌面专属 profile（' + DESKTOP_PROFILE + '）：旧 web profile 清理了 ' + cleaned.removed.length + ' 条桌面配套行 / ' + builtinNames.length + ' 个配套包');
-
-    // 3) 在专属 profile 里复活用户选择的皮肤（等 syncCompanionPlugins 写完
-    //    全部皮肤行之后执行，见 applyLegacySkinChoice）。
-    if (enabledSkin) {
-      const s2 = updater.loadSettings(updCtx());
-      s2.legacySkinChoice = enabledSkin;
-      updater.saveSettings(updCtx(), s2);
-      log('boot', '将迁移用户皮肤选择: ' + enabledSkin);
-    }
-  } catch (err) {
-    log('boot', '共享 profile 迁移失败（不影响启动）: ' + err.message);
-  }
-}
-
-function extractPatchRowIds(patch) {
-  const ids = [];
-  const re = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
-  let m;
-  while ((m = re.exec(String(patch || ''))) !== null) ids.push(m[1]);
-  return ids;
-}
-
-// 按 id 集合删除 patch 里的 insert 行块（与 removeBundledRowDuplicates 同
-// 语法约定：id 紧跟 `- insert:` 之后）。
-function removePatchRowsById(patch, ids) {
-  const removed = [];
-  if (typeof patch !== 'string' || patch === '' || !ids || ids.size === 0) return { patch, removed };
-  const lines = patch.split(/\r?\n/);
-  const out = [];
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (/^-\s*insert:/.test(line)) {
-      const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
-      if (mid && ids.has(mid[1])) {
-        removed.push(mid[1]);
-        let j = i + 1;
-        while (j < lines.length && !/^-\s*insert:/.test(lines[j]) && /^#/.test(lines[j]) === false && /^\s+\S/.test(lines[j])) j++;
-        i = j - 1;
-        continue;
-      }
-    }
-    out.push(line);
-  }
-  let text = out.join('\n').replace(/\n{3,}/g, '\n\n');
-  if (!text.endsWith('\n')) text += '\n';
-  return { patch: text, removed };
-}
-
-// syncCompanionPlugins 之后调用一次：把迁移带来的皮肤选择落到新 profile。
-function applyLegacySkinChoice() {
-  try {
-    const s = updater.loadSettings(updCtx());
-    const skin = s.legacySkinChoice;
-    if (!skin || !/^ui-skin-[\w-]+$/.test(skin)) return;
-    const patchFile = path.join(desktopProfileDir(), 'cordis.patch.yml');
-    if (!fs.existsSync(patchFile)) return;
-    const text = fs.readFileSync(patchFile, 'utf8');
-    const re = new RegExp('(- id: ' + skin + '\\b[^\\n]*\\n(?:      [^\\n]*\\n)*?)      disabled: true\\n');
-    const next = text.replace(re, '$1');
-    if (next !== text) {
-      fs.writeFileSync(patchFile, next);
-      log('boot', '已在专属 profile 启用迁移的皮肤: ' + skin);
-    }
-    delete s.legacySkinChoice;
-    updater.saveSettings(updCtx(), s);
-  } catch (err) {
-    log('boot', '应用迁移皮肤选择失败: ' + err.message);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// junction 归属巡检：原生 dsh（npx / 全局安装）启动时会把 <home>/profiles/
-// node_modules 的共享 junction 重新指向它自己的闭包 —— 桌面端正在运行的
-// 服务随后解析到错误版本（「设置命名空间不可用」的一大根因），npx 缓存
-// 被清理后更是直接悬空。这里周期性检查：发现异动且外部 dsh 进程已退出，
-// 就把指向修复回客户端闭包（原生 CLI 重启时会再次指回它自己，互不纠缠：
-// 各自启动时各自纠正，运行中互不打扰）。
-// ---------------------------------------------------------------------------
-function startJunctionWatchdog() {
-  if (!IS_WIN) return;
-  let notified = false;
-  const tick = async () => {
-    if (quitting || restartingServer) return;
-    try {
-      const g = ensureGuard();
-      const findings = g.junctionFindings();
-      if (findings.length === 0) return;
-      const ext = await detectExternalDsh();
-      if (ext.running) {
-        log('guard', '共享模块被外部 dsh 接管（PID ' + ext.pids.join(', ') + '），待其退出后自动修复');
-        return;
-      }
-      const res = g.repairJunctions();
-      if (res.repaired.length && !notified) {
-        notified = true;
-        try {
-          const n = new Notification({
-            title: '已自动修复共享模块指向',
-            body: '检测到原生 dsh 改写了共享模块目录，桌面端已恢复指向自身版本。原生 CLI 如有异常，重启它即可。',
-            icon: path.join(__dirname, 'assets', 'icon.png'),
-          });
-          n.on('click', () => showMainWindow());
-          n.show();
-        } catch {}
-      }
-    } catch { /* 巡检失败静默 */ }
-  };
-  setInterval(() => { tick().catch(() => {}); }, 5 * 60 * 1000).unref();
-}
-
-// 检测本机是否有其它 dsh 进程在跑（原生 CLI / 另一份安装）。Windows 下用
-// CIM 查 node 进程命令行；超时或失败按「无外部进程」处理（宁可漏报）。
-function detectExternalDsh() {
-  return new Promise((resolve) => {
-    if (!IS_WIN) return resolve({ running: false, pids: [] });
-    const own = new Set([process.pid]);
-    if (serverProc && serverProc.pid) own.add(serverProc.pid);
-    let out = '';
-    try {
-      out = require('node:child_process').execSync(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \'Name=\'\'node.exe\'\'\' | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"',
-        { encoding: 'utf8', windowsHide: true, timeout: 12000 });
-    } catch {
-      return resolve({ running: false, pids: [] });
-    }
-    try {
-      const arr = out.trim() === '' ? [] : JSON.parse(out);
-      const list = Array.isArray(arr) ? arr : [arr];
-      const pids = [];
-      for (const it of list) {
-        const pid = Number(it && it.ProcessId);
-        const cmd = String((it && it.CommandLine) || '');
-        if (!Number.isFinite(pid) || own.has(pid)) continue;
-        if (!/dsh|deepseek-ai/i.test(cmd)) continue;
-        if (!/(\s|\/|\\)(web|plugin|run|tui)(\s|$)|bin\.(js|ts)/i.test(cmd)) continue;
-        pids.push(pid);
-      }
-      resolve({ running: pids.length > 0, pids });
-    } catch {
-      resolve({ running: false, pids: [] });
-    }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// 客户端自更新流程（更新 DSH Desktop 封装本身）
-// ---------------------------------------------------------------------------
-
-async function runClientUpdateFlow(manual) {
-  if (quitting) return;
-  if (clientUpdateBusy) {
-    if (manual) await showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
-    return;
-  }
-  const ctx = updCtx();
-  const settings = updater.loadSettings(ctx);
-  let release;
-  try {
-    release = await clientUpdater.checkLatest(ctx, APP_VERSION);
-  } catch (err) {
-    log('client-update', '检查失败: ' + err.message);
-    if (manual) {
-      await showBox({
-        type: 'warning',
-        title: '检查客户端更新失败',
-        message: '无法连接上游发布源。',
-        detail: err.message + '\n\n可通过环境变量 DSH_DESKTOP_RELEASE_API 指定镜像 API。',
-        buttons: ['确定'],
-      });
-    }
-    return;
-  }
-  if (!release.isNewer) {
-    if (manual) {
-      await showBox({
-        type: 'info',
-        title: '检查客户端更新',
-        message: '当前已是最新版本。',
-        detail: `Deepseek Harness EAC（封装版本 v${APP_VERSION}）\n上游最新：${release.version}（${release.source}）`,
-        buttons: ['确定'],
-      });
-    }
-    return;
-  }
-  if (!manual && settings.skipClientVersion === release.version) return;
-  // M7 修复：用户选过"稍后"的同版本不再每 12h 重复弹窗/重复下载。
-  if (!manual && settings.pendingClientVersion === release.version) return;
-  // E2E 自动化钩子（与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同惯例）：自动接受
-  // 「立即更新」，让 scripts/e2e-v4.js 能无人值守跑完整更新链路。默认关闭。
-  const autoAcceptUpdate = process.env.DSH_DESKTOP_TEST_AUTO_UPDATE === '1';
-  const notes = release.body ? '\n\n更新说明：\n' + release.body.slice(0, 800) : '';
-  const { response } = autoAcceptUpdate ? { response: 0 } : await showBox({
-    type: 'info',
-    title: '发现新版本客户端',
-    message: `Deepseek Harness EAC 封装发布了新版本：v${release.version}`,
-    detail: `当前版本：v${APP_VERSION}\n发布来源：${release.source}${notes}\n\n是否立即更新？下载后自动替换并重启应用。`,
-    buttons: ['立即更新', '跳过此版本', '稍后'],
-    defaultId: 0,
-    cancelId: 2,
-  });
-  if (response === 1) {
-    settings.skipClientVersion = release.version;
-    updater.saveSettings(ctx, settings);
-    log('client-update', '用户跳过版本 ' + release.version);
-    return;
-  }
-  if (response === 2) {
-    // M7 修复：记录"稍后"版本，周期检查不再重复打扰（新版本出现时仍会提示）。
-    settings.pendingClientVersion = release.version;
-    updater.saveSettings(ctx, settings);
-    log('client-update', '用户稍后处理版本 ' + release.version);
-    return;
-  }
-
-  clientUpdateBusy = true;
-  const progressWin = showUpdateWindow(release.version, 'client');
-  const progress = makeUpdateProgressPusher(progressWin);
-  try {
-    // V4.1 更新保障①：客户端更新前同样强制插件/配置快照，失败则中止
-    //（下载与安装都不动 profile，但多一道回滚点总比少一道强）。
-    if (!ensureGuard().snapshot('pre-update:client:' + release.version)) {
-      throw new Error('更新前保护快照失败（profile 不可读），已中止客户端更新。');
-    }
-    // V4.2：探测其余发布源的同版本 release 作为备用下载源（GitHub ↔ Gitee），
-    // 主源多次失败/卡住时自动切换，全程在弹窗内提示。
-    const fallbacks = await clientUpdater.releaseFallbacks(ctx, release);
-    const speedState = { t: 0, bytes: 0, speed: null };
-    const { filePath, size } = await clientUpdater.downloadRelease(ctx, release, {
-      fallbacks,
-      onSourceChange: (source, idx, urls) => {
-        log('client-update', `切换备用下载源（${idx + 1}/${urls.length}）`);
-        progress.force({ stage: '下载停滞，已自动切换下载源（' + (idx + 1) + '/' + urls.length + '）…' });
-      },
-      onProgress: (received, total) => {
-        const now = Date.now();
-        if (speedState.t && now - speedState.t >= 500) {
-          const inst = (received - speedState.bytes) / ((now - speedState.t) / 1000);
-          speedState.speed = speedState.speed == null ? inst : speedState.speed * 0.7 + inst * 0.3;
-        }
-        speedState.t = now;
-        speedState.bytes = received;
-        const sp = speedState.speed || 0;
-        const pct = total > 0 ? Math.round((received * 100) / total) : -1;
-        const meta = {};
-        if (pct >= 0 && sp > 0 && received < total) {
-          meta.speedMBps = sp / 1048576;
-          meta.etaSec = (total - received) / sp;
-        }
-        progress.client(received, total, meta);
-      },
-    });
-    settings.pendingClientUpdate = { version: release.version, path: filePath, source: release.source };
-    settings.skipClientVersion = null;
-    settings.pendingClientVersion = null;
-    updater.saveSettings(ctx, settings);
-    const { response: r2 } = autoAcceptUpdate ? { response: 0 } : await showBox({
-      type: 'info',
-      title: '下载完成',
-      message: `已准备好 Deepseek Harness EAC 封装 v${release.version}（${Math.round(size / 1048576)} MB）。`,
-      detail: '立即重启应用完成更新？\n· 重启后自动安装新版本并启动\n· 插件、皮肤、会话与配置全部保留（仅替换程序本体）\n· 选择稍后重启：下次启动时再提示安装',
-      buttons: ['立即重启', '稍后重启'],
-      defaultId: 0,
-      cancelId: 1,
-    });
-    if (r2 === 0) {
-      quitting = true;
-      forceQuit = true;
-      markCleanExit();
-      updater.abort();
-      if (sessionWatcher) sessionWatcher.stop();
-      // V4：先等 dsh web 进程树真正退出（旧实现 killTree 的强杀补刀在
-      // 主进程退出后不会执行，node.exe+conhost.exe 成对残留）。
-      await killTreeAndWait(serverProc);
-      serverProc = null;
-      const clientUpdateOpts = {
-        userDataDir,
-        dshHome,
-        installDir: path.dirname(process.execPath),
-        profileDir: path.join(dshHome, 'profiles', desktopProfile()),
-        currentVersion: APP_VERSION,
-        newVersion: release.version,
-        nodeExe: nodeExe(),
-      };
-      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate, clientUpdateOpts);
-      setTimeout(() => app.exit(0), 400);
-    }
-  } catch (err) {
-    log('client-update', '更新失败: ' + err.message);
-    await showBox({
-      type: 'error',
-      title: '更新失败',
-      message: '未能完成客户端更新，仍使用当前版本。',
-      detail: err.message,
-      buttons: ['确定'],
-    });
-  } finally {
-    clientUpdateBusy = false;
-    if (progressWin && !progressWin.isDestroyed()) progressWin.destroy();
-  }
-}
-
-function offerPendingClientUpdate() {
-  const ctx = updCtx();
-  const settings = updater.loadSettings(ctx);
-  const pending = settings.pendingClientUpdate;
-  if (!pending || !pending.path) return;
-  if (!fs.existsSync(pending.path)) {
-    settings.pendingClientUpdate = null;
-    updater.saveSettings(ctx, settings);
-    return;
-  }
-  if (updater.compareVersions(pending.version, APP_VERSION) <= 0) {
-    settings.pendingClientUpdate = null;
-    updater.saveSettings(ctx, settings);
-    return;
-  }
-  showBox({
-    type: 'info',
-    title: '有待安装的客户端更新',
-    message: `已下载 Deepseek Harness EAC 封装 v${pending.version}，是否现在安装并重启？`,
-    detail: '安装包保存在数据目录的 updates 文件夹中。\n插件、皮肤、会话与配置全部保留（仅替换程序本体）。',
-    buttons: ['立即重启', '稍后'],
-    defaultId: 0,
-    cancelId: 1,
-  }).then(async ({ response }) => {
-    if (response !== 0) return;
-    quitting = true;
-    forceQuit = true;
-    markCleanExit();
-    updater.abort();
-    if (sessionWatcher) sessionWatcher.stop();
-    // V4：同 runClientUpdateFlow —— 等进程树退出再交给更新脚本接管。
-    await killTreeAndWait(serverProc);
-    serverProc = null;
-    const clientUpdateOpts2 = {
-      userDataDir,
-      dshHome,
-      installDir: path.dirname(process.execPath),
-      profileDir: path.join(dshHome, 'profiles', desktopProfile()),
-      currentVersion: APP_VERSION,
-      newVersion: pending.version,
-      nodeExe: nodeExe(),
-    };
-    clientUpdater.applyUpdate(ctx, pending, clientUpdateOpts2);
-    setTimeout(() => app.exit(0), 400);
-  });
-}
-
-// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// 预览静态文件服务：独立端口的只读文件服务，供「站内 HTML 预览」的 iframe 使用。
-// 为什么要独立端口：浏览器对同一主机 HTTP/1.1 并发连接上限 6，web UI 自身
-// 长连接已占满；预览 iframe 及其相对资源若走 dsh 宿主会被排队。仅接受回环。
-// ---------------------------------------------------------------------------
-
-let previewStaticPort = 0;
-
-function startPreviewStaticServer() {
-  const MIME = {
-    ".html": "text/html", ".htm": "text/html", ".xhtml": "application/xhtml+xml",
-    ".css": "text/css", ".js": "text/javascript", ".mjs": "text/javascript", ".cjs": "text/javascript",
-    ".json": "application/json", ".map": "application/json", ".txt": "text/plain", ".md": "text/plain", ".csv": "text/plain",
-    ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif",
-    ".webp": "image/webp", ".ico": "image/x-icon", ".avif": "image/avif",
-    ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
-    ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".ogg": "video/ogg",
-    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".pdf": "application/pdf", ".xml": "application/xml"
-  };
-  const TEXT_MIME = /^(text\/|application\/(json|javascript|xhtml\+xml|xml)|image\/svg)/;
-  const server = http.createServer((req, res) => {
-    const ra = req.socket && req.socket.remoteAddress;
-    if (ra !== "127.0.0.1" && ra !== "::1" && ra !== "::ffff:127.0.0.1") {
-      res.writeHead(403);
-      res.end();
-      return;
-    }
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      res.writeHead(405, { allow: "GET, HEAD" });
-      res.end();
-      return;
-    }
-    let p;
-    try {
-      p = decodeURIComponent(new URL(req.url, "http://127.0.0.1").pathname.slice(1));
-    } catch {
-      res.writeHead(400);
-      res.end();
-      return;
-    }
-    if (/^\/[A-Za-z]:[\\/]/.test(p)) p = p.slice(1);
-    if (!path.isAbsolute(p)) {
-      res.writeHead(400);
-      res.end();
-      return;
-    }
-    try {
-      const st = fs.statSync(p);
-      if (!st.isFile()) {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      const mime = MIME[path.extname(p).toLowerCase()] || "application/octet-stream";
-      res.writeHead(200, {
-        "content-type": TEXT_MIME.test(mime) ? mime + "; charset=utf-8" : mime,
-        "content-length": String(st.size),
-        "cache-control": "no-store"
-      });
-      if (req.method === "HEAD") { res.end(); return; }
-      fs.createReadStream(p).pipe(res);
-    } catch {
-      res.writeHead(404);
-      res.end();
-    }
-  });
-  server.listen(0, "127.0.0.1", () => {
-    previewStaticPort = server.address().port;
-    log("boot", "预览静态服务已启动: http://127.0.0.1:" + previewStaticPort);
-  });
-  server.on("error", (err) => log("boot", "预览静态服务失败: " + err.message));
-}
-
-// Issue #7: verify the bundled node_modules against the build-time manifest
-// before starting dsh web. A botched upgrade leaves empty package skeletons;
-// Node then dies with ERR_MODULE_NOT_FOUND in a loop. Tell the user to
-// reinstall instead (with an escape hatch to continue anyway).
-function verifyBundledModules() {
-  if (!app.isPackaged) return Promise.resolve();
-  const appDir = path.join(process.resourcesPath, 'app');
-  const manifestPath = path.join(appDir, 'bundle-manifest.json');
-  let manifest = null;
-  try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return Promise.resolve(); }
-  const r = bundleIntegrity.verifyBundle(path.join(appDir, 'node_modules'), manifest);
-  if (r.skipped || r.ok) return Promise.resolve();
-  const sample = r.damaged.slice(0, 5).map((d) => `${d.name}（${d.reason}）`).join('、');
-  log('boot', `捆绑依赖完整性校验失败（${r.damaged.length} 个包受损）: ${sample}${r.damaged.length > 5 ? ' 等' : ''}`);
-  return showBox({
-    type: 'error',
-    title: '程序文件受损',
-    message: `检测到 ${r.damaged.length} 个捆绑依赖包文件缺失，可能是升级中断或安全软件清理所致。`,
-    detail: `受损包: ${sample}${r.damaged.length > 5 ? `（共 ${r.damaged.length} 个）` : ''}\n\n建议重新下载安装包覆盖安装（GitHub Releases 最新版）。\n选择「仍然启动」大概率无法正常运行。`,
-    buttons: ['仍然启动', '退出'],
-    defaultId: 0,
-    cancelId: 1,
-  }).then(({ response }) => {
-    if (response !== 0) {
-      forceQuit = true;
-      markCleanExit(); // 用户选择退出：不让看门狗拉起一个已知损坏的安装
-      app.exit(1);
-    }
-  });
-}
 
 // 全新 vs 老用户判定（须在 run-state / migrate 标记 / 稳定端口等任何写盘
 // 之前调用）：settings.json 在迁移流程里会被无条件创建，事后无法区分。

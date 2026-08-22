@@ -59,6 +59,10 @@ files:
   - lib/desktop/companion-sync.js
   - lib/desktop/plugin-ops.js
   - lib/desktop/market.js
+  - lib/desktop/shortcuts.js
+  - lib/desktop/junction-patrol.js
+  - lib/desktop/client-update.js
+  - lib/desktop/static-preview.js
   - assets/**/*
   # 运行时脚本：koffi 预检探针（scripts/koffi-preflight.cjs）、会话删除补丁与
   # 插件启停手术脚本（main.js 启动时 require）等必须在成品里存在。
