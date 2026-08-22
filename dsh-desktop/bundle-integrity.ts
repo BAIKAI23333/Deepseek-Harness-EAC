@@ -1,6 +1,7 @@
 'use strict';
 
-// Bundled node_modules integrity verification (issue #7).
+// Bundled node_modules integrity verification (issue #7;
+// Wave 3 自 bundle-integrity.js 类型化迁出，行为零变更).
 //
 // A botched upgrade (old NSIS uninstaller aborting midway: Delete phase done,
 // RMDir phase not) leaves packages as empty directory skeletons. Node module
@@ -16,11 +17,23 @@
 // cryptic module error. Extra files appearing are tolerated (only losses
 // break module resolution).
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
+
+interface BundleManifest {
+  version: number;
+  packages: Record<string, { files: number }>;
+}
+
+export interface DamagedPackage {
+  name: string;
+  expected?: number;
+  actual?: number;
+  reason: string;
+}
 
 /** Count files (not dirs) recursively under dir. Symlinks count as files. */
-function countFiles(dir) {
+function countFiles(dir: string): number {
   let n = 0;
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
@@ -34,10 +47,9 @@ function countFiles(dir) {
 /**
  * Build the manifest for a node_modules tree: top-level packages and
  * @scope/* packages (depth 2), keyed by full package name.
- * @returns {{version: 1, packages: Record<string, {files: number}>}}
  */
-function buildBundleManifest(nmRoot) {
-  const packages = {};
+export function buildBundleManifest(nmRoot: string): BundleManifest {
+  const packages: Record<string, { files: number }> = {};
   let entries;
   try { entries = fs.readdirSync(nmRoot, { withFileTypes: true }); } catch { return { version: 1, packages }; }
   for (const e of entries) {
@@ -58,13 +70,13 @@ function buildBundleManifest(nmRoot) {
 
 /**
  * Verify an installed node_modules tree against a manifest.
- * @param {string} nmRoot installed node_modules path
- * @param {{version:number, packages:Record<string,{files:number}>}|null} manifest
- * @returns {{ok: boolean, skipped?: boolean, damaged: Array<{name: string, expected?: number, actual?: number, reason: string}>}}
  */
-function verifyBundle(nmRoot, manifest) {
+export function verifyBundle(
+  nmRoot: string,
+  manifest: BundleManifest | null | undefined,
+): { ok: boolean; skipped?: boolean; damaged: DamagedPackage[] } {
   if (!manifest || !manifest.packages) return { ok: true, skipped: true, damaged: [] };
-  const damaged = [];
+  const damaged: DamagedPackage[] = [];
   for (const [name, meta] of Object.entries(manifest.packages)) {
     const pkgDir = path.join(nmRoot, ...name.split('/'));
     if (!fs.existsSync(pkgDir)) {
@@ -82,5 +94,3 @@ function verifyBundle(nmRoot, manifest) {
   }
   return { ok: damaged.length === 0, damaged };
 }
-
-module.exports = { buildBundleManifest, verifyBundle };

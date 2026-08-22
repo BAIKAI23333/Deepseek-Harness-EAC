@@ -38,3 +38,7 @@ build/*
 /lib/desktop/shortcuts.js
 /lib/desktop/static-preview.js
 /lib/desktop/companion-sync.js
+/stable-port.js
+/error-detail.js
+/bundle-integrity.js
+/watchdog.js

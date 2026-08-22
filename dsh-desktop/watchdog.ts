@@ -1,6 +1,7 @@
 'use strict';
 
 // DSH Desktop watchdog: keeps the packaged desktop app alive.
+// (Wave 3 自 watchdog.js 类型化迁出，行为零变更.)
 //
 // The Electron main process launches this tiny Node process detached at boot.
 // It polls the parent PID. If the parent disappears:
@@ -12,11 +13,16 @@
 // Guard rails: at most 5 relaunches per 10 minutes, and a 15s grace period
 // after each launch so the new instance can write its run-state file first.
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { spawn } = require('node:child_process');
+import fs = require('node:fs');
+import path = require('node:path');
+import { spawn } from 'node:child_process';
 
-function arg(name, fallback) {
+interface RunState {
+  cleanExit?: boolean;
+  pid?: number;
+}
+
+function arg(name: string, fallback: string): string {
   const prefix = '--' + name + '=';
   const hit = process.argv.find((a) => a.startsWith(prefix));
   return hit ? hit.slice(prefix.length) : fallback;
@@ -35,27 +41,27 @@ let restartCount = 0;
 let windowStart = 0;
 let lastLaunchAt = 0;
 
-function log(msg) {
+function log(msg: string): void {
   if (!logFile) return;
   const line = `[${new Date().toISOString()}] ${msg}\n`;
-  try { fs.appendFileSync(logFile, line, 'utf8'); } catch {}
+  try { fs.appendFileSync(logFile, line, 'utf8'); } catch { /* 尽力记录 */ }
 }
 
-function alive(pid) {
+function alive(pid: number): boolean {
   if (!pid || pid <= 0) return false;
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return err && err.code === 'EPERM';
+    return !!(err && (err as NodeJS.ErrnoException).code === 'EPERM');
   }
 }
 
-function readState() {
+function readState(): RunState | null {
   try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return null; }
 }
 
-function launchApp() {
+function launchApp(): void {
   const now = Date.now();
   if (now - lastLaunchAt < GRACE_MS) return;
   if (restartCount === 0) windowStart = now;
@@ -83,11 +89,11 @@ function launchApp() {
     });
     child.unref();
   } catch (err) {
-    log('watchdog: spawn failed: ' + ((err && err.message) || err));
+    log('watchdog: spawn failed: ' + ((err as Error).message || err));
   }
 }
 
-function poll() {
+function poll(): void {
   if (alive(watchedPid)) return;
   const state = readState();
   if (state && state.cleanExit === true) {
