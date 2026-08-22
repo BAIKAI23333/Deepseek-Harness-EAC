@@ -30,3 +30,4 @@ build/*
 /lib/desktop/runtime-paths.js
 /lib/desktop/file-roots.js
 /lib/desktop/profile.js
+/lib/desktop/runtime-patches.js
