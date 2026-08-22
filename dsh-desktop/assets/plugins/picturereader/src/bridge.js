@@ -122,7 +122,7 @@ export async function bridgeMessages(messages, ctx, dir) {
 }
 
 /**
- * 注册图片桥（agent/pre-step 桥 + llm/stream 兜底）。
+ * 注册图片桥（agent/pre-step 桥 + llm/stream 兜底 + read_image 拦截）。
  * @param {object} ctx - Cordis 上下文（inject: tools/llm/attachments）。
  * @param {() => object} 未使用 getConfig —— mode 从 runtime 读，保持实时。
  */
@@ -158,5 +158,31 @@ export function attachImageBridge(ctx) {
       }
       yield* downstream ?? next();
     })();
+  });
+
+  // tools/post-execute 拦截：当 read_image 成功执行但返回了 image block 时，
+  // 将其替换为文本引导，避免后续请求因 image block 导致 UNSUPPORTED_CONTENT 错误。
+  ctx.on('tools/post-execute', async (exec, result, next) => {
+    try {
+      if (exec.name === 'read_image' && !result.isError) {
+        // 检查结果中是否包含 image block
+        const hasImage = result.content?.some(b => b.type === 'image');
+        if (hasImage) {
+          const filePath = exec.arguments?.file_path || 'the image file';
+          // 替换为文本引导，移除 image block
+          result = {
+            ...result,
+            content: [{
+              type: 'text',
+              text: `[图片已读取: ${filePath}]\n\n当前模型不支持图像输入，无法直接处理图片。请使用 picturereader 的工具来分析此图片：\n- image_scan(file_path="${filePath}") — 像素级扫描，看布局/颜色/结构\n- image_ocr(file_path="${filePath}") — 文字识别\n- vision_analyze(file_path="${filePath}") — 统一图像理解\n\n这些工具适用于所有模型，不需要模型支持图像输入。`
+            }]
+          };
+          console.log('[picturereader] intercepted read_image image block, replaced with text guidance');
+        }
+      }
+    } catch (error) {
+      console.log('[picturereader] tools/post-execute intercept failed:', String(error && error.message || error));
+    }
+    return next();
   });
 }
