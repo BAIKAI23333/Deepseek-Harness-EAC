@@ -169,6 +169,12 @@
 
 ## 4. TS 迁移路线图（四波推进，每波独立可验收）
 
+> **2026-08-22 第三轮执行进度**：Wave 0 ✅（`724f644`）；Wave 1 试点 guard-box ✅；sidecar 实体化 ✅（`7a54496`，
+> `tauri-shell/sidecar/server.ts` 挂载全部 13 个 L2 模块 + 白名单 JSON-RPC 分发，stdio 冒烟 7/7）。
+> 另有 updater 加固 `8385aef`：本机注册表 InstallLocation 被写脏（值内嵌引号）导致备份链 CMD 解析炸裂（255），
+> 已加防御性剥引号并实测回归。内核版本决议：**保留 0.1.0-rc.7**（rc.2 声明已还原，勿再升）。
+> 下一步：Wave 1 余量（proc/runtime-paths/file-roots/profile）→ P2 Rust 回环 WS 桥。
+
 > 原则：**渐进式、每波全绿、行为零变更**。复用 T1「纯移动」的验证体系（608 测试 + CDP 真实启动），在其上叠加 `tsc --noEmit` 类型门禁。
 
 ### Wave 0 · 工具链铺垫（先行，一次性）✅ 已落地（2026-08-22）
