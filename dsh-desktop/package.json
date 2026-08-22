@@ -18,6 +18,9 @@
     "fetch-npm": "node scripts/fetch-npm.js",
     "fetch-runtime": "node scripts/fetch-node.js && node scripts/fetch-npm.js",
     "electron:fetch": "node node_modules/electron/install.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "pretest": "npm run build",
     "test": "node --test \"test/*.test.mjs\""
   },
   "dependencies": {
@@ -49,7 +52,9 @@
     "zstddec": "0.2.0"
   },
   "devDependencies": {
+    "@types/node": "24.13.3",
     "electron": "^43.4.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "typescript": "^7.0.2"
   }
 }

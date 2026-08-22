@@ -171,13 +171,23 @@
 
 > 原则：**渐进式、每波全绿、行为零变更**。复用 T1「纯移动」的验证体系（608 测试 + CDP 真实启动），在其上叠加 `tsc --noEmit` 类型门禁。
 
-### Wave 0 · 工具链铺垫（先行，一次性）
+### Wave 0 · 工具链铺垫（先行，一次性）✅ 已落地（2026-08-22）
 
-- [ ] `<root>/tsconfig.json`：`allowJs` 渐进启用、`strict` 逐步收紧、输出 CommonJS（保持 require 生态兼容）
-- [ ] 构建策略决策：`tsc` 直出 vs esbuild 打包到 `dist-cjs/`；Electron 主进程入口指向产物
-- [ ] **打包清单联动**（v3.0.0 事故防呆，HANDOVER.md §4.4）：`electron-builder.yml` files 清单从「精确 .js 文件名」切换为「精确产物文件名」，`bundled-files.test.mjs` 同步改比对产物
-- [ ] **测试链路决策**：`node --test test/*.test.mjs` 直读源码 → 引入 tsx loader 或先构建后测试；CI（.github/workflows/ci.yml）同步
-- [ ] 契约测试读取路径决策：文本断言改读 `.ts` 源码还是产物（建议：读 `.ts` 源码，语义不变）
+- [x] `<root>/tsconfig.json`：`strict` 全开、`module: commonjs`、`noEmitOnError`；`allowJs` 保持关闭——未转换的 .js 是手写事实源，绝不允许被编译器触碰
+- [x] **构建策略 = tsc 直出·产物就地**：源码 `.ts` 是唯一事实源，tsc 把同名 `.js` 就地产出并 gitignore。收益：require 路径 / `electron-builder.yml` 精确清单 / `bundled-files.test.mjs` / 测试 import **全部零改动**；代价：运行时与测试前需先 `npm run build`（已挂 `pretest`）
+- [x] 打包清单联动：**无需改动**（产物文件名与原手写一致）——规避 v3.0.0 事故面
+- [x] 测试链路：`pretest → build → node --test`，CI 无需新步骤
+- [x] 契约测试读取路径：跟随转换切到 `.ts` 源码（语义不变）
+- [x] **工具链版本备忘**：TypeScript **7.0.2**（原生编译器）。注意：`moduleResolution: "node10"` 已被移除——CJS 项目直接省略该选项即可解析；`@types/node` 锁 24.x 与运行时对齐
+
+**Wave 0 确立的代码风格约定**：
+
+| 主题 | 约定 |
+| --- | --- |
+| 导入 stdlib | `import path = require('node:path')`（CJS 直译，emit 与手写 require 逐行一致，无 importStar 样板） |
+| 消费未类型化 JS 模块 | `const { x } = require('../../mod') as { x: (…) => … }`（窄签名断言 + 注释标注收编波次），其源模块转正后换具名 import |
+| 注入 ctx 类型 | 每个模块导出自己的 `XxxCtx` 接口；`let ctx!: XxxCtx` + `init(d)` 惰性注入（保持原错误时机语义） |
+| 产物纪律 | 生成 .js 一律 gitignore（逐文件追加条目，禁止通配符——防误伤未转换的手写 JS） |
 
 ### Wave 1 · L2 基础设施（小模块热身，~254 行）
 
