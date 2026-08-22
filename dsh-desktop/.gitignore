@@ -26,3 +26,7 @@ build/*
 /lib/desktop/guard-box.js
 
 /tauri-shell/sidecar/server.js
+/lib/desktop/proc.js
+/lib/desktop/runtime-paths.js
+/lib/desktop/file-roots.js
+/lib/desktop/profile.js

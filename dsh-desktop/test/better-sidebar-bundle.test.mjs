@@ -48,8 +48,8 @@ test('schemastery (the plugin\'s only missing server dep) is declared', () => {
 });
 
 test('desktop profile initialization resolves the DSH home before linking schemastery', () => {
-  // ADR 0002：实现迁至 lib/desktop/profile.js（L2 业务服务层）。
-  const src = readFileSync(join(ROOT, 'lib', 'desktop', 'profile.js'), 'utf8');
+  // ADR 0002：实现迁至 lib/desktop/profile（L2 业务服务层；Wave 1 起 .ts 为源）。
+  const src = readFileSync(join(ROOT, 'lib', 'desktop', 'profile.ts'), 'utf8');
   const start = src.indexOf('function ensureDesktopProfileInit()');
   const end = src.indexOf('\n}\n', start);
   const body = src.slice(start, end);

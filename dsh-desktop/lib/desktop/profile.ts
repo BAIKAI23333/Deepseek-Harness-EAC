@@ -1,6 +1,7 @@
 'use strict';
 
-// 桌面专属 profile（与原生 CLI 彻底共存）（自 main.js 原样迁出，ADR 0002 L2）。
+// 桌面专属 profile（与原生 CLI 彻底共存）（ADR 0002 L2 业务服务层；
+// Wave 1 自 profile.js 类型化迁出，行为零变更）。
 //
 // 历史冲突根因有二 ——
 //   1. 桌面端把配套插件行/包直接写进原生 `web` profile，pnpm 安装、patch
@@ -12,20 +13,29 @@
 // API Key、settings.yaml 依旧共享）；junction 归属由 plugin-guard 周期守卫。
 // 旧共享模式仍可用（settings.shareWebProfile = true），仅供特殊需要。
 
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
-const updater = require('../../updater');
-const { updCtx, APP_ROOT } = require('./runtime-paths');
+import path = require('node:path');
+import fs = require('node:fs');
+import os = require('node:os');
+import { updCtx, APP_ROOT } from './runtime-paths';
+// updater.js 尚未类型化（Wave 3 收编），先以窄签名消费。
+const updater = require('../../updater') as {
+  loadSettings(c: ReturnType<typeof updCtx>): { shareWebProfile?: boolean };
+};
 
-const DESKTOP_PROFILE = 'web-desktop';
+export const DESKTOP_PROFILE = 'web-desktop';
 // 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app）。
-const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
+export const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
 
-let ctx = {};
-function init(d) { ctx = d; }
+/** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
+export interface ProfileCtx {
+  log(tag: string, msg: string): void;
+  getDshHome(): string | null;
+}
 
-function desktopProfile() {
+let ctx!: ProfileCtx;
+export function init(d: ProfileCtx): void { ctx = d; }
+
+export function desktopProfile(): string {
   try {
     const s = updater.loadSettings(updCtx());
     return s.shareWebProfile === true ? 'web' : DESKTOP_PROFILE;
@@ -34,14 +44,14 @@ function desktopProfile() {
   }
 }
 
-function desktopProfileDir() {
+export function desktopProfileDir(): string {
   const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
   return path.join(home, 'profiles', desktopProfile());
 }
 
 // 未知 profile 不会自动初始化（dsh 直接报错退出），桌面端自己按官方模板
 // 创建：package.json（bundles）+ pnpm-workspace.yaml + 空 patch 层。
-function ensureDesktopProfileInit() {
+export function ensureDesktopProfileInit() {
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
     const dir = desktopProfileDir();
@@ -72,19 +82,10 @@ function ensureDesktopProfileInit() {
     if (fs.existsSync(source) && !fs.existsSync(link)) {
       fs.mkdirSync(shared, { recursive: true });
       try { fs.symlinkSync(source, link, 'junction'); } catch (err) {
-        ctx.log('boot', '创建 schemastery 共享链接失败: ' + err.message);
+        ctx.log('boot', '创建 schemastery 共享链接失败: ' + (err as Error).message);
       }
     }
   } catch (err) {
-    ctx.log('boot', '初始化桌面 profile 失败: ' + err.message);
+    ctx.log('boot', '初始化桌面 profile 失败: ' + (err as Error).message);
   }
 }
-
-module.exports = {
-  DESKTOP_PROFILE,
-  DESKTOP_PROFILE_BUNDLES,
-  init,
-  desktopProfile,
-  desktopProfileDir,
-  ensureDesktopProfileInit,
-};
