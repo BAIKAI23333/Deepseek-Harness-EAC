@@ -1,3 +1,4 @@
 /target
 sidecar/server.js
 sidecar/bridge.js
+sidecar/rescue-integration.js

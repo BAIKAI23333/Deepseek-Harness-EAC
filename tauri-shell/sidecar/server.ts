@@ -58,8 +58,66 @@ const showBoxFallback = async (opts: { title?: string; message?: string }) => {
   return { response: 0 };
 };
 const notifyFallback = (n: { title: string; body: string }) => say('[notify] ' + n.title + ': ' + n.body);
-// .lnk 驱动占位：P2 Rust LinkDriver 就位后经 WS 替换。
-const linkUnsupported = (): never => { throw new Error('LinkDriver not available in sidecar yet (P2)'); };
+// .lnk 驱动（硬门槛④）：PowerShell WScript.Shell COM 实现，接口对齐 Electron
+// shell.readShortcutLink / writeShortcutLink（同步、失败抛错）。路径经环境
+// 变量传入，规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
+function psLnkRead(p: string): Record<string, unknown> {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+try {
+  $sh = New-Object -ComObject WScript.Shell
+  $sc = $sh.CreateShortcut($env:DSH_LNK_PATH)
+  $icon = [string]$sc.IconLocation
+  if ($icon -match ',\s*\d+$') { $icon = $icon -replace ',\s*\d+$', '' }
+  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+  @{ target = [string]$sc.TargetPath; args = [string]$sc.Arguments; cwd = [string]$sc.WorkingDirectory; description = [string]$sc.Description; icon = $icon } | ConvertTo-Json -Compress
+} catch { exit 1 }
+`;
+  try {
+    const out = cp.execFileSync('powershell', ['-NoProfile', '-Command', script], {
+      env: { ...process.env, DSH_LNK_PATH: p },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 8000,
+    });
+    return JSON.parse(out) as Record<string, unknown>;
+  } catch (e) {
+    throw new Error('lnk read failed: ' + p + ' (' + String(((e as Error).message) || e).slice(0, 120) + ')');
+  }
+}
+
+function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): void {
+  const script = String.raw`
+$ErrorActionPreference='Stop'
+$lnk = $env:DSH_LNK_PATH
+if (($env:DSH_LNK_OP -eq 'create') -and (Test-Path -LiteralPath $lnk)) { exit 2 }
+try {
+  $sh = New-Object -ComObject WScript.Shell
+  $sc = $sh.CreateShortcut($lnk)
+  $sc.TargetPath = $env:DSH_LNK_TARGET
+  if ($env:DSH_LNK_ARGS) { $sc.Arguments = $env:DSH_LNK_ARGS }
+  if ($env:DSH_LNK_CWD) { $sc.WorkingDirectory = $env:DSH_LNK_CWD }
+  if ($env:DSH_LNK_DESC) { $sc.Description = $env:DSH_LNK_DESC }
+  if ($env:DSH_LNK_ICON) { $sc.IconLocation = $env:DSH_LNK_ICON }
+  $sc.Save()
+  exit 0
+} catch { exit 1 }
+`;
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DSH_LNK_PATH: p,
+    DSH_LNK_OP: String(op || 'replace'),
+    DSH_LNK_TARGET: String(opts.target || ''),
+    DSH_LNK_ARGS: opts.args == null ? '' : String(opts.args),
+    DSH_LNK_CWD: opts.cwd == null ? '' : String(opts.cwd),
+    DSH_LNK_DESC: opts.description == null ? '' : String(opts.description),
+    DSH_LNK_ICON: opts.icon == null ? '' : String(opts.icon),
+  };
+  const st = cp.spawnSync('powershell', ['-NoProfile', '-Command', script], { env, windowsHide: true, timeout: 10000 });
+  if (!st || st.status !== 0) {
+    throw new Error('lnk ' + String(op) + ' failed (' + String(st && st.status) + '): ' + p);
+  }
+}
 
 procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfileFn });
 pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => false, resourcesPath: () => '' });
@@ -78,7 +136,7 @@ shortcutsMod.init({
   getDshHome: () => dshHome,
   isPackaged: () => false,
   systemPath: (kind: string) => (kind === 'appData' ? appDataDir : kind === 'desktop' ? path.join(os.homedir(), 'Desktop') : ''),
-  links: { read: linkUnsupported, write: linkUnsupported },
+  links: { read: psLnkRead, write: psLnkWrite },
 });
 junctionPatrolMod.init({
   log,
@@ -200,7 +258,17 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     } catch (e) {
       say('boot 前置准备失败（继续尝试拉起服务）: ' + String(((e as Error).message) || e));
     }
-    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+    let r: { webUrl: string; port: number };
+    try {
+      r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+    } catch (e) {
+      // 崩溃循环计数（= main.js recordBootFailureNow）：连续失败达阈值后，
+      // 救援页据 rescue.state.crash 引导安全模式。
+      rescueIntegration.recordBootFailureNow(String(((e as Error).message) || e));
+      notify('boot.failed', { error: String(((e as Error).message) || e) });
+      throw e;
+    }
+    rescueIntegration.clearRescueState?.();
     notify('boot.web-ready', r);
     startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
     return r;
@@ -273,11 +341,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
 // P3 渐进收编：尚未在 sidecar 落地的桥方法返回 null（桥/插件侧按「无数据」
 // 降级，与桥断开时行为一致，不炸页面）。每收编一个真实现就从这里删除。
 // 剩余：向导窗口/恢复页/救援链（P3 壳层 GUI 能力）、更新检查与日志导出（P4）。
-const PENDING_BRIDGE_METHODS = [
-  'wizard.open', 'recovery.state', 'recovery.reload', 'recovery.restart',
-  'recovery.export-logs', 'rescue.state', 'rescue.confirm', 'rescue.diagnose', 'rescue.apply',
-  'rescue.safe-mode', 'rescue.retry', 'rescue.auto-repair',
-];
+const PENDING_BRIDGE_METHODS = ['wizard.open'];
 for (const m of PENDING_BRIDGE_METHODS) {
   methods[m] = (): null => null;
 }
@@ -654,6 +718,29 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
   },
 };
 Object.assign(methods, batch);
+
+// ---- 救援链（硬门槛②；实现于 rescue-integration.ts，同产物编译） ----------
+const rescueIntegration = require('./rescue-integration') as {
+  initRescue(host: unknown): void;
+  rescueMethods(): Record<string, (p: Record<string, unknown> | undefined) => unknown>;
+  recordBootFailureNow(errText: string): void;
+  shouldEnterRescueNow(): boolean;
+  clearRescueState(): void;
+};
+rescueIntegration.initRescue({
+  dshHome,
+  userDataDir,
+  pkgVersion,
+  desktopProfile: desktopProfileFn,
+  desktopProfileDir: () => (profileMod.desktopProfileDir as () => string)(),
+  dshVersion: () => (pathsMod.dshVersion as () => string)(),
+  dshVersionSource: () => (pathsMod.dshVersionSource as () => string)(),
+  log,
+  notify,
+  mods: { boot: bootMod, guardBox: guardBoxMod, pluginOps: pluginOpsMod, companionSync: companionSyncMod, balance },
+  bootRestart: () => (methods['boot.restart'] as (p?: unknown) => Promise<Record<string, unknown>>)({} as Record<string, unknown>),
+});
+Object.assign(methods, rescueIntegration.rescueMethods());
 
 function respond(msg: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(msg) + '\n');

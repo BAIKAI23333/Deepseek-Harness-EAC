@@ -42,3 +42,4 @@ updates/
 
 # Reasonix 工具元数据（勿提交）
 .reasonix/
+/tmp-p2boot/

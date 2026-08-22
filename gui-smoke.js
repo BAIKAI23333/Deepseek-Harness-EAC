@@ -160,6 +160,12 @@ async function listOrphans() {
     const plist = await c.evalJs('window.dshDesktop.pluginManager.list()');
     check('pluginManager.list（配套插件清单）', !!(plist && Array.isArray(plist.list) && plist.list.length >= 20), 'count=' + (plist && plist.list && plist.list.length));
 
+    // 5f) P3：救援链（硬门槛②）—— rescue.getState / guard status
+    const rs = await c.evalJs('window.dshDesktop.rescue.getState()');
+    check('rescue.getState（救援链就绪）', !!(rs && rs.profile === 'web-desktop' && typeof rs.serverAlive === 'boolean' && rs.threshold >= 1), JSON.stringify({ profile: rs && rs.profile, alive: rs && rs.serverAlive, thr: rs && rs.threshold }));
+    const gs = await c.evalJs('window.dshDesktop.guard.action("status")');
+    check('guard.action status（保护中心）', !!(gs && gs.ok && Array.isArray(gs.snapshots)), 'snaps=' + (gs && gs.snapshots && gs.snapshots.length));
+
     // 6) 浮窗（硬门槛①：第二 WebviewWindow + per-webview data_directory）。
     //    独立 data_directory = 独立浏览器进程，不能共用 CDP 端口 —— 用生产信号
     //    路径验证：浮窗桥就绪后经 WS 广播 float.ready，主窗 _onNotify 可观测。

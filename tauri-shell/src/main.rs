@@ -404,6 +404,10 @@ async fn handle_shell_method(
             eprintln!("[page-error] {}", msg);
             Ok(None)
         }
+        "recovery.restart" => {
+            // 整应用重启（= Electron app.relaunch+exit）。
+            app.restart();
+        }
         _ => Err(()),
     }
 }
@@ -615,14 +619,25 @@ fn died_page(log_path: &str, code: &str) -> String {
          <div style=\"font-size:20px;font-weight:600;margin-bottom:10px\">DSH 服务已停止</div>\
          <div style=\"font-size:13px;color:#8b9ac4;margin-bottom:6px\">退出码 {}</div>\
          <div style=\"font-size:12px;color:#5f6f9c;font-family:Consolas,monospace;margin-bottom:20px\">{}</div>\
+         <div style=\"display:flex;gap:10px;justify-content:center\">\
          <button onclick=\"retry()\" style=\"padding:8px 22px;border:1px solid rgba(255,255,255,.18);\
          border-radius:9px;background:rgba(91,140,255,.15);color:#dfe6ff;font-size:13px;cursor:pointer\">重新启动</button>\
+         <button onclick=\"safeMode()\" style=\"padding:8px 22px;border:1px solid rgba(255,200,120,.25);\
+         border-radius:9px;background:rgba(255,180,80,.10);color:#ffd9a3;font-size:13px;cursor:pointer\">安全模式重启</button>\
+         </div>\
          </div>\
          <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}\
          function retry(){{\
            var b=document.querySelector('button');b.textContent='正在重启…';b.disabled=true;\
            window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\
              .catch(function(e){{b.textContent='重启失败，请重试';b.disabled=false;}});\
+         }}\
+         function safeMode(){{\
+           var b=event.target;b.textContent='进入安全模式…';b.disabled=true;\
+           window.dshDesktop._call('rescue.safe-mode',{{on:true}}).then(function(){{\
+             return window.dshDesktop._call('boot.start',{{}});\
+           }}).then(function(){{location.reload();}})\
+             .catch(function(e){{b.textContent='失败（服务可能仍在运行）';b.disabled=false;}});\
          }}</script></body>",
         esc(code),
         esc(log_path),
