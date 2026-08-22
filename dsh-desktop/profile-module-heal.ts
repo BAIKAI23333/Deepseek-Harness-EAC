@@ -23,10 +23,10 @@
 // the profile's own .pnpm store) are left untouched. Returns the removed
 // package names.
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 
-function healProfileModuleShadowing(home, profile = 'web', log = () => {}) {
+function healProfileModuleShadowing(home: string, profile = 'web', log: (m: string) => void = () => {}) {
   const fallbackDir = path.join(home, 'profiles', 'node_modules');
   const profileModulesDir = path.join(home, 'profiles', profile, 'node_modules');
 
@@ -81,7 +81,7 @@ function healProfileModuleShadowing(home, profile = 'web', log = () => {}) {
       // Windows junctions need unlink (rmSync force-only throws EISDIR).
       const target = safeReadlink(shadow);
       if (!target) continue;
-      const norm = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+      const norm = (p: string): string => String(p).replace(/\//g, '\\').toLowerCase();
       const storeRoot = norm(path.join(profileModulesDir, '.pnpm'));
       if (norm(path.resolve(path.dirname(shadow), target)).startsWith(storeRoot)) {
         try { fs.unlinkSync(shadow); } catch { fs.rmSync(shadow, { force: true, recursive: true, maxRetries: 3, retryDelay: 150 }); }
@@ -93,7 +93,7 @@ function healProfileModuleShadowing(home, profile = 'web', log = () => {}) {
   return removed;
 }
 
-function safeReadlink(p) {
+function safeReadlink(p: string): string | null {
   try { return fs.readlinkSync(p); } catch { return null; }
 }
 

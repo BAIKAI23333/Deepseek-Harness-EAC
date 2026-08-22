@@ -17,12 +17,12 @@
 // the upstream install guidance — user edits and manually installed copies
 // always win over the bundled copy.
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 
-function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
-  const installed = [];
-  const kept = [];
+function syncBundledPresets(assetsRoot: string, presetsRoot: string, log: (m: string) => void = () => {}) {
+  const installed: string[] = [];
+  const kept: string[] = [];
   let entries;
   try { entries = fs.readdirSync(assetsRoot, { withFileTypes: true }); } catch { return { installed, kept }; }
   fs.mkdirSync(presetsRoot, { recursive: true });
@@ -39,7 +39,7 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
         fs.cpSync(src, sharedDest, { recursive: true });
         log('installed bundled preset shared dir: ' + entry.name);
       } catch (err) {
-        log('failed to install bundled preset shared dir ' + entry.name + ': ' + err.message);
+        log('failed to install bundled preset shared dir ' + entry.name + ': ' + String(((err as Error) && (err as Error).message) || err));
       }
       continue;
     }
@@ -56,7 +56,7 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
       installed.push(entry.name);
       log('installed bundled agent preset: ' + entry.name);
     } catch (err) {
-      log('failed to install bundled agent preset ' + entry.name + ': ' + err.message);
+      log('failed to install bundled agent preset ' + entry.name + ': ' + String(((err as Error) && (err as Error).message) || err));
     }
   }
   return { installed, kept };
@@ -75,7 +75,7 @@ function syncBundledPresets(assetsRoot, presetsRoot, log = () => {}) {
  *     宿主回落官方默认 preset，绝不破坏用户的 settings.yaml。
  * 指名的 preset 目录不存在时也跳过（默认值不能指向缺失的 preset）。
  */
-function ensureDefaultAgentPreset(home, presetId, log = () => {}) {
+function ensureDefaultAgentPreset(home: string, presetId: string, log: (m: string) => void = () => {}) {
   try {
     if (!fs.existsSync(path.join(home, '.agent-presets', presetId, 'preset.yml'))) return 'skipped';
     const file = path.join(home, 'settings.yaml');
@@ -110,7 +110,7 @@ function ensureDefaultAgentPreset(home, presetId, log = () => {}) {
     fs.writeFileSync(file, (bom ? '\uFEFF' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
     return 'set';
   } catch (err) {
-    log('设置默认 agent preset 失败: ' + err.message);
+    log('设置默认 agent preset 失败: ' + String(((err as Error) && (err as Error).message) || err));
     return 'skipped';
   }
 }

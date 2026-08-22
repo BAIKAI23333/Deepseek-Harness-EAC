@@ -1,6 +1,30 @@
 'use strict';
 
-function createStreamWriteGuard(stream, opts = {}) {
+// 流写入守卫（Wave 3 自 stream-write-guard.js 类型化迁出，行为零变更）：
+// 把 Writable 的异步错误（含 write-after-end）圈进 onError 回调，写侧不再
+// 需要为每次 write 包 try/catch。
+
+interface GuardedStream {
+  write(chunk: unknown): boolean;
+  end(): boolean;
+  readonly closing: boolean;
+  readonly ended: boolean;
+}
+
+interface GuardOpts {
+  onError?(err: unknown): void;
+}
+
+interface MinimalWritable {
+  write(chunk: unknown): boolean;
+  end(cb?: () => void): void;
+  on(event: string, listener: (err: unknown) => void): unknown;
+  destroyed?: boolean;
+  writableEnded?: boolean;
+  writable?: boolean;
+}
+
+function createStreamWriteGuard(stream: MinimalWritable, opts: GuardOpts = {}): GuardedStream {
   if (!stream || typeof stream.write !== 'function' || typeof stream.end !== 'function') {
     throw new TypeError('createStreamWriteGuard: writable stream is required');
   }
@@ -9,8 +33,8 @@ function createStreamWriteGuard(stream, opts = {}) {
   let closing = false;
   let ended = false;
 
-  const report = (err) => {
-    try { onError(err); } catch {}
+  const report = (err: unknown): void => {
+    try { onError(err); } catch { /* 回调异常不再上抛 */ }
   };
 
   // Writable failures, including write-after-end, are commonly emitted
@@ -18,7 +42,7 @@ function createStreamWriteGuard(stream, opts = {}) {
   stream.on('error', report);
 
   return {
-    write(chunk) {
+    write(chunk: unknown): boolean {
       if (closing || ended || stream.destroyed || stream.writableEnded || stream.writable === false) {
         return false;
       }
@@ -30,7 +54,7 @@ function createStreamWriteGuard(stream, opts = {}) {
       }
     },
 
-    end() {
+    end(): boolean {
       if (closing || ended) return false;
       closing = true;
       if (stream.destroyed || stream.writableEnded) {
@@ -47,9 +71,9 @@ function createStreamWriteGuard(stream, opts = {}) {
       }
     },
 
-    get closing() { return closing; },
-    get ended() { return ended || stream.writableEnded || stream.destroyed; },
+    get closing(): boolean { return closing; },
+    get ended(): boolean { return ended || !!stream.writableEnded || !!stream.destroyed; },
   };
 }
 
-module.exports = { createStreamWriteGuard };
+export = { createStreamWriteGuard };

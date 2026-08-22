@@ -43,3 +43,12 @@ build/*
 /bundle-integrity.js
 /watchdog.js
 /lib/desktop/boot-server.js
+/stream-write-guard.js
+/session-encoding-heal.js
+/builtin-collision.js
+/koffi-preflight.js
+/balance.js
+/preset-sync.js
+/plugin-manager-state.js
+/profile-module-heal.js
+/compact-preset-migrate.js

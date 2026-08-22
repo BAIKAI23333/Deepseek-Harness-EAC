@@ -1,7 +1,7 @@
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 const yaml = require('js-yaml');
 
 const OLD_ENGINE = '@deepseek-ai/dsh-compaction-basic';
@@ -19,20 +19,20 @@ const MANAGED_PRESETS = Object.freeze([
 
 const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
   kind: 'scalar',
-  resolve: (data) => typeof data === 'string',
-  construct: (data) => ({ __jsExpr: data }),
+  resolve: (data: unknown): boolean => typeof data === 'string',
+  construct: (data: unknown): Record<string, unknown> => ({ __jsExpr: data }),
 });
 const DSH_YAML_SCHEMA = yaml.JSON_SCHEMA.extend(JsExpr);
 
-function parsePreset(text) {
+function parsePreset(text: string): unknown {
   return yaml.load(text, { schema: DSH_YAML_SCHEMA });
 }
 
-function readPrunerConfig(block) {
+function readPrunerConfig(block: string): string[] {
   const lines = block.split('\n');
-  const start = lines.findIndex((line) => /^\s*-\s*id:\s*tool-result-pruner\s*(?:#.*)?$/.test(line));
+  const start = lines.findIndex((line: string) => /^\s*-\s*id:\s*tool-result-pruner\s*(?:#.*)?$/.test(line));
   if (start < 0) return [];
-  const result = [];
+  const result: string[] = [];
   for (let i = start + 1; i < lines.length; i++) {
     if (/^\s*-\s*id:\s*/.test(lines[i])) break;
     const match = /^\s+(thresholdChars|headChars|tailChars):(\s*.+)$/.exec(lines[i]);
@@ -41,7 +41,7 @@ function readPrunerConfig(block) {
   return result;
 }
 
-function compactionSectionBodyStart(lines, groupIndex) {
+function compactionSectionBodyStart(lines: string[], groupIndex: number): number {
   for (let i = groupIndex - 1; i >= 0; i--) {
     const line = lines[i].trim();
     if (line === '' || line.startsWith('#')) {
@@ -53,7 +53,7 @@ function compactionSectionBodyStart(lines, groupIndex) {
   return groupIndex;
 }
 
-function replaceCompactionGroup(text) {
+function replaceCompactionGroup(text: string): { text: string; changed: boolean } {
   if (typeof text !== 'string' || text === '') return { text, changed: false };
   const lines = text.split(/\r?\n/);
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
@@ -96,18 +96,18 @@ function replaceCompactionGroup(text) {
   return { text, changed: false };
 }
 
-function migratePresetFile(file, log = () => {}) {
+function migratePresetFile(file: string, log: (m: string) => void = () => {}) {
   let before;
   try { before = fs.readFileSync(file, 'utf8'); } catch { return { status: 'missing', file }; }
   try { parsePreset(before); } catch (error) {
-    log(`跳过无法解析的 preset: ${file}: ${error.message}`);
-    return { status: 'invalid', file, error: error.message };
+    log(`跳过无法解析的 preset: ${file}: ${((error as Error) && (error as Error).message) || error}`);
+    return { status: 'invalid', file, error: ((error as Error) && (error as Error).message) || error };
   }
   const replaced = replaceCompactionGroup(before);
   if (!replaced.changed) return { status: 'kept', file };
   try { parsePreset(replaced.text); } catch (error) {
-    log(`跳过迁移后无法解析的 preset: ${file}: ${error.message}`);
-    return { status: 'invalid-result', file, error: error.message };
+    log(`跳过迁移后无法解析的 preset: ${file}: ${((error as Error) && (error as Error).message) || error}`);
+    return { status: 'invalid-result', file, error: ((error as Error) && (error as Error).message) || error };
   }
   const backup = file + '.bak';
   try {
@@ -117,19 +117,19 @@ function migratePresetFile(file, log = () => {}) {
     fs.renameSync(temp, file);
     return { status: 'migrated', file, backup };
   } catch (error) {
-    log(`迁移 preset 失败: ${file}: ${error.message}`);
-    return { status: 'failed', file, error: error.message };
+    log(`迁移 preset 失败: ${file}: ${((error as Error) && (error as Error).message) || error}`);
+    return { status: 'failed', file, error: ((error as Error) && (error as Error).message) || error };
   }
 }
 
-function migrateManagedCompactPresets(presetsRoot, log = () => {}) {
+function migrateManagedCompactPresets(presetsRoot: string, log: (m: string) => void = () => {}) {
   return MANAGED_PRESETS.map((name) => migratePresetFile(
     path.join(presetsRoot, name, 'agent.cordis.yml'),
     log,
   ));
 }
 
-module.exports = {
+export = {
   MANAGED_PRESETS,
   NEW_AGENT,
   OLD_ENGINE,

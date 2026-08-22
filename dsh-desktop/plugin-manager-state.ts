@@ -25,7 +25,21 @@
  * @param {Array<string>} [ctx.bundles]                   profile 的 dsh.profile.bundles
  * @returns {Array<object>} 排序后的插件行
  */
-function collectPluginRows(entries, ctx = {}) {
+interface PluginRow {
+  id: string; name: string; description: string; enabled: boolean;
+  toggleable: boolean; removable: boolean; removed: boolean; core: boolean;
+  group: 'companion' | 'other' | 'core';
+}
+
+interface CollectCtx {
+  companion?: Array<{ id: string; name: string }>;
+  coreIds?: Iterable<string>;
+  removedIds?: Iterable<string>;
+  describe?: (name: string) => string;
+  bundles?: string[];
+}
+
+function collectPluginRows(entries: unknown[], ctx: CollectCtx = {}): PluginRow[] {
   const companion = Array.isArray(ctx.companion) ? ctx.companion : [];
   const companionById = new Map(companion.map((p) => [p.id, p.name]));
   const companionNames = new Set(companion.map((p) => p.name));
@@ -34,28 +48,31 @@ function collectPluginRows(entries, ctx = {}) {
   const describe = typeof ctx.describe === 'function' ? ctx.describe : () => '';
   const bundles = Array.isArray(ctx.bundles) ? ctx.bundles : [];
 
-  const insertById = new Map();
-  const userById = new Map();
+  const insertById = new Map<string, { name: string; disabled: boolean }>();
+  const userById = new Map<string, { name: string; disabled: boolean; hasConfig: boolean }>();
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') continue;
-    if (Array.isArray(entry.insert)) {
-      for (const it of entry.insert) {
-        if (it && typeof it.id === 'string') {
-          insertById.set(it.id, { name: it.name || '', disabled: it.disabled === true });
+    const ent = entry as { insert?: unknown; id?: unknown };
+    if (Array.isArray(ent.insert)) {
+      for (const it of (ent.insert as unknown[])) {
+        if (it && typeof (it as { id?: unknown }).id === 'string') {
+          const i2 = it as { id: string; name?: string; disabled?: boolean };
+          insertById.set(i2.id, { name: i2.name || '', disabled: i2.disabled === true });
         }
       }
-    } else if (typeof entry.id === 'string') {
-      userById.set(entry.id, {
-        name: entry.name || '',
-        disabled: entry.disabled === true,
-        hasConfig: entry.config !== undefined && entry.config !== null,
+    } else if (typeof ent.id === 'string') {
+      const e2 = entry as { id: string; name?: string; disabled?: boolean; config?: unknown };
+      userById.set(e2.id, {
+        name: e2.name || '',
+        disabled: e2.disabled === true,
+        hasConfig: e2.config !== undefined && e2.config !== null,
       });
     }
   }
 
   const seen = new Set();
-  const rows = [];
-  const addRow = (id, name, group, extra) => {
+  const rows: PluginRow[] = [];
+  const addRow = (id: string, name: string, group: 'companion' | 'other' | 'core', extra?: { removed?: boolean; core?: boolean }) => {
     if (!id || seen.has(id)) return;
     seen.add(id);
     const user = userById.get(id);
@@ -92,4 +109,4 @@ function collectPluginRows(entries, ctx = {}) {
   return rows.sort((a, b) => order[a.group] - order[b.group] || a.id.localeCompare(b.id));
 }
 
-module.exports = { collectPluginRows };
+export = { collectPluginRows };

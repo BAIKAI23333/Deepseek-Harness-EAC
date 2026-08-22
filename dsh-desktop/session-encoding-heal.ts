@@ -14,8 +14,8 @@
 // （绝不删除，数据无损，用户可手动找回）。此模块只在启动确因 encodingMismatch
 // 失败时经守护启动的 preRetry 钩子触发，不做任何常态化的会话目录写操作。
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 
 // dsh-session-persistence-jsonl 的 encodingMismatch 报错特征（rc.6/rc.7 一致）：
 //   session artifact "…session.jsonl" uses .jsonl, but this backend is
@@ -23,7 +23,7 @@ const path = require('node:path');
 const ENCODING_MISMATCH_RE = /uses \.jsonl(?:\.zstd)?, but this backend is configured for compression/i;
 
 /** 报错文案（含 dsh-web.log 尾部）是否为会话编码不一致崩溃。 */
-function isEncodingMismatch(errText) {
+function isEncodingMismatch(errText: unknown): boolean {
   return ENCODING_MISMATCH_RE.test(String(errText || ''));
 }
 
@@ -41,12 +41,12 @@ const STALE_SUFFIX = { zstd: '.jsonl', none: '.jsonl.zstd' };
  * @param {{ compression?: 'zstd'|'none', log?: (tag: string, msg: string) => void }} [opts]
  * @returns {string[]} 已归档（改名后）的文件绝对路径
  */
-function healSessionEncodingConflicts(sessionsDir, opts = {}) {
+function healSessionEncodingConflicts(sessionsDir: string, opts: { compression?: 'zstd' | 'none'; log?: (tag: string, msg: string) => void } = {}): string[] {
   const compression = opts.compression === 'none' ? 'none' : 'zstd';
   const log = opts.log || (() => {});
   const liveSuffix = LIVE_SUFFIX[compression];
   const staleSuffix = STALE_SUFFIX[compression];
-  const archived = [];
+  const archived: string[] = [];
   if (!sessionsDir || !fs.existsSync(sessionsDir)) return archived;
 
   let projects;
@@ -69,7 +69,7 @@ function healSessionEncodingConflicts(sessionsDir, opts = {}) {
         archived.push(bak);
         log('session-heal', `会话编码冲突：已归档 ${stale} → ${path.basename(bak)}（保留 ${path.basename(live)}）`);
       } catch (err) {
-        log('session-heal', `归档 ${stale} 失败: ` + String((err && err.message) || err));
+        log('session-heal', `归档 ${stale} 失败: ` + String((((err as Error) && (err as Error).message)) || err));
       }
     }
   }
