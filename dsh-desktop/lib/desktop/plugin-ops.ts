@@ -1,17 +1,25 @@
 'use strict';
 
-// 插件启停管理（自 main.js 原样迁出，ADR 0002 L2 业务服务层）：
-// 设置页「插件 → 管理」标签的数据与写盘。dsh:plugin-list /
+// 插件启停管理（ADR 0002 L2 业务服务层；Wave 2 自 plugin-ops.js 类型化迁出，
+// 行为零变更）：设置页「插件 → 管理」标签的数据与写盘。dsh:plugin-list /
 // dsh:plugin-set-enabled 两个 IPC 驱动；写盘用纯文本手术
 // （scripts/plugin-manager-patch.js），保留文件其它内容与注释。
 
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
-const { togglePluginInPatch, removePluginFromPatch, hasEntryId } = require('../../scripts/plugin-manager-patch');
-const { collectPluginRows } = require('../../plugin-manager-state');
-const onboardingLogic = require('../../scripts/onboarding');
-const { configLinesFor } = require('../../patch-row-heal');
+import path = require('node:path');
+import fs = require('node:fs');
+import os = require('node:os');
+const { togglePluginInPatch, removePluginFromPatch, hasEntryId } = require('../../scripts/plugin-manager-patch') as {
+  togglePluginInPatch(text: string, id: string, enabled: boolean, name?: string): string;
+  removePluginFromPatch(text: string, id: string): string;
+  hasEntryId(patch: string, id: string): boolean;
+};
+const { collectPluginRows } = require('../../plugin-manager-state') as {
+  collectPluginRows(entries: unknown[], o: Record<string, unknown>): unknown[];
+};
+const onboardingLogic = require('../../scripts/onboarding') as { CORE_PLUGIN_IDS: Set<string> };
+const { configLinesFor } = require('../../patch-row-heal') as {
+  configLinesFor(config: unknown): string;
+};
 const {
   COMPANION_PLUGINS,
   removedPluginIds,
@@ -19,21 +27,47 @@ const {
   builtinPluginSourceDir,
   readJsonFile,
   copyPluginPackage,
-} = require('./companion-sync');
-const { desktopProfileDir } = require('./profile');
-const { APP_ROOT } = require('./runtime-paths');
+} = require('./companion-sync') as {
+  COMPANION_PLUGINS: CompanionPlugin[];
+  removedPluginIds(): Set<string>;
+  saveRemovedPluginIds(ids: Set<string>): void;
+  builtinPluginSourceDir(dirName: string): string;
+  readJsonFile(file: string): Record<string, unknown> | null;
+  copyPluginPackage(profileDir: string, src: string, name: string): void;
+};
+import { desktopProfileDir } from './profile';
+import { APP_ROOT } from './runtime-paths';
 
-let ctx = {};
-function init(d) { ctx = d; }
+interface CompanionPlugin {
+  id: string;
+  name: string;
+  dir?: string;
+  disabled?: boolean;
+  config?: unknown;
+}
+
+/** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
+export interface PluginOpsCtx {
+  log(tag: string, msg: string): void;
+}
+
+let ctx!: PluginOpsCtx;
+export function init(d: PluginOpsCtx): void { ctx = d; }
+
+interface YamlDialect { load(content: string): unknown }
 
 // 惰性加载 js-yaml（内置 dsh 的传递依赖）；缺失时管理页降级为空列表。
-let dshYamlDialect = null;
+let dshYamlDialect: YamlDialect | null = null;
 let dshYamlTried = false;
-function loadDshYamlDialect() {
+export function loadDshYamlDialect(): YamlDialect | null {
   if (dshYamlTried) return dshYamlDialect;
   dshYamlTried = true;
   try {
-    const yaml = require('js-yaml');
+    const yaml = require('js-yaml') as {
+      Type: new (tag: string, o: { kind: string; resolve: (d: unknown) => boolean; construct: (d: string) => unknown }) => unknown;
+      JSON_SCHEMA: { extend(t: unknown): unknown };
+      load(content: string, o: { schema: unknown }): unknown;
+    };
     // 与 dsh 相同的 entry-list 方言：`!!js` 表达式是合法标量。
     const jsType = new yaml.Type('tag:yaml.org,2002:js', {
       kind: 'scalar',
@@ -47,10 +81,12 @@ function loadDshYamlDialect() {
   return dshYamlDialect;
 }
 
-function pluginManagerReadPatch() {
+export interface PatchReadResult { file: string; text: string; entries: unknown[] }
+
+export function pluginManagerReadPatch(): PatchReadResult {
   const file = path.join(desktopProfileDir(), 'cordis.patch.yml');
   let text = '';
-  try { text = fs.readFileSync(file, 'utf8'); } catch {}
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* 缺省空 */ }
   const yaml = loadDshYamlDialect();
   if (!yaml) return { file, text, entries: [] };
   try {
@@ -61,7 +97,7 @@ function pluginManagerReadPatch() {
   }
 }
 
-function pluginManagerPackageDescription(name) {
+export function pluginManagerPackageDescription(name: string): string {
   if (!name) return '';
   const candidates = [
     path.join(desktopProfileDir(), 'node_modules', ...name.split('/')),
@@ -71,34 +107,35 @@ function pluginManagerPackageDescription(name) {
     try {
       const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
       if (pkg && typeof pkg.description === 'string' && pkg.description) return pkg.description;
-    } catch {}
+    } catch { /* 尝试下一个候选目录 */ }
   }
   return '';
 }
 
-function pluginManagerCollect() {
+export function pluginManagerCollect(): unknown[] {
   const { entries } = pluginManagerReadPatch();
-  let bundles = [];
+  let bundles: unknown[] = [];
   try {
     const m = JSON.parse(fs.readFileSync(path.join(desktopProfileDir(), 'package.json'), 'utf8'));
     bundles = (m && m.dsh && m.dsh.profile && Array.isArray(m.dsh.profile.bundles)) ? m.dsh.profile.bundles : [];
-  } catch {}
+  } catch { /* 缺省空 */ }
   return collectPluginRows(entries, {
     companion: COMPANION_PLUGINS.map((p) => ({ id: p.id, name: p.name })),
     coreIds: onboardingLogic.CORE_PLUGIN_IDS,
     removedIds: removedPluginIds(),
-    describe: (name) => pluginManagerPackageDescription(name),
+    describe: (name: string) => pluginManagerPackageDescription(name),
     bundles,
   });
 }
 
-function pluginManagerResolveName(id) {
+export function pluginManagerResolveName(id: string): string {
   const c = COMPANION_PLUGINS.find((p) => p.id === id);
   if (c) return c.name;
   const { entries } = pluginManagerReadPatch();
   for (const entry of entries) {
-    if (entry && Array.isArray(entry.insert)) {
-      const it = entry.insert.find((x) => x && x.id === id);
+    const e = entry as { insert?: { id?: string; name?: string }[] };
+    if (e && Array.isArray(e.insert)) {
+      const it = e.insert.find((x) => x && x.id === id);
       if (it && it.name) return it.name;
     }
   }
@@ -108,9 +145,9 @@ function pluginManagerResolveName(id) {
 // 恢复单个配套插件：立即复制包 + 补写 patch 行（与 syncCompanionPlugins
 // 的写入规则一致），重启服务后生效。源目录走「覆盖层优先」（V4.3）：
 // 被恢复的内置插件若是已更新版本，恢复回来的就是更新版。
-function restoreCompanionPlugin(p) {
+function restoreCompanionPlugin(p: CompanionPlugin): { ok: boolean; error?: string } {
   const profileDirP = desktopProfileDir();
-  const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() : p.name);
+  const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() as string : p.name);
   const src = builtinPluginSourceDir(dirName);
   if (!fs.existsSync(path.join(src, 'package.json'))) {
     return { ok: false, error: '配套插件源目录无效: ' + src };
@@ -118,10 +155,10 @@ function restoreCompanionPlugin(p) {
   copyPluginPackage(profileDirP, src, p.name);
   const patchFile = path.join(profileDirP, 'cordis.patch.yml');
   let patch = '';
-  try { patch = fs.readFileSync(patchFile, 'utf8'); } catch {}
+  try { patch = fs.readFileSync(patchFile, 'utf8'); } catch { /* 缺省空 */ }
   if (!hasEntryId(patch, p.id)) {
-    let bundled = [];
-    try { bundled = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
+    let bundled: unknown[] = [];
+    try { bundled = ((readJsonFile(path.join(profileDirP, 'package.json'))?.dsh as Record<string, unknown>) ?.profile as Record<string, unknown>)?.bundles as unknown[] || []; } catch { bundled = []; }
     if (!bundled.includes(p.name)) {
       let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
       if (p.config) block += configLinesFor(p.config);
@@ -130,7 +167,7 @@ function restoreCompanionPlugin(p) {
       else if (patch.trim() === '') patch = '# dsh web profile patch（由 DSH Desktop 维护）\n' + block;
       else patch = patch.replace(/\s*$/, '\n') + block;
       try { fs.writeFileSync(patchFile, patch); } catch (err) {
-        return { ok: false, error: String((err && err.message) || err) };
+        return { ok: false, error: String(((err as Error).message) || err) };
       }
     }
   }
@@ -138,7 +175,7 @@ function restoreCompanionPlugin(p) {
 }
 
 // removed=true 移除（卸载语义）；removed=false 恢复。核心插件拒绝移除。
-function pluginManagerSetRemoved(id, removed) {
+export function pluginManagerSetRemoved(id: string, removed: boolean): { ok: boolean; error?: string; restartRequired?: boolean } {
   const p = COMPANION_PLUGINS.find((x) => x.id === id);
   if (!p) return { ok: false, error: '未知内置插件: ' + String(id) };
   if (onboardingLogic.CORE_PLUGIN_IDS.has(id)) {
@@ -150,7 +187,7 @@ function pluginManagerSetRemoved(id, removed) {
     if (removed) {
       // 1) 清 patch 行（顶层 + insert 内层）
       let text = '';
-      try { text = fs.readFileSync(patchFile, 'utf8'); } catch {}
+      try { text = fs.readFileSync(patchFile, 'utf8'); } catch { /* 缺省空 */ }
       const patched = removePluginFromPatch(text, id);
       if (patched !== text) fs.writeFileSync(patchFile, patched, 'utf8');
       // 2) 删 profile node_modules 里的包副本（copyPluginPackage 的产物）
@@ -170,16 +207,16 @@ function pluginManagerSetRemoved(id, removed) {
     ctx.log('plugin-manager', '已恢复内置插件 ' + id);
     return { ok: true, restartRequired: true };
   } catch (err) {
-    ctx.log('plugin-manager', '移除/恢复插件 ' + id + ' 失败: ' + ((err && err.message) || err));
-    return { ok: false, error: String((err && err.message) || err) };
+    ctx.log('plugin-manager', '移除/恢复插件 ' + id + ' 失败: ' + (((err as Error).message) || err));
+    return { ok: false, error: String(((err as Error).message) || err) };
   }
 }
 
 // 图片粘贴保存（dsh-image-paste 插件）：只接受 image/* 的 data URL，
 // base64 解码后原子写入 %TEMP%/dsh-paste/<清洗名>-<时间戳><ext>，返回
 // { ok, path, size }。文件在临时目录，随系统清理，不污染工作区。
-const IMAGE_PASTE_MAX_BYTES = 15 * 1024 * 1024;
-const IMAGE_PASTE_EXT = {
+export const IMAGE_PASTE_MAX_BYTES = 15 * 1024 * 1024;
+export const IMAGE_PASTE_EXT: Record<string, string> = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/webp': '.webp',
@@ -191,7 +228,7 @@ const IMAGE_PASTE_EXT = {
   'image/tiff': '.tiff',
 };
 
-function imagePasteSave(dataUrl, name) {
+export function imagePasteSave(dataUrl: string, name: string): { ok: boolean; error?: string; path?: string; size?: number } {
   const m = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
   if (!m) return { ok: false, error: '不是合法的图片 data URL' };
   const mime = m[1].toLowerCase();
@@ -211,23 +248,23 @@ function imagePasteSave(dataUrl, name) {
 // 与上游的差异 —— 「启用」保留顶层裸条目 {id, name} 而不是整条移除，这样
 // 默认禁用的配套插件（dsh-pet）被用户启用后不会被下次 sync 重新插回
 // disabled 行（sync 的「已有行不重写」规则自然接管）。
-function pluginManagerSetEnabled(id, enabled) {
+export function pluginManagerSetEnabled(id: string, enabled: boolean): { ok: boolean; error?: string } {
   if (onboardingLogic.CORE_PLUGIN_IDS.has(id)) {
     return { ok: false, error: '核心插件不可停用: ' + String(id) };
   }
   const file = path.join(desktopProfileDir(), 'cordis.patch.yml');
   let text = '';
-  try { text = fs.readFileSync(file, 'utf8'); } catch {}
+  try { text = fs.readFileSync(file, 'utf8'); } catch { /* 缺省空 */ }
   if (!text.trim()) text = '# dsh web profile patch（由 Deepseek Harness EAC 维护）\n';
 
   const name = pluginManagerResolveName(id);
   if (!enabled && !name) return { ok: false, error: '无法解析插件包名: ' + id };
 
-  let patched;
+  let patched: string;
   try {
     patched = togglePluginInPatch(text, id, !!enabled, name);
   } catch (err) {
-    return { ok: false, error: String((err && err.message) || err) };
+    return { ok: false, error: String(((err as Error).message) || err) };
   }
   if (patched !== text) {
     try {
@@ -235,23 +272,8 @@ function pluginManagerSetEnabled(id, enabled) {
       fs.writeFileSync(tmp, patched, 'utf8');
       fs.renameSync(tmp, file);
     } catch (err) {
-      return { ok: false, error: String((err && err.message) || err) };
+      return { ok: false, error: String(((err as Error).message) || err) };
     }
   }
   return { ok: true };
 }
-
-module.exports = {
-  IMAGE_PASTE_MAX_BYTES,
-  IMAGE_PASTE_EXT,
-  init,
-  loadDshYamlDialect,
-  pluginManagerReadPatch,
-  pluginManagerPackageDescription,
-  pluginManagerCollect,
-  pluginManagerResolveName,
-  restoreCompanionPlugin,
-  pluginManagerSetRemoved,
-  imagePasteSave,
-  pluginManagerSetEnabled,
-};

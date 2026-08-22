@@ -31,3 +31,5 @@ build/*
 /lib/desktop/file-roots.js
 /lib/desktop/profile.js
 /lib/desktop/runtime-patches.js
+/lib/desktop/plugin-ops.js
+/lib/desktop/market.js

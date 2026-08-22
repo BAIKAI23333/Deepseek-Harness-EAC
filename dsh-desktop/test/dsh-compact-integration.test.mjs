@@ -9,7 +9,7 @@ import * as CompactAgent from '../assets/plugins/dsh-compact/lib/agent.js'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 // ADR 0002：注册表迁至 lib/desktop/companion-sync.js，启停文案迁至 plugin-ops.js。
 const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.js'), 'utf8')
-const pluginOpsSrc = readFileSync(join(root, 'lib', 'desktop', 'plugin-ops.js'), 'utf8')
+const pluginOpsSrc = readFileSync(join(root, 'lib', 'desktop', 'plugin-ops.ts'), 'utf8')
 
 test('dsh-compact integration: new plugin is bundled and old browser trigger is retired', () => {
   assert.match(main, /\{ id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' \}/)
