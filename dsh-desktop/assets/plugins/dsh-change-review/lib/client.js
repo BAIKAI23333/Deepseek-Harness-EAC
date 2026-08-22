@@ -179,13 +179,16 @@ window.__ModuleLoader__.load({
         cap.retry = 0;
         cap.timer = setTimeout(function attempt() {
           cap.timer = null;
+          // 重新校验当前模式：用户可能已在此期间切换到手动/关闭
+          var nowCfg = loadConfig();
+          if (nowCfg.mode !== "auto") return;
           var ok = fireReview(sessionId);
           if (!ok && cap.pendingChanges.length > 0 && cap.retry < MAX_RETRY) {
             cap.retry += 1;
             cap.timer = setTimeout(attempt, RETRY_MS);
           }
         }, AUTO_DEBOUNCE_MS);
-      }, [sessionId, changes && changes.changes && changes.changes.length]);
+      }, [sessionId, changes && changes.changes]);
 
       return null;
     }
@@ -265,6 +268,14 @@ window.__ModuleLoader__.load({
                 var next = { mode: m.value };
                 setCfg(next);
                 saveConfig(next);
+                // 切换模式时清理当前会话的自动审核定时器
+                var sid = currentId;
+                var cap = sid && sessions.get(sid);
+                if (cap && cap.timer) {
+                  clearTimeout(cap.timer);
+                  cap.timer = null;
+                  cap.retry = 0;
+                }
               }
             }, m.label);
           })
