@@ -23,36 +23,50 @@
 
 ---
 
-## 相比原版 DeepSeek Harness 的优势
+## 目录
 
-| 能力 | 原版 dsh（官方 deepseek-harness） | Deepseek Harness EAC |
-| --- | --- | --- |
-| 运行方式 | 需先安装 Node.js，`npx @deepseek-ai/dsh web` + 浏览器访问 | **免装 Node**：内置独立 Node 运行时与 npm CLI，双击即用 |
-| 与 CLI 共存 | —（本体） | **桌面专属 profile（web-desktop）**：插件树/pnpm/patch 层与原生 CLI 完全隔离，会话与 API Key 依旧共享；共享 junction 归属自动守卫修复，互不打扰 |
-| 插件安全 | 手动 npm，装坏自负 | **内置插件保护中心**：安装/启动前自动快照、启动失败自动体检修复、必要时回滚到最后良好快照，事故报告全程留痕（融合三大社区保护插件并内置升华） |
-| 界面皮肤 | 仅官方默认外观 | **内置 10 款 Web UI 皮肤**（XP / QQ98 / 初音未来 / 我的世界 / 同花顺 / 鲸歌…），设置页一键互斥切换，默认不启用保持原生 |
-| 字体外观 | 无 | 设置页「外观 · 字体与颜色」：**字体家族/字号/文字与代码颜色**实时自定义，与皮肤同体系 |
-| 窗口体验 | 浏览器标签页 | **原生无边框窗口**（自绘玻璃栏）+ **系统托盘常驻**，关闭不打断任务 |
-| 便携性 | 无 | **便携版**数据跟随 exe，拷到 U 盘即用 |
-| 余额查看 | 手动上官网查 | 对话底部内联「**本轮 ¥X · 余额 ¥Y**」实时小部件，点击跳转充值 |
-| 文件管理 | 手动翻目录 | **会话文件更改追踪**（行级 diff）+ **一键还原**，全部/逐文件 |
-| 会话内终端 | 无 | **终端标签页**：会话项目目录内持久 PowerShell，SSE 流式，断线重连 |
-| 长对话 | 手动 /compact | **默认自动压缩**：接近上下文上限（默认 80%，可调）自动执行官方 /compact |
-| 人设 | 手编 soul.md | 设置页「人设卡」：**6 张内置预设一键应用 + 我的卡片库** + 实时编辑热重载 |
-| 配置上手 | 手编 YAML | **设置页可视化**：视觉模型一键选择、MCP 增删改 + **从 Claude Code / Codex 一键导入**、**从 Codex / Claude Code 一键迁移 skills + MCP + 记忆** |
-| 插件安装 | 手动 npm | 设置页内置**插件市场**，搜索/一键安装/卸载 dsh 插件 |
-| 更新 | 手动 `npm update` | **双重自动更新**：官方 agent 更新（npm overlay，失败可回退）+ 客户端本体自更新，均经用户同意 |
-| 任务通知 | 无 | agent 任务完成弹 **Windows 系统通知**，点击回到窗口 |
-| 系统要求 | Windows/macOS/Linux + Node.js 环境 | Windows 10/11、Linux x86_64（x64），**无需任何运行时** |
-
-> 内核零改动：EAC 直接运行官方 `dsh web`，完整保留「一切皆插件」架构与全部官方能力，
-> 与 CLI 共享 `DSH_HOME` 配置，已有会话/API Key 直接生效。
+- [为什么选择 EAC](#为什么选择-eac)
+- [快速开始（安装）](#快速开始)
+- [功能一览](#功能一览)
+- [社区与支持](#社区与支持)
+- [开发者文档](#开发者文档)
+- [致谢](#致谢)
+- [Star 趋势](#star-趋势)
+- [许可证](#许可证)
 
 ---
 
-## 下载安装（部署方式）
+## 为什么选择 EAC
 
-### GitHub Releases（推荐）
+| 维度 | 官方 DeepSeek Harness 默认体验 | Deepseek Harness EAC 增强 |
+| --- | --- | --- |
+| 安装与启动 | 需自行准备 Node.js，并通过 CLI 启动 | 内置 Node.js、npm CLI 和 dsh，提供安装版与便携版，双击即用 |
+| 桌面体验 | 主要在终端或浏览器中使用 | 原生桌面窗口、系统托盘、快捷方式维护、进程清理和任务通知 |
+| CLI 共存 | CLI 与 Web 通常使用同一插件环境 | 桌面端使用独立 `web-desktop` profile，与 CLI 共享会话和 API Key，插件互不干扰 |
+| 插件可靠性 | 主要通过包管理器安装并手动排查问题 | 安装和启动前自动快照，异常时支持体检、修复、重试、回滚和事故报告 |
+| 界面定制 | 默认使用官方界面 | 内置 10 款皮肤，支持字体、字号、颜色和移动端布局调整 |
+| 项目工具 | 依赖外部编辑器和终端 | 内置文件树、行级 diff、一键还原、持久终端及 HTML/本地端口预览 |
+| 上下文与人设 | 手动执行 `/compact`、编辑人设文件 | 自动压缩、人设卡管理和 `soul.md` 热重载 |
+| 模型与 MCP | 主要通过配置文件或 CLI 管理 | 可视化配置视觉模型和 MCP，并支持从 Claude Code、Codex 导入配置 |
+| 插件生态 | 通过 CLI 或包管理器安装插件 | 内置插件市场，可搜索并一键安装、卸载和管理插件 |
+| 会话效率 | 以常规会话流程为主 | 支持临时对话、对话节点导航和第三方模型思考强度调整 |
+| 消息接入 | 默认不包含 EAC 消息桥接 | 支持一键接入微信 ClawBot / OpenClaw |
+| 更新维护 | 通过包管理器或手动方式更新 | dsh agent 与桌面客户端分别自动检查更新，失败时保留或回退原版本 |
+
+> EAC 不修改官方 dsh 内核，完整保留插件架构和官方能力；默认共享
+> `DSH_HOME` 中的会话与 API Key，同时隔离桌面端插件环境。
+
+---
+
+## 快速开始
+
+### 系统要求
+
+- Windows 10/11（x64）
+- Linux x86_64（Arch / Ubuntu / Debian / Fedora，或任意支持 AppImage 的发行版）
+- 无需预装 Node.js 或任何其他运行时
+
+### Windows
 
 > GitHub 无单文件大小限制，可直接下载完整安装包。
 
@@ -62,6 +76,8 @@
 | [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~241 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
+
+> ⚠️ **务必安装/放置到纯英文路径**（默认 `C:\Users\<你>\AppData\Local\Programs\` 即可）：中文路径（如 `D:\迅雷下载\`）会触发 Chromium 渲染进程原生崩溃，窗口弹出数十秒后自动退出。
 
 ### Linux（x64）
 
@@ -78,18 +94,18 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 > - 与 Windows 版一致：内置 Node.js 与 npm CLI，目标机器无需预装 Node.js；数据目录沿用 `~/.dsh`（`DSH_HOME`）
 > - Linux 版由系统包管理器管理升级，不走应用内自更新；安装到仓库根 `linux` 分支源码可自行构建
 
-> ⚠️ **务必安装/放置到纯英文路径**（默认 `C:\Users\<你>\AppData\Local\Programs\` 即可）：中文路径（如 `D:\迅雷下载\`）会触发 Chromium 渲染进程原生崩溃，窗口弹出数十秒后自动退出。
-
-**首次使用**：
+### 首次使用
 
 1. 双击运行，显示启动动画，随后自动加载 DeepSeek Harness Web UI（原生窗口，仅本机回环访问）。
 2. 如尚未配置 API Key，在界面「设置」内完成配置即可开始使用（与命令行 dsh 完全一致）。
 3. 常用入口：设置 → 皮肤（10 款内置皮肤切换）/ 插件市场 / 模型一键选择；对话区 → 终端 / 文件标签页。
 
+### 数据目录
+
 > 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC\`。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
-### 升级部署
+### 升级方式
 
 - **客户端本体**：启动后自动检查上游新版本（GitHub Releases 双源回退），经你同意后下载安装；便携版原地替换自动重启，安装版引导新安装包。失败自动保留当前版本。
 - **官方 agent（dsh）**：自动检测 `@deepseek-ai/dsh` 新版本，同意后安装到数据目录 overlay，原子切换，新版启动失败可一键回退内置版本。
@@ -99,86 +115,74 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 
 ## 功能一览
 
-### 界面皮肤自定义（EAC 特色）
+### 开箱即用与桌面体验
 
-- 设置页「皮肤」标签页内置 **10 款 Web UI 皮肤**，卡片式网格展示（名称/简介/主色/作者/出处与许可角标）。
-- 9 款来自社区 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui)（BSD-3-Clause）+ 1 款 [dsh-deep-whale 深海女仆工坊](https://github.com/Small-tailqwq/dsh-deep-whale)（CC BY-NC-SA 4.0，禁止商用）。
-- **默认不启用任何皮肤**（原生外观）；选中某款后其余自动禁用（互斥切换），「恢复默认皮肤」一键还原；切换后自动重启 Web 服务生效。
-- 皮肤是 browser-only 的 dsh client 插件，由桌面端同步进 web profile 并幂等注册到 `cordis.patch.yml`，完整版权署名随包分发。
+- **内置运行环境**：完整打包 Node.js、npm CLI、`@deepseek-ai/dsh` 及官方插件，无需额外安装运行时。
+- **安装版与便携版**：双击启动并自动选择可用端口；便携版数据跟随程序目录，可直接迁移。
+- **桌面集成**：提供原生窗口、系统托盘、快捷方式维护、进程清理和任务完成通知。
+- **CLI 共存**：共享 `DSH_HOME` 中的会话与 API Key，桌面端使用独立 `web-desktop` profile，插件互不干扰。
+- **自动更新**：分别更新 dsh agent 与桌面客户端，安装失败时保留或回退原版本。
 
-| 皮肤 | 出处 | 许可 |
-| --- | --- | --- |
-| xp（Windows XP 风格） | [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) | BSD-3-Clause |
-| qq98（QQ 经典 98 风格） | 同上 | BSD-3-Clause |
-| ths（同花顺风格） | 同上 | BSD-3-Clause |
-| blue-fantasy（蓝幻） | 同上 | BSD-3-Clause |
-| dragon-heir（龙裔） | 同上 | BSD-3-Clause |
-| minecraft（我的世界） | 同上 | BSD-3-Clause |
-| trading（交易风格） | 同上 | BSD-3-Clause |
-| whale-song（鲸歌） | 同上 | BSD-3-Clause |
-| miku（初音未来） | 同上 | BSD-3-Clause |
-| maid-atelier（深海女仆工坊） | [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) | **CC BY-NC-SA 4.0**（禁止商用） |
+### 开发工作流
 
-### 开箱即用
+- **文件树与预览**：浏览项目文件，并在应用内预览 HTML 和本地端口服务。
+- **改动追踪与还原**：查看会话产生的文件变更和行级 diff，支持逐个或全部还原。
+- **会话内终端**：在项目目录中使用持久 PowerShell，支持流式输出、命令历史和断线重连。
+- **对话导航**：快速跳转到各条用户消息。
+- **临时对话**：在独立悬浮窗中基于当前上下文追问，不污染主会话。
 
-- **免装 Node**：内置独立 Node 运行时与 npm CLI，目标机器无需安装 Node.js
-- **内置 dsh CLI**：完整打包 `@deepseek-ai/dsh` 及全部官方插件，离线可用
-- **一键启动**：双击即启动 `dsh web`，自动挑空闲端口，就绪后加载到原生窗口
-- **与 CLI 共享配置**：默认沿用 `DSH_HOME`（通常 `~\.dsh`），已有会话/API Key 直接生效
-- **便携版**：数据跟随 exe 所在目录，拷到 U 盘就能用
+### 对话与模型
 
-### 桌面体验
+- **自动压缩**：上下文接近上限时自动执行 `/compact`，阈值可调，失败静默重试。
+- **人设管理**：内置 6 张人设卡，支持保存、应用、删除、实时编辑和 `soul.md` 热重载。
+- **图片理解**：通过 `picturereader` 分析本地或在线图片，并将结果直接带回对话。
+- **MCP 与快速配置**：可视化管理 MCP，并可从 Claude Code、Codex 迁移 skills、MCP 和记忆。
+- **第三方模型控制**：支持调整第三方模型的思考强度。
+- **DeepSeek 余额**：显示本轮费用和账户余额，支持跳转充值及自动刷新。
 
-- **风格化无边框窗口 + 系统托盘**：无原生标题栏/菜单栏，自绘玻璃栏（圆角图标、⋯ 菜单、窗口控制），Win11 圆角；关闭默认隐藏到托盘
-- **退出即清理**：退出应用自动结束 dsh 进程树，不留孤儿进程
-- **快捷方式自动维护**：便携版自动创建/修复桌面与开始菜单快捷方式（exe 移动后自愈）
-- **会话完成通知**：agent 任务跑完时弹 Windows 系统通知，点击回到窗口
+### 插件与可靠性
 
-### 效率工具（配套插件体系）
+- **统一插件市场**：通过 `dsh-unified-market` 聚合多个插件源，支持搜索、一键安装和卸载。
+- **插件保护中心**：由 `dsh-plugin-shield` 配合内置 `plugin-guard` 引擎提供快照、体检、修复、重试、回滚和事故报告。
+- **稳定性自愈**：自动处理 profile 模块遮蔽、插件启动异常和服务重启文件锁问题。
+- **完整依赖分发**：内置插件及其自包含依赖随安装包分发，减少环境差异造成的故障。
 
-- **插件保护中心（v3.1 新增，内置 plugin-guard 引擎）**：融合社区三大保护插件
-  （[lxzy-7/dsh-plugin-guard](https://github.com/lxzy-7/dsh-plugin-guard) 快照回滚、
-  [LX2000WASD/dsh-web-plugin-manager](https://github.com/LX2000WASD/dsh-web-plugin-manager) 安装守卫、
-  [chenw2759-wq/dsh-plugin-healthcheck](https://github.com/chenw2759-wq/dsh-plugin-healthcheck) 静态体检）
-  并内置到桌面壳：每次安装与启动前自动快照 profile 配置（保留 10 份）；启动失败自动
-  体检（模块遮蔽 / patch 行 / junction 归属 / 高危静态扫描）→ 修复 → 重试 → 回滚到
-  最后良好快照 → 事故报告；设置页「插件保护」可手动快照 / 回滚 / 体检 / 修复。
-- **与原生 CLI 完全共存（v3.1 根治）**：桌面端运行在专属 `web-desktop` profile
-  （会话/API Key 仍共享 DSH_HOME），插件树互不干扰；共享模块 junction 的归属自动
-  巡检修复，原生 `npx dsh` 与桌面端交替使用不再互相破坏。
-- **外观自定义（v3.1 新增，dsh-font-custom）**：设置页「外观 · 字体与颜色」——
-  界面/代码字体、字号、文字与代码颜色实时自定义，localStorage 持久化。
-- **自动压缩（v3.1 新增，dsh-auto-compact，默认开启）**：对话接近上下文上限
-  （默认 80%，可调）时自动执行官方 `/compact`，空闲触发、失败静默重试。
-- **人设卡完整管理（v3.1 升级）**：设置页「人设卡」——6 张内置预设一键应用、
-  我的卡片库（保存/应用/删除）、当前卡片实时编辑热重载。
-- **MCP 一键导入（v3.1 升级，dsh-dock-settings）**：MCP 管理页新增「从 Claude /
-  Codex 导入」，勾选合并 `~/.claude.json` 与 `~/.codex/config.toml` 的 MCP 服务器。
-- **DeepSeek 余额小部件**：对话底部统计栏显示「本轮 ¥X · 余额 ¥Y」，点击跳转充值，15 分钟自动刷新
-- **文件更改追踪 + 一键还原**：「文件」标签页查看本会话全部文件改动（新建/修改/删除 + 行级 diff）并逐文件/全部还原；数据只读复用会话日志，稳定不受升级影响
-- **会话内终端**：「终端」标签页在当前会话项目目录启动持久 PowerShell（SSE 流式、命令历史、断线重连），中文编码干净
-- **项目文件树 + HTML/端口预览**：VSCode 风格文件树，站内预览 HTML/本地端口服务（仅回环）
-- **社区插件市场（v2 新增，dsh-webui-market）**：设置 → 插件 → 市场，浏览 awesome-dsh-plugin.com 收录的 dsh 插件并一键安装/卸载到 profile；安装/卸载任务在服务重启窗口期排队执行，不打断当前会话
-- **外置视觉模型（v2 新增，dsh-tool-vision）**：`inspect_image` 工具把本地图片或图片 URL 发给任意 OpenAI 兼容视觉端点（qwen-vl / GLM-4V / Ollama 等），看图回答直接带回对话
-- **soul.md 人设热重载（v2 新增，dsh-soul-md）**：markdown 人设文件注入系统提示词（`soul:persona`），文件变更即时热重载，Agent 边干活边角色扮演
-- **移动端布局修复（v2 新增，dsh-web-mobile-fix）**：窄屏（≤400px）下设置面板、弹窗、侧栏、会话头布局修复，纯前端 CSS，不影响桌面布局
-- **快速配置（dsh-easy-setup）**：视觉模型提供商/模型一键选择、`soul.md` 人设可视化编辑、从 Codex / Claude Code 目录一键迁移 skills + MCP + 记忆
-- **双重自动更新**：官方 dsh agent 更新（npm overlay）+ 客户端封装自更新，均经用户同意，失败自动回退
-- **稳定性自愈**：`profile-module-heal` 自动修复 profile 模块遮蔽问题（真实目录与 pnpm 链接双形态，如 `prompt section already registered`、「设置命名空间不可用」、模型列表/模式切换失效）；`plugin-guard` 守护启动失败链路（体检 → 修复 → 回滚 → 事故报告）；重启服务时等待旧进程完全退出（释放文件锁）再启动新服务，插件包（含自带 vendor 依赖）随安装包原样分发
-- **临时对话（v4 新增，dsh-side-session）**：DSH 临时会话：独立悬浮窗，自动导入当前主对话上下文，发起不污染主会话的临时追问
-- **自定义第三方模型思考强度（v4 新增，dsh-third-party-thinking）**：让接入的第三方模型也能在使用时调整思考强度
-- **对话节点导航条（v4 新增，dsh-navbar）**：user 消息快速跳转
-- **微信ClawBot**(v4.1新增)：一键将Deepseek-Harness-EAC接入ClawBot
+### 界面与集成
+
+- **界面定制**：内置 10 款社区皮肤，支持互斥切换、恢复原生外观以及字体、字号和颜色设置。
+- **移动端适配**：优化窄屏下的设置面板、弹窗、侧栏和会话布局。
+- **微信 ClawBot**：通过内置桥接插件一键接入微信 ClawBot / OpenClaw。
 
 ---
 
-## 系统要求
+## 社区与支持
 
-- Windows 10/11（x64）
-- Linux x86_64（Arch / Ubuntu / Debian / Fedora，或任意支持 AppImage 的发行版）
-- 无需预装 Node.js 或任何其他运行时
+### 交流群
 
-## 从源码构建
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 2 二维码" width="320" />
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>QQ 交流群 2</strong><br />群号：1021296425</td>
+    <td align="center"><strong>微信交流群</strong></td>
+  </tr>
+</table>
+
+### Bug 与功能反馈
+
+遇到 Bug，或有希望我们增加的功能，请前往 [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/)。
+
+---
+
+## 开发者文档
+
+### 从源码构建
 
 ```powershell
 cd dsh-desktop
@@ -195,7 +199,7 @@ npm run dist             # 构建 portable + NSIS 安装包 → dist/
 npm test                 # node --test test/*.test.mjs
 ```
 
-## 架构
+### 架构
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -216,7 +220,7 @@ npm test                 # node --test test/*.test.mjs
        原生窗口加载 Web UI（仅本机回环访问）
 ```
 
-## 目录结构
+### 目录结构
 
 ```
 dsh-desktop/                  # Electron 桌面端
@@ -244,7 +248,82 @@ openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
 research/                     # 第三方微信/桥接协议调研资料
 ```
 
-## Contributors
+---
+
+## 致谢
+
+### 插件致谢
+
+| 插件名 | 插件说明 |
+| --- | --- |
+| dsh-auto-compact | 自动压缩：接近上下文上限时自动发送 /compact |
+| @deepseek-ai/dsh-balance | 账户余额、费用估算与价格设置 |
+| dsh-better-sidebar（提供者：omdsh-dev） | VSCode 风格右侧栏，支持资源管理器/编辑器/终端/Git/浏览器 |
+| dsh-change-review | AI 变更审核：自动复查文件改动 |
+| @deepseek-ai/dsh-client-file-changes | 文件视图：会话文件更改追踪与一键还原 |
+| dsh-compact | 请求路径上下文压缩与溢出恢复 |
+| @deepseek-ai/dsh-conversation-tweaks | 隐藏长篇输出 + 会话右侧导航滑轨 |
+| dsh-dafeiyu（提供者：QCYTSN） | 大肥鱼桌面伴侣 |
+| dsh-deep-whale（提供者：Small-tailqwq） | 深海女仆工坊 maid-atelier 皮肤来源 |
+| dsh-dock-settings | Skills 与 MCP 设置管理 |
+| @deepseek-ai/dsh-easy-setup | 快速配置：视觉模型、soul.md、迁移 |
+| @deepseek-ai/dsh-file-changes | 会话文件更改投影 |
+| dsh-file-drop-eac | 拖放文件/文件夹到对话 |
+| @deepseek-ai/dsh-float-window | 会话弹出独立窗口 |
+| dsh-font-custom | 字体与文字/代码颜色自定义 |
+| dsh-image-paste | 剪贴板图片粘贴发送 |
+| dsh-message-rewind | 消息改写并从此处重新生成 |
+| @vlln/dsh-navbar（提供者：vlln） | 对话节点导航条：user 消息快速跳转 |
+| dsh-offpeak（提供者：christophersmith2737-commits） | DeepSeek 峰谷价格拦截提醒 |
+| @deepseek-ai/dsh-openclaw-bridge | 微信 ClawBot / OpenClaw 桥接 |
+| dsh-pet（提供者：PC2005-cloud） | 页面悬浮桌宠 |
+| dsh-pet-settings | 桌宠设置分区 |
+| dsh-plugin-guard（提供者：lxzy-7） | 插件安装前快照、回滚与启动守护 |
+| dsh-plugin-healthcheck（提供者：chenw2759-wq） | 插件静态体检与风险检查 |
+| @deepseek-ai/dsh-plugin-manager | 插件管理：列出/启停内置插件 |
+| dsh-plugin-shield | 插件保护：快照/回滚/体检 |
+| dsh-plugin-wizard | 插件选择向导 |
+| @deepseek-ai/dsh-prompt-custom | 自定义内核提示词 |
+| dsh-session-manager | 会话删除与归档管理 |
+| dsh-settings-groups | 设置页高级选项折叠 |
+| dsh-settings-nav-custom | 设置页左侧边栏自定义 |
+| @dsh-external/dsh-side-session（提供者：dsh-external） | 临时会话：不污染主会话的独立追问 |
+| @deepseek-ai/dsh-skin-switch | 内置皮肤切换 |
+| dsh-soul-md（提供者：Scorp1o117） | soul.md 人设卡注入 |
+| @deepseek-ai/dsh-terminal | 会话内交互式命令行 |
+| @deepseek-ai/dsh-third-party-thinking | 第三方模型思考强度控件 |
+| dsh-tool-vision（提供者：Scorp1o117） | OpenAI 兼容视觉模型图片分析 |
+| dsh-undo-savepoint | 配置快照与撤销/回滚 |
+| dsh-unified-market | 统一插件市场：聚合三源 |
+| dsh-web-plugin-manager（提供者：LX2000WASD） | 插件安装守卫与健康检查入口 |
+| dsh-web-mobile-fix（提供者：AcidGr） | 移动端布局修复 |
+| dsh-web-ui（提供者：zhu1090093659） | 9 款内置 Web UI 皮肤来源 |
+| dsh-webui-market（提供者：Sanqi-normal） | 社区插件目录与一键安装/卸载 |
+| picturereader | 统一图片理解插件 |
+| computer-user | 读屏 + 鼠标键盘自动化（Codex-style computer use；配 picturereader，纯文本模型可用） |
+
+感谢所有插件提供者对本项目与开源社区的奉献；由于插件数量众多，我们很抱歉，未能逐一统计到所有插件与其来源；如有插件的拥有者看到了自己所做的插件，欢迎您告知我们并添加到致谢名单中，也欢迎添加我们的交流群，以便一同交流、共同进步。
+
+### 皮肤来源与许可
+
+设置页内置 10 款 Web UI 皮肤，默认保持原生外观。启用任一皮肤时会自动禁用其他皮肤，也可一键恢复默认；皮肤的来源、作者和许可信息随安装包完整分发。
+
+其中 9 款来自社区 [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui)（BSD-3-Clause），maid-atelier 来自 [dsh-deep-whale 深海女仆工坊](https://github.com/Small-tailqwq/dsh-deep-whale)（CC BY-NC-SA 4.0，禁止商用）。
+
+| 皮肤 | 出处 | 许可 |
+| --- | --- | --- |
+| xp（Windows XP 风格） | [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) | BSD-3-Clause |
+| qq98（QQ 经典 98 风格） | 同上 | BSD-3-Clause |
+| ths（同花顺风格） | 同上 | BSD-3-Clause |
+| blue-fantasy（蓝幻） | 同上 | BSD-3-Clause |
+| dragon-heir（龙裔） | 同上 | BSD-3-Clause |
+| minecraft（我的世界） | 同上 | BSD-3-Clause |
+| trading（交易风格） | 同上 | BSD-3-Clause |
+| whale-song（鲸歌） | 同上 | BSD-3-Clause |
+| miku（初音未来） | 同上 | BSD-3-Clause |
+| maid-atelier（深海女仆工坊） | [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) | **CC BY-NC-SA 4.0**（禁止商用） |
+
+### 贡献者
 
 感谢每一位贡献者：
 
@@ -254,28 +333,9 @@ research/                     # 第三方微信/桥接协议调研资料
   </a>
 </p>
 
-### 交流群
+---
 
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 2 二维码" width="320" />
-    </td>
-    <td align="center" width="50%">
-      <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
-    </td>
-  </tr>
-  <tr>
-    <td align="center"><strong>QQ 交流群 2</strong><br />群号：1021296425</td>
-    <td align="center"><strong>微信交流群</strong></td>
-  </tr>
-</table>
-
-### Bug 反馈
-
-遇到 Bug，或有希望我们增加的功能，请前往 [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/)。
-
-## Star History
+## Star 趋势
 
 <a href="https://www.star-history.com/?repos=zouyuxuan122%2FDeepseek-Harness-EAC&type=date&legend=bottom-right">
  <picture>
@@ -285,7 +345,9 @@ research/                     # 第三方微信/桥接协议调研资料
  </picture>
 </a>
 
-## License
+---
+
+## 许可证
 
 MIT。基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）。内置皮肤版权归原作者所有（见上方皮肤许可表）。
 

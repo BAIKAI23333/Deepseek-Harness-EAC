@@ -456,17 +456,17 @@ window.__ModuleLoader__.load({
 		 */
 		function apply(ctx) {
 			ensureCss();
-			ctx.effect(() => ctx.slots.register({
+			ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register({
 				name: "conversation.composer.dock",
 				id: "balance",
 				order: 100
-			}, BalanceDock), "dsh-balance: composer dock entry");
-			ctx.effect(() => ctx.slots.register({
+			}, BalanceDock));
+			ctx.slots.inject("settings.section", () => ctx.slots.register({
 				name: "settings.section",
 				id: "pricing",
 				order: 23,
 				label: () => "价格设置"
-			}, PricingSection), "dsh-balance: pricing settings section");
+			}, PricingSection));
 		}
 
 		exports.apply = apply;

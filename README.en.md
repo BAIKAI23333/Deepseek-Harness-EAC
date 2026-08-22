@@ -9,12 +9,13 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
+<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
-<p>A ready-to-use <strong>Windows desktop client</strong> wrapping the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
-On top of the original, EAC embraces the community's creations — skins, plugins, tools, memories — everything installable with one click.</p>
+<p>A ready-to-use <strong>Windows and Linux desktop client</strong> built around the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
+On top of the official foundation, EAC embraces community creations — skins, plugins, tools, memories, and more — all installable with one click.</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC UI preview"></a></p>
 
@@ -22,189 +23,139 @@ On top of the original, EAC embraces the community's creations — skins, plugin
 
 ---
 
-## Advantages over the original DeepSeek Harness
+## Table of Contents
 
-| Capability | Official dsh (deepseek-harness) | Deepseek Harness EAC |
-| --- | --- | --- |
-| Running | Requires Node.js, `npx @deepseek-ai/dsh web` + browser | **No Node.js needed**: bundled standalone Node runtime + npm CLI, double-click to run |
-| UI skins | Official default look only | **10 built-in Web UI skins** (XP / QQ98 / Miku / Minecraft / THS / Whale Song…), one-click mutual-exclusive switching, disabled by default to keep native look |
-| Window | Browser tab | **Native frameless window** (custom glass bar) + **system tray**, close-to-tray doesn't interrupt tasks |
-| Portability | N/A | **Portable build**: data follows the exe, run from a USB stick |
-| Balance | Check the website manually | Inline **「this turn ¥X · balance ¥Y」** widget in the conversation stats bar, click to top up |
-| File management | Manually browse folders | **Session file-change tracking** (line-level diffs) + **one-click revert** (all or per-file) |
-| In-session terminal | N/A | **Terminal tab**: persistent PowerShell in the session project dir, SSE streaming, auto-reconnect |
-| Configuration | Hand-edit YAML | **Visual setup page**: one-click vision-model provider/model picker, `soul.md` persona editor, **one-click migration of skills + MCP + memory from Codex / Claude Code** |
-| Plugin install | Manual npm | Built-in **plugin marketplace** in Settings: search / one-click install / uninstall |
-| Updates | Manual `npm update` | **Dual auto-update**: official agent updates (npm overlay, rollback on failure) + client self-update — both user-consented |
-| Notifications | N/A | **Windows system notification** when an agent task completes, click to bring the window back |
-| Requirements | Node.js environment | Windows 10/11 (x64), **no runtime required** |
-
-> Zero kernel modification: EAC runs the official `dsh web` as-is, keeping the full "everything is a plugin" architecture,
-> and shares the `DSH_HOME` configuration with the CLI — existing sessions/API keys just work.
+- [Why EAC](#why-eac)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Community & Support](#community--support)
+- [Developer Documentation](#developer-documentation)
+- [Acknowledgements](#acknowledgements)
+- [Star History](#star-history)
+- [License](#license)
 
 ---
 
-## Download & Install (Deployment)
+## Why EAC
 
-### GitHub Releases (recommended)
+| Area | Official DeepSeek Harness default experience | Deepseek Harness EAC enhancements |
+| --- | --- | --- |
+| Installation and launch | Requires a separately installed Node.js environment and CLI startup | Bundles Node.js, the npm CLI, and dsh; provides setup and portable builds that launch with a double-click |
+| Desktop experience | Primarily used from a terminal or browser | Native desktop window, system tray, shortcut maintenance, process cleanup, and task notifications |
+| CLI coexistence | CLI and Web normally use the same plugin environment | Uses a separate `web-desktop` profile while sharing sessions and API keys with the CLI, keeping plugins isolated |
+| Plugin reliability | Plugins are generally installed through a package manager and troubleshot manually | Takes snapshots before installation and startup, with health checks, repair, retry, rollback, and incident reports |
+| Interface customization | Uses the official interface by default | Includes 10 skins plus font, size, color, and mobile layout customization |
+| Project tools | Relies on external editors and terminals | Includes a file tree, line-level diffs, one-click restore, persistent terminal, and HTML/local-port previews |
+| Context and personas | `/compact` and persona files are managed manually | Supports automatic compaction, persona cards, and hot-reloading for `soul.md` |
+| Models and MCP | Primarily managed through configuration files or the CLI | Provides visual configuration for vision models and MCP, plus imports from Claude Code and Codex |
+| Plugin ecosystem | Plugins are installed through the CLI or package manager | Includes a plugin marketplace with search, one-click installation, removal, and management |
+| Conversation efficiency | Uses the standard conversation workflow | Adds temporary side conversations, conversation-node navigation, and reasoning-effort controls for third-party models |
+| Messaging integration | Does not include EAC messaging bridges by default | Connects to WeChat ClawBot / OpenClaw in one click |
+| Updates and maintenance | Updated through a package manager or manually | Checks dsh agent and desktop-client updates separately, preserving or rolling back the previous version on failure |
 
-> No single-file size limit on GitHub — download the complete installer directly.
+> EAC does not modify the official dsh core, preserving its plugin architecture and official capabilities in full.
+> It shares sessions and API keys from `DSH_HOME` by default while isolating the desktop plugin environment.
+
+---
+
+## Quick Start
+
+### Requirements
+
+- Windows 10/11 (x64)
+- Linux x86_64 (Arch / Ubuntu / Debian / Fedora, or any distribution that supports AppImage)
+- No pre-installed Node.js or other runtime required
+
+### Windows
+
+> GitHub has no single-file size limit, so you can download the complete package directly.
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | No install needed, double-click to run, USB-friendly | ~167 MB |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | Installs to system, creates desktop/Start-Menu shortcuts | ~167 MB |
+| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | No installation required; double-click to run and carry it on a USB drive | ~226 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | Installs to the system and creates desktop and Start Menu shortcuts | ~241 MB |
 
-More versions on the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases).
+See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases) for more versions.
 
-> ⚠️ **Install to an ASCII-only path** (the default `C:\Users\<you>\AppData\Local\Programs\` is fine): non-ASCII paths (e.g. `D:\迅雷下载\`) trigger a native Chromium renderer crash — the window quits by itself within a minute.
+> ⚠️ **Install or place the app in an ASCII-only path** (the default `C:\Users\<you>\AppData\Local\Programs\` is fine). Non-ASCII paths such as `D:\迅雷下载\` can trigger a native Chromium renderer crash, causing the window to close automatically after several seconds.
 
-**First run**:
+### Linux (x64)
 
-1. Double-click — a loading animation appears, then the DeepSeek Harness Web UI loads in a native window (localhost only).
-2. If you haven't configured an API Key yet, set it up in the UI to get started (identical to the `dsh` CLI).
-3. Highlights: Settings → Skins (10 built-in skins) / Plugin Marketplace / one-click model picker; conversation area → Terminal / Files tabs.
+Linux packaging was contributed by community developer [@Luoye-hb](https://github.com/Luoye-hb) in [PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12). The packages were released with [v4.4.0-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux) and support **Arch / Ubuntu / Debian / Fedora**, plus a universal AppImage:
 
-> Portable data lives next to the exe in `data\`; the installer uses `%APPDATA%\Deepseek Harness EAC\`.
-> To override the DSH config directory, set the `DSH_HOME` environment variable before launch (same as the dsh CLI).
+| Distribution | Package | Install command |
+| --- | --- | --- |
+| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-4.4.0-x64.pacman` |
+| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-4.4.0-amd64.deb` |
+| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-4.4.0.x86_64.rpm` |
+| Universal | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | Run directly after `chmod +x` |
 
-### Upgrading
+> - Uninstall with `pacman -Rns dsh-desktop`, `apt remove dsh-desktop`, or `dnf remove dsh-desktop`.
+> - Like the Windows build, Linux packages include Node.js and the npm CLI. No pre-installed Node.js is needed, and data continues to use `~/.dsh` (`DSH_HOME`).
+> - Linux updates are managed by the system package manager rather than the in-app updater. To build it yourself, use the source code in the repository's root `linux` branch.
 
-- **Client**: checks the upstream repo (GitHub Releases with fallback) after launch; once you agree it downloads and installs — the portable build replaces itself in place and restarts, the setup build launches the new installer. On failure the current version is kept.
-- **Official agent (dsh)**: new versions of `@deepseek-ai/dsh` are detected and installed into a data-dir overlay (atomic switch; one-click rollback to the bundled version if the new one fails to start).
-- You can also just download the latest installer above and run it — data is preserved; since v2.0 the installer kills running old/new instances before uninstalling, so "Failed to uninstall old application files" no longer occurs.
+### First Run
+
+1. Launch the app. After the startup animation, the DeepSeek Harness Web UI loads automatically in a native window and is accessible only through the local loopback interface.
+2. If you have not configured an API key, open Settings and complete the setup before starting. The configuration is identical to the dsh CLI.
+3. Common entry points: Settings → Skins (10 built-in skins) / Plugin Marketplace / one-click model selection; conversation area → Terminal / Files tabs.
+
+### Data Directories
+
+> Portable data is stored in `data\` next to the exe; the setup build uses `%APPDATA%\Deepseek Harness EAC\`.
+> To override the dsh configuration directory, set the `DSH_HOME` environment variable before launch, just as you would with the dsh CLI.
+
+### Updating
+
+- **Desktop client**: checks upstream releases automatically after launch, with fallback release sources. After your approval, it downloads and installs the update. The portable build replaces itself and restarts; the setup build opens the new installer. The current version is preserved if the update fails.
+- **Official agent (dsh)**: detects new `@deepseek-ai/dsh` versions and, after approval, installs them into a data-directory overlay with an atomic switch. If the new version fails to start, you can roll back to the bundled version in one click.
+- You can also download and run the latest package above without losing data. Since v2.0, the installer closes running old and new instances before uninstalling, preventing the "Failed to uninstall old application files" error during an in-place upgrade.
 
 ---
 
 ## Features
 
-### UI Skins (EAC signature)
+### Out-of-the-box Desktop Experience
 
-- The Settings → Skins tab ships **10 Web UI skins** as cards (name / description / accent color / author / source & license badges).
-- 9 from the community [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) (BSD-3-Clause) + 1 [dsh-deep-whale maid-atelier](https://github.com/Small-tailqwq/dsh-deep-whale) (CC BY-NC-SA 4.0, non-commercial).
-- **No skin is enabled by default** (native look); picking one disables the others (mutual exclusion), "restore default skin" resets it; the web service restarts automatically to apply.
-- Skins are browser-only dsh client plugins synced into the web profile and idempotently registered in `cordis.patch.yml`; full attribution ships with each bundle.
+- **Bundled runtime**: includes Node.js, the npm CLI, `@deepseek-ai/dsh`, and official plugins, with no additional runtime installation required.
+- **Setup and portable builds**: launch with a double-click and automatically select a free port; portable data stays with the application directory for easy migration.
+- **Desktop integration**: provides a native window, system tray, shortcut maintenance, process cleanup, and task-completion notifications.
+- **CLI coexistence**: shares sessions and API keys from `DSH_HOME` while using a separate `web-desktop` profile so desktop and CLI plugins do not interfere with each other.
+- **Automatic updates**: updates the dsh agent and desktop client separately, preserving or restoring the previous version if installation fails.
 
-| Skin | Source | License |
-| --- | --- | --- |
-| xp (Windows XP style) | [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) | BSD-3-Clause |
-| qq98 (QQ classic 98 style) | same | BSD-3-Clause |
-| ths (THS style) | same | BSD-3-Clause |
-| blue-fantasy | same | BSD-3-Clause |
-| dragon-heir | same | BSD-3-Clause |
-| minecraft | same | BSD-3-Clause |
-| trading | same | BSD-3-Clause |
-| whale-song | same | BSD-3-Clause |
-| miku (Hatsune Miku) | same | BSD-3-Clause |
-| maid-atelier (Deep-Sea Maid Workshop) | [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) | **CC BY-NC-SA 4.0** (non-commercial) |
+### Development Workflow
 
-### Out of the box
+- **File tree and previews**: browse project files and preview HTML files or local-port services inside the app.
+- **Change tracking and restore**: inspect session file changes and line-level diffs, then restore individual files or all changes at once.
+- **In-session terminal**: use persistent PowerShell in the project directory with streaming output, command history, and automatic reconnection.
+- **Conversation navigation**: jump quickly between user messages.
+- **Temporary conversations**: ask follow-up questions from the current context in a separate floating window without affecting the main conversation.
 
-- **No Node.js needed**: bundles a standalone Node runtime and npm CLI — the target machine needs nothing
-- **Bundled dsh CLI**: full `@deepseek-ai/dsh` with all official plugins, works offline
-- **One-click launch**: double-click to start `dsh web`, auto-selects a free port, loads into a native window
-- **Shares CLI config**: defaults to `DSH_HOME` (typically `~\.dsh`) — existing sessions/API keys work out of the box
-- **Portable**: data follows the exe; copy to a USB stick and go
+### Conversations & Models
 
-### Desktop experience
+- **Automatic compaction**: runs `/compact` as the context approaches its limit, with a configurable threshold and silent retry on failure.
+- **Persona management**: includes six persona cards with save, apply, delete, live editing, and `soul.md` hot-reload support.
+- **Image understanding**: uses `picturereader` to analyze local or online images and return the result directly to the conversation.
+- **MCP and quick setup**: visually manages MCP and imports skills, MCP configuration, and memory from Claude Code or Codex.
+- **Third-party model controls**: adjusts reasoning effort for supported third-party models.
+- **DeepSeek balance**: displays the current-turn cost and account balance, with top-up access and automatic refresh.
 
-- **Frameless styled window + system tray**: no native title/menu bars — custom glass bar (rounded icon, ⋯ menu, window controls) with Win11 rounded corners; closing hides to the tray
-- **Clean exit**: quitting kills the entire dsh process tree — no orphans
-- **Shortcut self-healing**: the portable build creates/repairs desktop & Start Menu shortcuts automatically (re-pointed after the exe moves)
-- **Session notifications**: Windows toast when an agent task completes — click to return to the window
+### Plugins & Reliability
 
-### Productivity (companion plugin system)
+- **Unified plugin marketplace**: `dsh-unified-market` aggregates multiple plugin sources with search, one-click installation, and removal.
+- **Plugin Protection Center**: `dsh-plugin-shield`, together with the built-in `plugin-guard` engine, provides snapshots, health checks, repair, retry, rollback, and incident reports.
+- **Self-healing reliability**: automatically handles profile-module shadowing, plugin startup failures, and file-lock issues during service restarts.
+- **Complete dependency distribution**: bundled plugins and their self-contained dependencies ship with the installer, reducing environment-specific failures.
 
-- **DeepSeek balance widget**: inline「this turn ¥X · balance ¥Y」in the conversation stats bar, click to top up, auto-refresh every 15 min
-- **File-change tracking + one-click revert**: a Files tab aggregates every file the agent touched (created/modified/deleted + line-level diffs) with per-file or bulk revert; data is read-only reuse of session logs, stable across upgrades
-- **In-session terminal**: a Terminal tab starts a persistent PowerShell in the session's project dir (SSE streaming, command history, auto-reconnect, clean CJK encoding)
-- **Project file tree + HTML/port preview**: VSCode-style tree, in-app preview of HTML files and localhost ports (loopback only)
-- **Community plugin marketplace (new in v2, dsh-webui-market)**: Settings → Plugins → Marketplace — browse plugins listed on awesome-dsh-plugin.com and install/uninstall them into the profile with one click; install/uninstall jobs are queued and run during the service restart window so the current session is never interrupted
-- **External vision models (new in v2, dsh-tool-vision)**: the `inspect_image` tool sends local image files or image URLs to any OpenAI-compatible vision endpoint (qwen-vl / GLM-4V / Ollama, ...) and brings the vision answer back into the conversation
-- **soul.md persona hot-reload (new in v2, dsh-soul-md)**: injects a markdown persona file into the system prompt (`soul:persona`), hot-reloads on file change — the agent roleplays while it works
-- **Mobile layout fixes (new in v2, dsh-web-mobile-fix)**: fixes settings panel, popups, sidebar and session header on narrow (≤400px) screens — pure client-side CSS, desktop layout untouched
-- **Easy setup (dsh-easy-setup)**: one-click vision-model provider/model picker, `soul.md` persona visual editor, one-click migration of skills + MCP + memory from Codex / Claude Code directories
-- **Dual auto-update**: official dsh agent updates (npm overlay) + client-wrapper self-update — both user-consented, automatic rollback on failure
-- **Self-healing**: `profile-module-heal` fixes profile module shadowing issues (e.g. `prompt section already registered`, broken model list / mode switching); service restarts wait for the old process to fully exit (releasing file locks) before starting, and plugins (with their bundled vendor dependencies) ship verbatim inside the installer
+### Interface & Integrations
+
+- **Interface customization**: includes 10 community skins with mutually exclusive switching, one-click restoration of the native look, and font, size, and color settings.
+- **Mobile layout support**: improves settings panels, dialogs, sidebars, and conversations on narrow screens.
+- **WeChat ClawBot**: connects to WeChat ClawBot / OpenClaw through the bundled bridge plugin in one click.
 
 ---
 
-## Requirements
-
-- Windows 10/11 (x64)
-- No pre-installed Node.js or any other runtime
-
-## Build from source
-
-```powershell
-cd dsh-desktop
-npm install
-npm run fetch-runtime    # bundle node.exe + npm CLI
-npm run dist             # build portable + NSIS installer -> dist/
-```
-
-> Behind a firewall? Electron mirror: `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`; builder toolchain mirror: `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`.
-
-Run tests:
-
-```powershell
-npm test                 # node --test test/*.test.mjs
-```
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────┐
-│  Electron shell (main.js)                                │
-│  · Single-instance lock / window / menu / lifecycle      │
-│  · Session watcher (session-watcher.js) → notifications  │
-│  · Official updater (updater.js) → user-consented overlay│
-│  · Client updater (client-updater.js) → download/replace │
-│  · spawn node.exe from vendor|resources                  │
-└──────────────┬───────────────────────────────────────────┘
-               │  dsh web --host 127.0.0.1 --port 0
-               ▼
-       Bundled node.exe + @deepseek-ai/dsh
-       Path resolution: user overlay > bundled package
-       Prints "dsh web: http://127.0.0.1:<port>"
-               │  Parse URL, poll HTTP 200
-               ▼
-       Native window loads Web UI (localhost only)
-```
-
-## Project structure
-
-```
-dsh-desktop/                  # Electron desktop app
-├── main.js                   # Electron main process
-├── updater.js                # Official dsh agent updater
-├── client-updater.js         # Client self-updater
-├── balance.js                # DeepSeek balance query
-├── session-watcher.js        # Session completion watcher
-├── profile-module-heal.js    # Profile module shadowing heal
-├── preload.js                # Sandbox preload
-├── assets/                   # Loading page, update page, icons, skins, companion plugins
-│   ├── skins/                # 10 built-in Web UI skins
-│   └── plugins/              # dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch / dsh-plugin-marketplace …
-├── scripts/                  # Build & dev helper scripts
-├── build/icon.png            # electron-builder icon
-├── vendor/                   # Bundled node.exe / npm CLI (not in repo)
-├── electron-builder.yml      # Build config
-└── dist/                     # Build output (not in repo; published to Releases)
-openclaw-dsh-bridge/          # WeChat bridge plugin (optional, research-grade)
-research/                     # Third-party WeChat / bridge protocol research
-```
-
-## Contributors
-
-Thanks to every contributor:
-
-<p align="center">
-  <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
-  </a>
-</p>
+## Community & Support
 
 ### Community Groups
 
@@ -223,10 +174,165 @@ Thanks to every contributor:
   </tr>
 </table>
 
-### Bug Reports
+### Bug & Feature Requests
 
-To report a bug or request a feature, visit [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/).
+To report a bug or suggest a feature, visit [https://eac.dtyg123.dpdns.org/](https://eac.dtyg123.dpdns.org/).
 
+---
+
+## Developer Documentation
+
+### Build from Source
+
+```powershell
+cd dsh-desktop
+npm install
+npm run fetch-runtime    # bundle node.exe + npm CLI
+npm run dist             # build portable + NSIS installer -> dist/
+```
+
+> Behind a firewall? Use the Electron mirror `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'` and the builder toolchain mirror `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`.
+
+Run tests:
+
+```powershell
+npm test                 # node --test test/*.test.mjs
+```
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│  Electron shell (main.js)                                │
+│  · Single-instance lock / window / menu / lifecycle      │
+│  · Session watcher (session-watcher.js) → notifications  │
+│  · Official updater (updater.js) → approved overlay      │
+│  · Client updater (client-updater.js) → download/replace │
+│  · Spawn node.exe from vendor|resources                  │
+└──────────────┬───────────────────────────────────────────┘
+               │  dsh web --host 127.0.0.1 --port 0
+               ▼
+       Bundled node.exe + @deepseek-ai/dsh
+       Path resolution: user overlay > bundled package
+       Prints "dsh web: http://127.0.0.1:<port>"
+               │  Parse URL, poll HTTP 200
+               ▼
+       Native window loads Web UI (localhost only)
+```
+
+### Project Structure
+
+```
+dsh-desktop/                  # Electron desktop app
+├── main.js                   # Electron main process
+├── updater.js                # Official dsh agent updater
+├── client-updater.js         # Desktop client updater
+├── balance.js                # DeepSeek balance query
+├── session-watcher.js        # Session completion watcher
+├── plugin-guard.js           # Plugin protection engine: snapshots/rollback/checks/repair/guarded startup/reports
+├── profile-module-heal.js    # Profile module shadowing repair: real directories + pnpm links
+├── preload.js                # Sandbox preload
+├── assets/                   # Loading/update pages, icons, skins, companion plugins
+│   ├── skins/                # 10 built-in Web UI skins
+│   └── plugins/              # Desktop companions: dsh-balance / dsh-file-changes / dsh-terminal
+│                             # / dsh-easy-setup / dsh-skin-switch
+│                             # Bundled community plugins: dsh-webui-market / dsh-tool-vision
+│                             # / dsh-soul-md / dsh-web-mobile-fix
+│                             # (vendor and self-contained runtime dependencies included in the repository)
+├── scripts/                  # Build and development helper scripts
+├── build/icon.png            # electron-builder icon
+├── vendor/                   # Bundled node.exe / npm CLI (not committed)
+├── electron-builder.yml      # Build configuration
+└── dist/                     # Build output (not committed; published to Releases)
+openclaw-dsh-bridge/          # WeChat bridge plugin (optional, research-grade)
+research/                     # Third-party WeChat / bridge protocol research
+```
+
+---
+
+## Acknowledgements
+
+### Plugin Acknowledgements
+
+| Plugin | Description |
+| --- | --- |
+| dsh-auto-compact | Automatically sends `/compact` as the context approaches its limit |
+| @deepseek-ai/dsh-balance | Account balance, cost estimates, and pricing settings |
+| dsh-better-sidebar (provider: omdsh-dev) | VS Code-style right sidebar with Explorer, editor, terminal, Git, and browser views |
+| dsh-change-review | AI change review for automatically rechecking file modifications |
+| @deepseek-ai/dsh-client-file-changes | Files view with session change tracking and one-click restore |
+| dsh-compact | Request-path context compaction and overflow recovery |
+| @deepseek-ai/dsh-conversation-tweaks | Collapses long output and adds a right-side conversation navigation rail |
+| dsh-dafeiyu (provider: QCYTSN) | Dafeiyu desktop companion |
+| dsh-deep-whale (provider: Small-tailqwq) | Source of the Deep-Sea Maid Workshop `maid-atelier` skin |
+| dsh-dock-settings | Skills and MCP settings management |
+| @deepseek-ai/dsh-easy-setup | Quick setup for vision models, `soul.md`, and migration |
+| @deepseek-ai/dsh-file-changes | Session file-change projection |
+| dsh-file-drop-eac | Drag files or folders into a conversation |
+| @deepseek-ai/dsh-float-window | Opens a conversation in a separate window |
+| dsh-font-custom | Custom fonts plus text and code colors |
+| dsh-image-paste | Paste and send clipboard images |
+| dsh-message-rewind | Rewrite a message and regenerate from that point |
+| @vlln/dsh-navbar (provider: vlln) | Conversation-node navigation bar for jumping between user messages |
+| dsh-offpeak (provider: christophersmith2737-commits) | DeepSeek peak/off-peak pricing reminder and interception |
+| @deepseek-ai/dsh-openclaw-bridge | WeChat ClawBot / OpenClaw bridge |
+| dsh-pet (provider: PC2005-cloud) | Floating desktop pet for the page |
+| dsh-pet-settings | Desktop pet settings section |
+| dsh-plugin-guard (provider: lxzy-7) | Pre-install snapshots, rollback, and guarded startup |
+| dsh-plugin-healthcheck (provider: chenw2759-wq) | Static plugin health checks and risk inspection |
+| @deepseek-ai/dsh-plugin-manager | Lists and enables or disables bundled plugins |
+| dsh-plugin-shield | Plugin protection with snapshots, rollback, and health checks |
+| dsh-plugin-wizard | Plugin selection wizard |
+| @deepseek-ai/dsh-prompt-custom | Custom core prompts |
+| dsh-session-manager | Session deletion and archive management |
+| dsh-settings-groups | Collapsible advanced options on the Settings page |
+| dsh-settings-nav-custom | Customization for the Settings sidebar |
+| @dsh-external/dsh-side-session (provider: dsh-external) | Temporary side conversations that do not affect the main conversation |
+| @deepseek-ai/dsh-skin-switch | Built-in skin switching |
+| dsh-soul-md (provider: Scorp1o117) | `soul.md` persona-card injection |
+| @deepseek-ai/dsh-terminal | Interactive command line inside a conversation |
+| @deepseek-ai/dsh-third-party-thinking | Reasoning-effort controls for third-party models |
+| dsh-tool-vision (provider: Scorp1o117) | Image analysis through OpenAI-compatible vision models |
+| dsh-undo-savepoint | Configuration snapshots and undo/rollback |
+| dsh-unified-market | Unified plugin marketplace aggregating three sources |
+| dsh-web-plugin-manager (provider: LX2000WASD) | Entry point for guarded plugin installation and health checks |
+| dsh-web-mobile-fix (provider: AcidGr) | Mobile layout fixes |
+| dsh-web-ui (provider: zhu1090093659) | Source of nine built-in Web UI skins |
+| dsh-webui-market (provider: Sanqi-normal) | Community plugin directory with one-click installation and removal |
+| picturereader | Unified image-understanding plugin |
+
+Thank you to every plugin provider for contributing to this project and the open-source community. With so many plugins, we may not have identified every plugin and source individually. If you recognize your work here, please let us know so we can add it to the acknowledgements. You are also welcome to join our community groups to exchange ideas and help the ecosystem grow.
+
+### Skin Sources & Licenses
+
+The Settings page includes 10 Web UI skins and keeps the native appearance by default. Enabling one skin automatically disables the others, and the default look can be restored in one click. Complete source, author, and license information ships with the installer.
+
+Nine skins come from the community project [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) under BSD-3-Clause. `maid-atelier` comes from [dsh-deep-whale / Deep-Sea Maid Workshop](https://github.com/Small-tailqwq/dsh-deep-whale) under CC BY-NC-SA 4.0 and may not be used commercially.
+
+| Skin | Source | License |
+| --- | --- | --- |
+| xp (Windows XP style) | [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) | BSD-3-Clause |
+| qq98 (classic QQ 98 style) | Same as above | BSD-3-Clause |
+| ths (Tonghuashun style) | Same as above | BSD-3-Clause |
+| blue-fantasy | Same as above | BSD-3-Clause |
+| dragon-heir | Same as above | BSD-3-Clause |
+| minecraft | Same as above | BSD-3-Clause |
+| trading | Same as above | BSD-3-Clause |
+| whale-song | Same as above | BSD-3-Clause |
+| miku (Hatsune Miku) | Same as above | BSD-3-Clause |
+| maid-atelier (Deep-Sea Maid Workshop) | [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) | **CC BY-NC-SA 4.0** (non-commercial) |
+
+### Contributors
+
+Thanks to every contributor:
+
+<p align="center">
+  <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=zouyuxuan122/Deepseek-Harness-EAC" />
+  </a>
+</p>
+
+---
 
 ## Star History
 
@@ -238,6 +344,8 @@ To report a bug or request a feature, visit [https://eac.dtyg123.dpdns.org/](htt
  </picture>
 </a>
 
+---
+
 ## License
 
-MIT. Based on [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (MIT). Built-in skins are owned by their original authors (see the skin license table above).
+MIT. Based on [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) (MIT). Built-in skins remain the property of their original authors; see the skin license table above.

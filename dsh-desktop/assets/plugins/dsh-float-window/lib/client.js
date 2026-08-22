@@ -305,11 +305,11 @@ window.__ModuleLoader__.load({
 			ensureCss();
 			if (!FLOAT) {
 				// 主窗口：注册弹出按钮 + 侧栏拖出代理。
-				ctx.effect(() => ctx.slots.register({
+				ctx.slots.inject("conversation.session.header.actions", () => ctx.slots.register({
 					name: "conversation.session.header.actions",
 					id: "float-window",
 					order: 200
-				}, PopOutButton), "dsh-float-window: pop-out button");
+				}, PopOutButton));
 				ctx.effect(() => setupDragOut(), "dsh-float-window: drag-out proxy");
 				return;
 			}
