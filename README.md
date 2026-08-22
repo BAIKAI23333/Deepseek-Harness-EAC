@@ -300,6 +300,7 @@ research/                     # 第三方微信/桥接协议调研资料
 | dsh-web-ui（提供者：zhu1090093659） | 9 款内置 Web UI 皮肤来源 |
 | dsh-webui-market（提供者：Sanqi-normal） | 社区插件目录与一键安装/卸载 |
 | picturereader | 统一图片理解插件 |
+| computer-user | 读屏 + 鼠标键盘自动化（Codex-style computer use；配 picturereader，纯文本模型可用） |
 
 感谢所有插件提供者对本项目与开源社区的奉献；由于插件数量众多，我们很抱歉，未能逐一统计到所有插件与其来源；如有插件的拥有者看到了自己所做的插件，欢迎您告知我们并添加到致谢名单中，也欢迎添加我们的交流群，以便一同交流、共同进步。
 
