@@ -24,3 +24,5 @@ build/*
 
 # ---- TypeScript 编译产物（源码为同名 .ts，tsc 就地产出，勿手改） ----
 /lib/desktop/guard-box.js
+
+/tauri-shell/sidecar/server.js
