@@ -33,3 +33,7 @@ build/*
 /lib/desktop/runtime-patches.js
 /lib/desktop/plugin-ops.js
 /lib/desktop/market.js
+/lib/desktop/client-update.js
+/lib/desktop/junction-patrol.js
+/lib/desktop/shortcuts.js
+/lib/desktop/static-preview.js
