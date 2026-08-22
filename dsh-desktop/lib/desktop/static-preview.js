@@ -8,11 +8,15 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
-const { app } = require('electron');
 const bundleIntegrity = require('../../bundle-integrity');
 
 let ctx = {};
-function init(d) { ctx = d; }
+function init(d) { ctx = d || {}; }
+// 壳环境注入（同 runtime-paths）：未注入时按开发态处理。
+function isPackaged() { return typeof ctx.isPackaged === 'function' ? !!ctx.isPackaged() : false; }
+function resourcesDir() {
+  return typeof ctx.resourcesPath === 'function' ? ctx.resourcesPath() : '';
+}
 
 let previewStaticPort = 0;
 function getPreviewStaticPort() { return previewStaticPort; }
@@ -87,8 +91,8 @@ function startPreviewStaticServer() {
 // Node then dies with ERR_MODULE_NOT_FOUND in a loop. Tell the user to
 // reinstall instead (with an escape hatch to continue anyway).
 function verifyBundledModules() {
-  if (!app.isPackaged) return Promise.resolve();
-  const appDir = path.join(process.resourcesPath, 'app');
+  if (!isPackaged()) return Promise.resolve();
+  const appDir = path.join(resourcesDir(), 'app');
   const manifestPath = path.join(appDir, 'bundle-manifest.json');
   let manifest = null;
   try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return Promise.resolve(); }

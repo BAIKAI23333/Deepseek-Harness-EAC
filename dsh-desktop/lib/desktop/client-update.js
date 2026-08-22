@@ -6,7 +6,6 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
-const { app } = require('electron');
 const updater = require('../../updater');
 const clientUpdater = require('../../client-updater');
 const { updCtx, nodeExe } = require('./runtime-paths');
@@ -14,7 +13,17 @@ const { desktopProfile } = require('./profile');
 const { ensureGuard } = require('./guard-box');
 
 let mod = {};
-function init(d) { mod = d; }
+function init(d) { mod = d || {}; }
+// 壳环境注入：exitProcess=退出壳进程（Electron=app.exit(0)，Tauri=sidecar
+// 通知 Rust 退出）；getExecDir=当前应用 exe 所在目录（换身更新的 installDir，
+// sidecar 宿主必须注入真实壳 exe 目录而非 node.exe 目录）。
+function execDir() {
+  return typeof mod.getExecDir === 'function' ? mod.getExecDir() : path.dirname(process.execPath);
+}
+function exitProcess() {
+  if (typeof mod.exitProcess === 'function') return mod.exitProcess();
+  process.exit(0);
+}
 
 let clientUpdateBusy = false;
 
@@ -139,14 +148,14 @@ async function runClientUpdateFlow(manual) {
       const clientUpdateOpts = {
         userDataDir: mod.getUserDataDir(),
         dshHome: mod.getDshHome(),
-        installDir: path.dirname(process.execPath),
+        installDir: execDir(),
         profileDir: path.join(mod.getDshHome(), 'profiles', desktopProfile()),
         currentVersion: mod.getAppVersion(),
         newVersion: release.version,
         nodeExe: nodeExe(),
       };
       clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate, clientUpdateOpts);
-      setTimeout(() => app.exit(0), 400);
+      setTimeout(exitProcess, 400);
     }
   } catch (err) {
     mod.log('client-update', '更新失败: ' + err.message);
@@ -192,14 +201,14 @@ function offerPendingClientUpdate() {
     const clientUpdateOpts2 = {
       userDataDir: mod.getUserDataDir(),
       dshHome: mod.getDshHome(),
-      installDir: path.dirname(process.execPath),
+      installDir: execDir(),
       profileDir: path.join(mod.getDshHome(), 'profiles', desktopProfile()),
       currentVersion: mod.getAppVersion(),
       newVersion: pending.version,
       nodeExe: nodeExe(),
     };
     clientUpdater.applyUpdate(ctx, pending, clientUpdateOpts2);
-    setTimeout(() => app.exit(0), 400);
+    setTimeout(exitProcess, 400);
   });
 }
 

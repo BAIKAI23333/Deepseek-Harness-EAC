@@ -6,7 +6,6 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { Notification } = require('electron');
 const updater = require('../../updater');
 const pluginUpdater = require('../../plugin-updater');
 const { healProfileModuleShadowing } = require('../../profile-module-heal');
@@ -27,8 +26,9 @@ const { applySessionManageFix } = require('./runtime-patches');
 
 const IS_WIN = process.platform === 'win32';
 
+// 壳环境注入：notify 由宿主提供系统通知（同 junction-patrol 约定）。
 let ctx = {};
-function init(d) { ctx = d; }
+function init(d) { ctx = d || {}; }
 
 const COMPANION_PLUGINS = [
   { id: 'balance', name: '@deepseek-ai/dsh-balance' },
@@ -522,13 +522,12 @@ function syncCompanionPlugins() {
     if (migratedBuiltins.length) {
       try {
         const names = migratedBuiltins.map((m) => m.name).join('、');
-        const n = new Notification({
+        ctx.notify({
           title: '内置插件已接管同名市场包',
           body: `检测到市场安装的重复包，已改用内置版本（${names}）。插件树已自动整理，本次启动生效。`,
           icon: path.join(APP_ROOT, 'assets', 'icon.png'),
+          onClick: () => ctx.showMainWindow(),
         });
-        n.on('click', () => ctx.showMainWindow());
-        n.show();
       } catch (err) {
         ctx.log('boot', '内置接管通知发送失败: ' + err.message);
       }

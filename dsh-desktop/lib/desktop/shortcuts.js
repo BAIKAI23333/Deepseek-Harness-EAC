@@ -7,7 +7,6 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { app, shell } = require('electron');
 const updater = require('../../updater');
 const {
   STANDARD_SHORTCUT_NAME,
@@ -23,8 +22,13 @@ const { COMPANION_PLUGINS, readJsonFile } = require('./companion-sync');
 
 const IS_WIN = process.platform === 'win32';
 
+// 壳环境注入：isPackaged/systemPath/links 由宿主提供。links 是 .lnk 读写
+// 驱动（Electron=shell.read/writeShortcutLink；Tauri=Rust LinkDriver），
+// read 返回链接描述对象或抛错，write(path, op, opts) 失败时抛错。
 let ctx = {};
-function init(d) { ctx = d; }
+function init(d) { ctx = d || {}; }
+function isPackaged() { return typeof ctx.isPackaged === 'function' ? !!ctx.isPackaged() : false; }
+function systemPath(kind) { return typeof ctx.systemPath === 'function' ? ctx.systemPath(kind) : ''; }
 
 // 图标设计版本：更换图标时 +1，触发所有快捷方式图标刷新。
 const SHORTCUT_ICON_VERSION = 'whale-2';
@@ -66,7 +70,7 @@ function listLnkFiles(dir) {
 }
 
 function readLnkSafe(p) {
-  try { return shell.readShortcutLink(p); } catch { return null; }
+  try { return ctx.links.read(p); } catch { return null; }
 }
 
 function lnkTargetsApp(lnkPath, target) {
@@ -93,7 +97,7 @@ function collectDesktopShortcutEntries(dirs) {
 }
 
 function maintainShortcuts() {
-  if (!app.isPackaged || !IS_WIN) return;
+  if (!isPackaged() || !IS_WIN) return;
   // E2E / 自动化：跳过快捷方式维护（临时 exe 不得改写真实开始菜单/桌面
   // 快捷方式的指向）。与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同一约定。
   if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
@@ -101,9 +105,9 @@ function maintainShortcuts() {
     const target = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
     const settings = updater.loadSettings(updCtx());
     const policy = settings.shortcutPolicy === 'never' ? 'never' : 'auto';
-    const linksDir = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
+    const linksDir = path.join(systemPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs');
     const APP_TITLE = 'Deepseek Harness EAC';
-    const userDesktopDir = app.getPath('desktop');
+    const userDesktopDir = systemPath('desktop');
     const desktopDirs = desktopShortcutDirs(userDesktopDir, process.env.PUBLIC);
     const startMenu = path.join(linksDir, APP_TITLE + '.lnk');
     const desktop = path.join(userDesktopDir, STANDARD_SHORTCUT_NAME);
@@ -132,7 +136,7 @@ function maintainShortcuts() {
       const startMenuOwn = fs.existsSync(startMenu)
         && shortcutTargetsApp(readLnkSafe(startMenu), target, targetMoved ? settings.shortcutTarget : null);
       if (startMenuOwn && (targetMoved || lnkUsesManagedIcon(startMenu, ico))) {
-        try { shell.writeShortcutLink(startMenu, 'replace', opts); changed = true; } catch {}
+        try { ctx.links.write(startMenu, 'replace', opts); changed = true; } catch {}
       }
       if (portable && policy !== 'never') {
         let desktopRefreshed = false;
@@ -144,7 +148,7 @@ function maintainShortcuts() {
           });
           if (kind !== 'runtime') continue;
           try {
-            shell.writeShortcutLink(entry.filePath, 'replace', opts);
+            ctx.links.write(entry.filePath, 'replace', opts);
             changed = true;
             desktopRefreshed = true;
           } catch {}
@@ -155,7 +159,7 @@ function maintainShortcuts() {
     // 开始菜单快捷方式：系统通知（Toast）的前置条件，按 target 匹配维护。
     const startMenuOk = fs.existsSync(startMenu) && lnkTargetsApp(startMenu, target);
     if (!startMenuOk) {
-      try { shell.writeShortcutLink(startMenu, 'create', opts); changed = true; } catch {}
+      try { ctx.links.write(startMenu, 'create', opts); changed = true; } catch {}
     }
     // 桌面快捷方式采用单一创建者：安装版只由 NSIS 创建，便携版才由
     // 运行时创建。扫描个人桌面 + 公共桌面，旧版留下的重复项只删除可
@@ -178,7 +182,7 @@ function maintainShortcuts() {
       }
     }
     if (desktopPlan.create) {
-      try { shell.writeShortcutLink(desktop, 'create', opts); changed = true; } catch {}
+      try { ctx.links.write(desktop, 'create', opts); changed = true; } catch {}
     }
     if (changed) {
       settings.shortcutTarget = target;
@@ -192,7 +196,7 @@ function maintainShortcuts() {
 }
 
 function warnTempRun() {
-  if (!app.isPackaged || !IS_WIN || !process.env.PORTABLE_EXECUTABLE_DIR) return;
+  if (!isPackaged() || !IS_WIN || !process.env.PORTABLE_EXECUTABLE_DIR) return;
   // E2E（scripts/e2e-v4.js）从临时目录跑便携版：告警弹窗会卡住无头验证。
   if (process.env.DSH_DESKTOP_TEST_NO_SHORTCUTS === '1') return;
   const dir = process.env.PORTABLE_EXECUTABLE_DIR.toLowerCase();

@@ -101,16 +101,29 @@ const {
 } = marketMod;
 // 依赖注入：模块通过 getter 惰性读取主进程状态（单一事实源仍在 main.js）。
 procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfile });
-pathsMod.init({ log, getUserDataDir: () => userDataDir });
+pathsMod.init({
+  log,
+  getUserDataDir: () => userDataDir,
+  isPackaged: () => app.isPackaged,
+  resourcesPath: () => process.resourcesPath,
+});
 profileMod.init({ log, getDshHome: () => dshHome });
 guardBoxMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfile, getDshBin: dshBin });
 runtimePatchesMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
+// 系统通知（L2 模块统一入口，签名 notify({title,body,icon,onClick})）：
+// Electron=Notification；Tauri sidecar 由宿主注入 Rust toast 同名接口。
+function shellNotify({ title, body, icon, onClick }) {
+  const n = new Notification({ title, body, icon });
+  if (onClick) n.on('click', onClick);
+  n.show();
+}
 companionSyncMod.init({
   log,
   getDshHome: () => dshHome,
   getUserDataDir: () => userDataDir,
   applyLegacySkinChoice: () => applyLegacySkinChoice(),
   showMainWindow: () => showMainWindow(),
+  notify: shellNotify,
 });
 pluginOpsMod.init({ log });
 marketMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
@@ -132,6 +145,13 @@ shortcutsMod.init({
   showBox: (opts) => showBox(opts),
   getUserDataDir: () => userDataDir,
   getDshHome: () => dshHome,
+  isPackaged: () => app.isPackaged,
+  systemPath: (kind) => app.getPath(kind),
+  // .lnk 读写驱动：Tauri 侧由 Rust LinkDriver 提供同名接口。
+  links: {
+    read: (p) => shell.readShortcutLink(p),
+    write: (p, op, opts) => shell.writeShortcutLink(p, op, opts),
+  },
 });
 junctionPatrolMod.init({
   log,
@@ -139,6 +159,7 @@ junctionPatrolMod.init({
   isRestartingServer: () => restartingServer,
   getServerProc: () => serverProc,
   showMainWindow: () => showMainWindow(),
+  notify: shellNotify,
 });
 clientUpdateMod.init({
   log,
@@ -160,11 +181,15 @@ clientUpdateMod.init({
     await killTreeAndWait(serverProc);
     serverProc = null;
   },
+  exitProcess: () => app.exit(0),
+  getExecDir: () => path.dirname(process.execPath),
 });
 previewMod.init({
   log,
   showBox: (opts) => showBox(opts),
   exitDamaged: () => { forceQuit = true; markCleanExit(); app.exit(1); },
+  isPackaged: () => app.isPackaged,
+  resourcesPath: () => process.resourcesPath,
 });
 
 const IS_WIN = process.platform === 'win32';

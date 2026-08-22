@@ -8,14 +8,15 @@
 // （原生 CLI 重启时会再次指回它自己，互不纠缠：各自启动时各自纠正，运行中互不打扰）。
 
 const path = require('node:path');
-const { Notification } = require('electron');
 const { ensureGuard } = require('./guard-box');
 const { APP_ROOT } = require('./runtime-paths');
 
 const IS_WIN = process.platform === 'win32';
 
+// 壳环境注入：notify 由宿主提供系统通知（Electron=Notification，Tauri=
+// 原生 toast）。签名 notify({title, body, icon, onClick})，失败由调用方兜底。
 let ctx = {};
-function init(d) { ctx = d; }
+function init(d) { ctx = d || {}; }
 
 function startJunctionWatchdog() {
   if (!IS_WIN) return;
@@ -35,13 +36,12 @@ function startJunctionWatchdog() {
       if (res.repaired.length && !notified) {
         notified = true;
         try {
-          const n = new Notification({
+          ctx.notify({
             title: '已自动修复共享模块指向',
             body: '检测到原生 dsh 改写了共享模块目录，桌面端已恢复指向自身版本。原生 CLI 如有异常，重启它即可。',
             icon: path.join(APP_ROOT, 'assets', 'icon.png'),
+            onClick: () => ctx.showMainWindow(),
           });
-          n.on('click', () => ctx.showMainWindow());
-          n.show();
         } catch {}
       }
     } catch { /* 巡检失败静默 */ }

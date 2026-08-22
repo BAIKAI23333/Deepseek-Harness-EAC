@@ -6,22 +6,27 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
-const { app } = require('electron');
 const updater = require('../../updater');
 
 // 应用根目录（本模块位于 <root>/lib/desktop/ 下）。
 const APP_ROOT = path.resolve(__dirname, '..', '..');
 
+// 壳环境注入：isPackaged/resourcesPath 由宿主（Electron main / Tauri sidecar）
+// 提供，本模块不再直接依赖 electron。init 未注入时按开发态处理。
 let ctx = {};
-function init(d) { ctx = d; }
+function init(d) { ctx = d || {}; }
+function isPackaged() { return typeof ctx.isPackaged === 'function' ? !!ctx.isPackaged() : false; }
+function resourcesDir() {
+  return typeof ctx.resourcesPath === 'function' ? ctx.resourcesPath() : '';
+}
 
 function nodeExe() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'node', 'node.exe');
+  if (isPackaged()) return path.join(resourcesDir(), 'node', 'node.exe');
   return path.resolve(APP_ROOT, 'vendor', 'node', 'node.exe');
 }
 
 function npmCli() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'npm', 'bin', 'npm-cli.js');
+  if (isPackaged()) return path.join(resourcesDir(), 'npm', 'bin', 'npm-cli.js');
   return path.resolve(APP_ROOT, 'vendor', 'npm', 'bin', 'npm-cli.js');
 }
 
