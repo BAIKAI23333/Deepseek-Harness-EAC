@@ -169,11 +169,16 @@
 
 ## 4. TS 迁移路线图（四波推进，每波独立可验收）
 
-> **2026-08-22 第三轮执行进度**：Wave 0 ✅（`724f644`）；Wave 1 试点 guard-box ✅；sidecar 实体化 ✅（`7a54496`，
-> `tauri-shell/sidecar/server.ts` 挂载全部 13 个 L2 模块 + 白名单 JSON-RPC 分发，stdio 冒烟 7/7）。
+> **2026-08-22 第三轮执行进度**：Wave 0 ✅（`724f644`）；**Wave 1 ✅ 6/13 模块类型化**
+> （guard-box `724f644` + proc/runtime-paths/file-roots/profile `0b02ec3` + runtime-patches `3f2f71e`，
+> 各模块导出各自 Ctx 注入接口；契约测试 better-sidebar-bundle 已改读 profile.ts 源码）；
+> sidecar 实体化 ✅（`7a54496`，`tauri-shell/sidecar/server.ts` 挂载全部 13 个 L2 模块 +
+> 白名单 JSON-RPC 分发，stdio 冒烟 7/7）；CDP 真实启动验证 9/9。
 > 另有 updater 加固 `8385aef`：本机注册表 InstallLocation 被写脏（值内嵌引号）导致备份链 CMD 解析炸裂（255），
 > 已加防御性剥引号并实测回归。内核版本决议：**保留 0.1.0-rc.7**（rc.2 声明已还原，勿再升）。
-> 下一步：Wave 1 余量（proc/runtime-paths/file-roots/profile）→ P2 Rust 回环 WS 桥。
+> 下一步：Wave 2 主战场（companion-sync/market/plugin-ops/shortcuts/junction-patrol/client-update/static-preview，
+> ~2000 行，注意 companion-plugins-registry / retired-market-migration / patch-row-heal 等契约测试同步改读 .ts）→
+> P2 Rust 回环 WS 桥（main.rs 改指 server.js 弃 ping.js）。
 
 > 原则：**渐进式、每波全绿、行为零变更**。复用 T1「纯移动」的验证体系（608 测试 + CDP 真实启动），在其上叠加 `tsc --noEmit` 类型门禁。
 
