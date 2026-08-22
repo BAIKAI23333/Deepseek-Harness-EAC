@@ -216,6 +216,56 @@ async fn serve_ws(state: BridgeState, app: tauri::AppHandle) {
     }
 }
 
+/// 退出策略（= main.js getExitAction/askExitAction）：
+/// minimize → 隐藏到托盘；quit → 优雅退出；ask → /exit 选择页（三选 +
+/// 「记住我的选择」，对齐 Electron 的 askExitAction 弹窗）。
+async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
+    use tauri::Manager;
+    let action = sidecar_exit_action(app).await.unwrap_or_else(|| "ask".to_string());
+    match action.as_str() {
+        "minimize" => {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+            }
+        }
+        "quit" => app.exit(0),
+        _ => {
+            if allow_ask {
+                let back = current_web_url().unwrap_or_default();
+                let href = format!(
+                    "http://127.0.0.1:{}/exit?back={}",
+                    WS_PORT,
+                    back.replace(':', "%3A").replace('/', "%2F")
+                );
+                let app2 = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    if let Some(win) = app2.get_webview_window("main") {
+                        let _ = win.show();
+                        if let Ok(parsed) = tauri::Url::parse(&href) {
+                            let _ = win.navigate(parsed);
+                        }
+                    }
+                });
+            } else {
+                // 非用户主动路径（防误触兜底）：隐藏。
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                }
+            }
+        }
+    }
+}
+
+/// 从 sidecar 的 chrome.init 读 exitAction（settings 同源）。
+async fn sidecar_exit_action(_app: &tauri::AppHandle) -> Option<String> {
+    let state = BRIDGE.get_or_init(|| BridgeState {
+        sidecar: Arc::new(AMutex::new(None)),
+    });
+    let sc = state.sidecar.lock().await.clone()?;
+    let r = sc.call("chrome.init", serde_json::json!({})).await.ok()?;
+    r.get("exitAction").and_then(|v| v.as_str()).map(|s| s.to_string())
+}
+
 /// 壳层方法拦截：返回 Some(reply) = 已处理并给出 JSON-RPC 完整回复；
 /// None = 已消费（send 型，无回复）；Err(()) = 非壳层方法 → 转发 sidecar。
 async fn handle_shell_method(
@@ -246,7 +296,16 @@ async fn handle_shell_method(
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.close" => {
-            // P2：关闭 = 隐藏到托盘（P3 接 exitAction 设置与「每次询问」对话框）。
+            // 退出策略（= Electron exitAction）：minimize→隐藏；quit→退出；
+            // ask→导航到 /exit 选择页（三选 + 记住选择，对齐 Electron 弹窗语义）。
+            apply_exit_policy(app, true).await;
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "win.close-force" => {
+            app.exit(0);
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "win.hide" => {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.hide();
             }
@@ -322,6 +381,10 @@ async fn handle_shell_method(
                     if let Some(url) = current_web_url() {
                         open_external(&url);
                     }
+                    Ok(Some(reply(Value::Null)))
+                }
+                "feedback" => {
+                    open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
                     Ok(Some(reply(Value::Null)))
                 }
                 _ => Err(()), // 其余菜单动作（更新/开关/导出/关于…）→ sidecar
@@ -568,26 +631,72 @@ fn died_page(log_path: &str, code: &str) -> String {
     )
 }
 
+/// 退出选择页（= Electron askExitAction 弹窗的三选 + 记住选择）。
+fn exit_page() -> String {
+    format!(
+        "<!doctype html><meta charset=utf-8><title>退出 Deepseek Harness</title>\
+         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
+         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <div style=\"text-align:center;max-width:420px;padding:28px 32px;border:1px solid rgba(255,255,255,.08);\
+         border-radius:16px;background:color-mix(in srgb,#0b1220 92%,white)\">\
+         <div style=\"font-size:19px;font-weight:600;margin-bottom:8px\">退出 Deepseek Harness</div>\
+         <div style=\"font-size:12.5px;color:#8b9ac4;margin-bottom:20px\">后台运行时窗口会隐藏到系统托盘，任务完成后会发通知。</div>\
+         <div style=\"display:flex;flex-direction:column;gap:10px\">\
+         <button data-v=\"minimize\" style=\"padding:10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;\
+           background:rgba(91,140,255,.14);color:#dfe6ff;font-size:13.5px;cursor:pointer\">最小化到后台</button>\
+         <button data-v=\"quit\" style=\"padding:10px;border:1px solid rgba(255,120,133,.25);border-radius:10px;\
+           background:rgba(232,17,35,.10);color:#ffb3ba;font-size:13.5px;cursor:pointer\">退出程序</button>\
+         <button data-v=\"cancel\" style=\"padding:8px;border:none;border-radius:10px;background:transparent;\
+           color:#8b9ac4;font-size:12.5px;cursor:pointer\">取消</button>\
+         </div>\
+         <label style=\"display:flex;align-items:center;justify-content:center;gap:6px;margin-top:16px;\
+           font-size:12px;color:#8b9ac4;cursor:pointer\">\
+           <input type=\"checkbox\" id=\"remember\" /> 记住我的选择，不再询问</label>\
+         </div>\
+         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}\
+         var BACK=new URLSearchParams(location.search).get('back')||'';\
+         document.querySelectorAll('button[data-v]').forEach(function(b){{\
+           b.addEventListener('click',function(){{\
+             var v=b.getAttribute('data-v');\
+             var remember=document.getElementById('remember').checked;\
+             if (v==='cancel') {{ if (BACK) location.replace(BACK); return; }}\
+             var fin=function(){{ window.dshDesktop._call(v==='quit'?'win.close-force':'win.hide',{{}}); }};\
+             if (remember) {{ window.dshDesktop.menu.action('set-exit-action',{{value:v}}).then(fin).catch(fin); }}\
+             else fin();\
+           }});\
+         }});</script></body>",
+        WS_PORT, BRIDGE_JS
+    )
+}
+
 async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
-    // 排空请求头直到空行（避免未读数据导致 RST 抢在响应前）。
+    eprintln!("[http] serve {}", path);
+    // 真正消费请求头（读到空行）：未读数据残留会让连接以 RST 而非 FIN 收尾，
+    // WebView2 视为响应中断并反复重试（/exit 加载卡死的根因）。
     {
-        let mut buf = [0u8; 2048];
+        use tokio::io::AsyncReadExt;
+        let mut consumed = Vec::with_capacity(1024);
+        let mut chunk = [0u8; 1024];
         loop {
-            let n = stream.peek(&mut buf).await?;
+            let n = stream.read(&mut chunk).await?;
             if n == 0 {
                 break;
             }
-            let head = String::from_utf8_lossy(&buf[..n]);
-            if head.contains("\r\n\r\n") {
+            if consumed.len() + n > 64 * 1024 {
+                break; // 头部异常超长，防御性放行
+            }
+            consumed.extend_from_slice(&chunk[..n]);
+            if consumed.windows(4).any(|w| w == b"\r\n\r\n") {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     }
     let (body, ctype) = if path.starts_with("/inject/bridge.js") {
         (BRIDGE_JS.to_string(), "application/javascript")
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
+    } else if path.starts_with("/exit") {
+        (exit_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/died") {
         // /died?code=..&log=..（查询参数由 boot.server-died 处理方拼好）
         let mut code = "unknown".to_string();
@@ -763,6 +872,15 @@ fn main() {
     });
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // 二次启动：聚焦已有主窗（= Electron second-instance 行为）。
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![shell_ping, sidecar_call])
         .setup(move |app| {
             use tauri::Manager;
@@ -866,11 +984,15 @@ fn main() {
                 });
             });
 
-            // 托盘（L1）：显示窗口 / 退出。
+            // 托盘（L1）：对齐 Electron 托盘全项（显示/隐藏、重启服务、反馈、退出）。
             let app_handle = app.handle().clone();
-            let show = tauri::menu::MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+            let show = tauri::menu::MenuItem::with_id(app, "show", "显示 / 隐藏窗口", true, None::<&str>)?;
+            let restart = tauri::menu::MenuItem::with_id(app, "restart", "重启 Web 服务", true, None::<&str>)?;
+            let feedback = tauri::menu::MenuItem::with_id(app, "feedback", "反馈建议", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &quit])?;
+            let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let sep2 = tauri::menu::PredefinedMenuItem::separator(app)?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &sep2, &feedback, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu);
@@ -880,12 +1002,51 @@ fn main() {
             tray.on_menu_event(move |app, event| match event.id.as_ref() {
                 "show" => {
                     if let Some(win) = app.get_webview_window("main") {
-                        let _ = win.show();
-                        let _ = win.set_focus();
+                        if win.is_visible().unwrap_or(true) {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
                     }
+                }
+                "restart" => {
+                    let st = BridgeState {
+                        sidecar: BRIDGE.get_or_init(|| BridgeState {
+                            sidecar: Arc::new(AMutex::new(None)),
+                        })
+                        .sidecar
+                        .clone(),
+                    };
+                    tauri::async_runtime::spawn(async move {
+                        let sc = st.sidecar.lock().await.clone();
+                        if let Some(sc) = sc {
+                            match sc.call("boot.restart", serde_json::json!({})).await {
+                                Ok(r) => println!("[tray] restart: {}", r),
+                                Err(e) => eprintln!("[tray] restart failed: {}", e),
+                            }
+                        }
+                    });
+                }
+                "feedback" => {
+                    open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
                 }
                 "quit" => app_handle.exit(0),
                 _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                // 单击切换窗口可见性（= Electron tray.on('click')）。
+                if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
+                    let app = tray.app_handle().clone();
+                    if let Some(win) = app.get_webview_window("main") {
+                        if win.is_visible().unwrap_or(true) && win.is_focused().unwrap_or(false) {
+                            let _ = win.hide();
+                        } else {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                }
             })
             .build(app)?;
             println!("[shell] tray ready");
@@ -893,11 +1054,15 @@ fn main() {
         })
         .on_window_event(|window, event| {
             match event {
-                // 主窗关闭 = 隐藏到托盘（P3 接 exitAction）；浮窗真关闭。
+                // 主窗关闭 → exitAction 策略（minimize/quit/ask 选择页）；浮窗真关闭。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     if window.label() == "main" {
                         api.prevent_close();
-                        let _ = window.hide();
+                        use tauri::Manager;
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            apply_exit_policy(&app, true).await;
+                        });
                     }
                 }
                 // 最大化状态变化 → win.maximized 通知（桥 onMaximizeChange 消费）。

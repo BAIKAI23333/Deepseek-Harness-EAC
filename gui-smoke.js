@@ -100,13 +100,24 @@ async function listOrphans() {
     await c.ready;
     check('主窗导航到真实 Web UI', true, main.url);
 
-    // 2) 桥 + 玻璃栏
-    const hasBridge = await c.evalJs('typeof window.dshDesktop === "object" && typeof window.dshDesktop.getInfo === "function" && typeof window.dshDesktop.rescue.getState === "function"');
+    // 2) 桥 + 玻璃栏（页内轮询等 DOMContentLoaded —— 导航提交即可见 target）
+    const hasBridge = await c.evalJs(`new Promise(function(res) {
+      var t = setTimeout(function() { res(false); }, 15000);
+      (function chk() {
+        if (typeof window.dshDesktop === 'object' && typeof window.dshDesktop.rescue.getState === 'function') { clearTimeout(t); res(true); }
+        else setTimeout(chk, 200);
+      })();
+    })`);
     check('window.dshDesktop 全量桥注入', hasBridge);
-    const hasBar = await c.evalJs('!!document.getElementById("__dsh_desktop_chrome__")');
-    check('36px 玻璃栏注入', hasBar);
-    const barH = await c.evalJs('document.documentElement.getAttribute("data-dsh-title-bar-height")');
-    check('标题栏高度声明（better-sidebar 依赖）', barH === '36', String(barH));
+    const chromeReady = await c.evalJs(`new Promise(function(res) {
+      var t = setTimeout(function() { res(null); }, 15000);
+      (function chk() {
+        var bar = document.getElementById('__dsh_desktop_chrome__');
+        if (bar) { clearTimeout(t); res(document.documentElement.getAttribute('data-dsh-title-bar-height')); }
+        else setTimeout(chk, 200);
+      })();
+    })`);
+    check('36px 玻璃栏注入', chromeReady === '36', 'height=' + chromeReady);
 
     // 3) getInfo（sidecar chrome.init 真实数据）
     const info = await c.evalJs('window.dshDesktop.getInfo()');
@@ -125,6 +136,30 @@ async function listOrphans() {
     const wsOpen = await c.evalJs('!!window.dshDesktop._call');
     check('桥 WS 通道可用', wsOpen);
 
+    // 5b) P3：余额推送（refreshBalance → dsh.balance 通知 → window 事件）
+    const balPush = await c.evalJs(`(async function() {
+      var p = new Promise(function(resolve) {
+        var t = setTimeout(function() { resolve(null); }, 20000);
+        window.addEventListener('dsh-balance-changed', function(e) { clearTimeout(t); resolve(e.detail); });
+      });
+      await window.dshDesktop.refreshBalance();
+      return await p;
+    })()`);
+    check('余额推送 dsh-balance-changed（15min 轮询已启动）', !!(balPush && balPush.prices), balPush ? 'period=' + (balPush.pricing && balPush.pricing.period) : 'null');
+
+    // 5c) P3：菜单开关（真实 settings 写 + 状态回显）
+    const toggled = await c.evalJs('window.dshDesktop.menu.action("toggle-notify")');
+    const toggled2 = await c.evalJs('window.dshDesktop.menu.action("toggle-notify")');
+    check('菜单开关往返（settings 持久化）', !!(toggled && typeof toggled.notifyOnTurnEnd === 'boolean' && toggled2), JSON.stringify(toggled));
+
+    // 5d) P3：剪贴板（PowerShell Set-Clipboard）
+    const clip = await c.evalJs('window.dshDesktop.copyText("dsh-eac-smoke-42")');
+    check('copyText（PowerShell 剪贴板）', !!(clip && clip.ok), JSON.stringify(clip));
+
+    // 5e) P3：插件管理列表（pluginManagerCollect）
+    const plist = await c.evalJs('window.dshDesktop.pluginManager.list()');
+    check('pluginManager.list（配套插件清单）', !!(plist && Array.isArray(plist.list) && plist.list.length >= 20), 'count=' + (plist && plist.list && plist.list.length));
+
     // 6) 浮窗（硬门槛①：第二 WebviewWindow + per-webview data_directory）。
     //    独立 data_directory = 独立浏览器进程，不能共用 CDP 端口 —— 用生产信号
     //    路径验证：浮窗桥就绪后经 WS 广播 float.ready，主窗 _onNotify 可观测。
@@ -141,8 +176,42 @@ async function listOrphans() {
     const mainBarStill = await c.evalJs('!!document.getElementById("__dsh_desktop_chrome__")');
     check('主窗仍为 36px 完整栏（浮窗模式未串扰）', mainBarStill);
 
-    // 7) 菜单壳动作：quit（Rust 拦截 → app.exit → 优雅退出链）
-    await c.evalJs('window.dshDesktop.menu.action("quit")');
+    // 7) 退出策略页（exitAction=ask 默认）：win.close → /exit 选择页 → 取消回跳。
+    //    导航会销毁 CDP 执行上下文 —— 每次导航后重取 target 重建会话。
+    await c.evalJs('window.dshDesktop.windowControls.close()');
+    await sleep(2200);
+    c.close();
+    const exitTarget = await waitForTarget((t) => t.type === 'page' && t.url.includes(`:19873/exit`), 15000).catch(() => null);
+    let onExitPage = false;
+    if (exitTarget) {
+      const ce = cdp(exitTarget.webSocketDebuggerUrl);
+      await ce.ready;
+      onExitPage = await ce.evalJs(`new Promise(function(res) {
+        var t = setTimeout(function() { res(false); }, 12000);
+        (function chk() {
+          if (document.querySelector('button[data-v=quit]') && document.getElementById('remember')) { clearTimeout(t); res(true); }
+          else setTimeout(chk, 250);
+        })();
+      })`).catch(() => false);
+      check('win.close → /exit 选择页（ask 策略 + 记住选择）', onExitPage === true, exitTarget.url.slice(0, 90));
+      if (onExitPage) {
+        await ce.evalJs(`document.querySelector('button[data-v=cancel]').click(); 0`).catch(() => {});
+        await sleep(2500);
+        ce.close();
+        const backTarget = await waitForTarget((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(t.url) && !t.url.includes(`:${CDP_PORT}`) && !t.url.includes(':19873'), 15000).catch(() => null);
+        check('取消 → 返回 Web UI', !!backTarget, backTarget ? backTarget.url : 'no target');
+      }
+    } else {
+      check('win.close → /exit 选择页（ask 策略）', false, 'exit target not found');
+    }
+    // 回到 Web UI 后重建主会话
+    const main2 = await waitForTarget((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(t.url) && !t.url.includes(`:${CDP_PORT}`) && !t.url.includes(':19873'), 15000).catch(() => null);
+    if (!main2) { check('返回 Web UI 会话重建', false, 'no main target'); throw new Error('main target lost after cancel'); }
+    const c2 = cdp(main2.webSocketDebuggerUrl);
+    await c2.ready;
+
+    // 7b) 菜单壳动作：quit（Rust 拦截 → app.exit → 优雅退出链）
+    await c2.evalJs('window.dshDesktop.menu.action("quit")');
     const exited = await new Promise((res) => {
       const t0 = Date.now();
       const tick = () => (shell.exitCode !== null ? res(true) : Date.now() - t0 > 20000 ? res(false) : setTimeout(tick, 500));
@@ -156,6 +225,7 @@ async function listOrphans() {
     check('零孤儿进程（sidecar/dsh web 均回收）', orphans === '', orphans || '(none)');
 
     c.close();
+    c2.close();
   } catch (e) {
     check('GUI 冒烟执行流', false, e.message);
     try { shell.kill(); } catch {}

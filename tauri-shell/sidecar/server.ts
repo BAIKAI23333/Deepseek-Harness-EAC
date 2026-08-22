@@ -11,6 +11,7 @@
 import path = require('node:path');
 import os = require('node:os');
 import fs = require('node:fs');
+import cp = require('node:child_process');
 import readline = require('node:readline');
 
 const DSH_DESKTOP_ROOT = path.resolve(__dirname, '..', '..', 'dsh-desktop');
@@ -175,6 +176,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     dshHome,
     version: pkgVersion,
     modules: MOUNTED,
+    balance: balanceCache,
   }),
   'profile.name': (): RpcResult => ({ name: desktopProfileFn() }),
   'profile.dir': (): RpcResult => ({ dir: (profileMod.desktopProfileDir as () => string)() }),
@@ -200,6 +202,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     }
     const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
     notify('boot.web-ready', r);
+    startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
     return r;
   },
   'boot.stop': async (): Promise<RpcResult> => {
@@ -269,17 +272,388 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
 
 // P3 渐进收编：尚未在 sidecar 落地的桥方法返回 null（桥/插件侧按「无数据」
 // 降级，与桥断开时行为一致，不炸页面）。每收编一个真实现就从这里删除。
+// 剩余：向导窗口/恢复页/救援链（P3 壳层 GUI 能力）、更新检查与日志导出（P4）。
 const PENDING_BRIDGE_METHODS = [
-  'menu.action', 'balance.refresh', 'balance.prices-get', 'balance.prices-set', 'balance.prices-reset',
-  'balance.models', 'guard.action', 'wizard.open', 'plugins.list', 'plugins.set-enabled',
-  'plugins.set-removed', 'plugins.updates', 'plugins.update', 'plugins.auto-update', 'image-paste.save',
-  'files.revert', 'files.open', 'recovery.state', 'recovery.reload', 'recovery.restart',
+  'wizard.open', 'recovery.state', 'recovery.reload', 'recovery.restart',
   'recovery.export-logs', 'rescue.state', 'rescue.confirm', 'rescue.diagnose', 'rescue.apply',
   'rescue.safe-mode', 'rescue.retry', 'rescue.auto-repair',
 ];
 for (const m of PENDING_BRIDGE_METHODS) {
   methods[m] = (): null => null;
 }
+
+// ---- 真实现面（P3：对齐 main.js 各 ipcMain.handle 语义，去 GUI 化） --------
+const balance = require(path.join(DSH_DESKTOP_ROOT, 'balance.js')) as {
+  queryBalance(home: string): Promise<Record<string, unknown> & { prices?: Record<string, unknown> }>;
+  readActiveModel(home: string): string;
+  DEFAULT_PRICES: Record<string, unknown>;
+  FALLBACK_PRICES: Record<string, unknown>;
+  computePricingState(peakWindows?: unknown): { period: string } & Record<string, unknown>;
+  tierPrices(base: unknown, override: unknown, tier: string): Record<string, number>;
+  sanitizePrices(prices: unknown): { peak: Record<string, number>; offpeak: Record<string, number> };
+};
+const pluginUpdater = require(path.join(DSH_DESKTOP_ROOT, 'plugin-updater.js')) as Record<string, (...a: unknown[]) => unknown>;
+
+function home(): string { return dshHome; }
+
+let balanceTimer: NodeJS.Timeout | null = null;
+let balanceCache: unknown = null;
+
+async function refreshBalance(): Promise<unknown> {
+  const s = loadSettings() as { pricing?: { peakWindows?: unknown }; balancePrices?: Record<string, unknown> };
+  let result: Record<string, unknown> & { prices?: Record<string, unknown> };
+  try {
+    result = await balance.queryBalance(home()) as typeof result;
+  } catch (e) {
+    result = { ok: false, error: String(((e as Error).message) || e), balances: [] };
+  }
+  const model = balance.readActiveModel(home()) || 'deepseek-v4-pro';
+  const table = result.prices || balance.DEFAULT_PRICES;
+  const pricing = balance.computePricingState(s.pricing && s.pricing.peakWindows);
+  const base = (table as Record<string, unknown>)[model] || balance.FALLBACK_PRICES;
+  const ov = (s.balancePrices && s.balancePrices[model]) || {};
+  const tier = (src: string): Record<string, number> => balance.tierPrices(base, ov, src);
+  result.prices = tier(pricing.period) as Record<string, unknown>;
+  result.pricing = { ...pricing, prices: { peak: tier('peak'), offpeak: tier('offpeak') } };
+  balanceCache = result;
+  // 推送（= Electron 的 webContents.send('dsh:balance')；桥转发成 window 事件）。
+  notify('dsh.balance', result);
+  return result;
+}
+
+function startBalanceLoop(): void {
+  if (balanceTimer) return;
+  void refreshBalance().catch(() => {});
+  balanceTimer = setInterval(() => { void refreshBalance().catch(() => {}); }, 15 * 60 * 1000);
+  if (balanceTimer.unref) balanceTimer.unref();
+}
+
+// 剪贴板（PowerShell Set-Clipboard；Electron clipboard 的无 GUI 等价物）。
+function writeClipboardText(text: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ps = cp.spawn('powershell', ['-NoProfile', '-Command', '$input | Set-Clipboard'], { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
+    ps.on('error', () => resolve(false));
+    ps.on('exit', (code) => resolve(code === 0));
+    ps.stdin.end(text, 'utf8');
+  });
+}
+
+// 系统默认程序打开文件（= shell.openPath；explorer 解析关联）。
+function openPathNative(p: string): Promise<string> {
+  return new Promise((resolve) => {
+    cp.exec(`start "" "${p.replace(/"/g, '')}"`, { windowsHide: true }, (err) => resolve(err ? String(err.message) : ''));
+  });
+}
+
+const batch: Record<string, (p: RpcParams) => unknown> = {
+  'balance.refresh': async (): Promise<unknown> => refreshBalance(),
+  'balance.prices-get': (p): Record<string, unknown> => {
+    const model = String((p && p.model) || '');
+    const s = loadSettings() as { balancePrices?: Record<string, unknown> };
+    const defaults = (balance.DEFAULT_PRICES as Record<string, unknown>)[model] || balance.FALLBACK_PRICES;
+    const current = (s.balancePrices && s.balancePrices[model]) || null;
+    return { ok: true, model, defaults, current };
+  },
+  'balance.prices-set': async (p): Promise<Record<string, unknown>> => {
+    const m = String((p && p.model) || '');
+    if (!m) return { ok: false, error: '模型名称不能为空' };
+    try {
+      const cleaned = balance.sanitizePrices(p && p.prices);
+      const s = loadSettings();
+      if (!s.balancePrices || typeof s.balancePrices !== 'object') s.balancePrices = {};
+      (s.balancePrices as Record<string, unknown>)[m] = cleaned;
+      saveSettings(s);
+      await refreshBalance();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'balance.prices-reset': async (p): Promise<Record<string, unknown>> => {
+    const m = String((p && p.model) || '');
+    try {
+      const s = loadSettings() as { balancePrices?: Record<string, unknown> };
+      if (s.balancePrices && s.balancePrices[m]) {
+        delete s.balancePrices[m];
+        saveSettings(s as Record<string, unknown>);
+      }
+      await refreshBalance();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'balance.models': (): Record<string, unknown> => {
+    // 与 main.js dsh:balance-models 同款轻量 YAML 扫描（llm-pi-ai.providers.models）。
+    try {
+      const settingsPath = path.join(home(), 'settings.yaml');
+      if (!fs.existsSync(settingsPath)) return { ok: true, models: [] };
+      const text = fs.readFileSync(settingsPath, 'utf8');
+      const lines = text.split(/\r?\n/);
+      const models: { id: string; name: string; provider: string }[] = [];
+      let inProviders = false;
+      let providerIndent = -1;
+      let currentProvider = '';
+      let inModels = false;
+      let modelsIndent = -1;
+      let currentModel: { id: string; name: string; provider: string } | null = null;
+      for (const line of lines) {
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+        const indent = line.search(/\S/);
+        if (/^llm-pi-ai\s*:/i.test(line)) { inProviders = true; providerIndent = -1; continue; }
+        if (inProviders && /^\s+providers\s*:/i.test(line)) { providerIndent = indent; continue; }
+        if (providerIndent >= 0) {
+          if (indent <= providerIndent && line.trim()) {
+            if (/^[a-z]/i.test(line.trim())) break;
+            continue;
+          }
+          const providerMatch = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([a-z][\\w-]*)\\s*:`));
+          if (providerMatch && !inModels && !['models', 'baseurl', 'apikeyenv', 'displayname', 'api'].includes(providerMatch[1].toLowerCase())) {
+            currentProvider = providerMatch[1];
+            continue;
+          }
+          if (/^\s+models\s*:/i.test(line) && indent > providerIndent) { inModels = true; modelsIndent = indent; continue; }
+          if (inModels) {
+            if (indent <= modelsIndent && line.trim()) {
+              inModels = false;
+              currentModel = null;
+              const reProvider = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([\\w][\\w-]*)\\s*:`));
+              if (reProvider) currentProvider = reProvider[1];
+              continue;
+            }
+            const modelMatch = line.match(/^\s+-\s+id\s*:\s*(\S+)/);
+            if (modelMatch) {
+              const modelId = modelMatch[1].replace(/^["']|["']$/g, '');
+              currentModel = { id: modelId, name: modelId, provider: currentProvider };
+              models.push(currentModel);
+              continue;
+            }
+            const nameMatch = line.match(/^\s+name\s*:\s*(.+)/);
+            if (nameMatch && currentModel) {
+              currentModel.name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+              continue;
+            }
+          }
+        }
+      }
+      const seen = new Set<string>();
+      const uniqueModels = models.filter((m) => (seen.has(m.id) ? false : (seen.add(m.id), true)));
+      return { ok: true, models: uniqueModels };
+    } catch (e) {
+      return { ok: true, models: [] };
+    }
+  },
+  'clipboard.write-text': async (p): Promise<Record<string, unknown>> => {
+    const text = (p && p.text) as string;
+    if (typeof text !== 'string' || !text || text.length > 2048) return { ok: false };
+    return { ok: await writeClipboardText(text) };
+  },
+  'image-paste.save': (p): Record<string, unknown> => {
+    try {
+      return (pluginOpsMod.imagePasteSave as (d: string, n: string) => Record<string, unknown>)(String((p && p.dataUrl) || ''), String((p && p.name) || '粘贴图片'));
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'files.revert': (p): Record<string, unknown> => {
+    const changes = (p && p.changes) as Array<{ path?: string; oldText?: string; newText?: string }>;
+    if (!Array.isArray(changes) || changes.length === 0 || changes.length > 300) return { results: [] };
+    const results: Record<string, unknown>[] = [];
+    for (const c of changes) {
+      const fp = String((c && c.path) || '');
+      const oldText = String((c && c.oldText) ?? '');
+      const newText = String((c && c.newText) ?? '');
+      if (!path.isAbsolute(fp) || oldText.length > 400000 || newText.length > 400000) {
+        results.push({ path: fp, status: 'invalid' });
+        continue;
+      }
+      if (!(fileRootsMod.isUnderFileRoots as (x: string) => boolean)(fp)) {
+        results.push({ path: fp, status: 'forbidden' });
+        continue;
+      }
+      try {
+        const exists = fs.existsSync(fp);
+        const content = exists ? fs.readFileSync(fp, 'utf8') : null;
+        if (oldText === '' && newText !== '') {
+          if (content !== null && content === newText) { fs.rmSync(fp); results.push({ path: fp, status: 'reverted' }); }
+          else results.push({ path: fp, status: content === null ? 'missing' : 'conflict' });
+        } else if (newText === '' && oldText !== '') {
+          if (content === null) { fs.writeFileSync(fp, oldText, 'utf8'); results.push({ path: fp, status: 'reverted' }); }
+          else results.push({ path: fp, status: 'conflict' });
+        } else {
+          if (content !== null && content.includes(newText)) {
+            fs.writeFileSync(fp, content.replace(newText, oldText), 'utf8');
+            results.push({ path: fp, status: 'reverted' });
+          } else if (content !== null && content === oldText) {
+            results.push({ path: fp, status: 'skipped' });
+          } else {
+            results.push({ path: fp, status: content === null ? 'missing' : 'conflict' });
+          }
+        }
+      } catch (err) {
+        results.push({ path: fp, status: 'failed', error: String(((err as Error).message) || err) });
+      }
+    }
+    log('file-revert', JSON.stringify(results.slice(0, 20)));
+    return { results };
+  },
+  'files.open': async (p): Promise<Record<string, unknown>> => {
+    const fp = (p && p.path) as string;
+    if (typeof fp !== 'string' || !path.isAbsolute(fp)) return { ok: false, error: 'path must be absolute' };
+    const skillsRoots = [
+      path.join(home(), 'skills'),
+      path.join(process.env.DSH_AGENTS_HOME || path.join(os.homedir(), '.agents'), 'skills'),
+    ];
+    const underSkillsRoot = skillsRoots.some((r) => {
+      const rp = path.resolve(r);
+      return fp === rp || fp.startsWith(rp + path.sep);
+    });
+    if (!underSkillsRoot && !(fileRootsMod.isUnderFileRoots as (x: string) => boolean)(fp)) {
+      return { ok: false, error: 'path outside session workspace' };
+    }
+    if ((fileRootsMod.DANGEROUS_EXT as RegExp).test(fp)) {
+      return { ok: false, error: 'executable files are not openable from the file view' };
+    }
+    try {
+      if (!fs.existsSync(fp)) return { ok: false, error: 'file not found' };
+      const msg = await openPathNative(fp);
+      if (msg) return { ok: false, error: msg };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'plugins.list': (): Record<string, unknown> => {
+    return { list: (pluginOpsMod.pluginManagerCollect as () => unknown[])() };
+  },
+  'plugins.set-enabled': (p): Record<string, unknown> => {
+    return (pluginOpsMod.pluginManagerSetEnabled as (id: string, en: boolean) => Record<string, unknown>)(String((p && p.id) || ''), !!(p && p.enabled));
+  },
+  'plugins.set-removed': (p): Record<string, unknown> => {
+    return (pluginOpsMod.pluginManagerSetRemoved as (id: string, rm: boolean) => Record<string, unknown>)(String((p && p.id) || ''), !!(p && p.removed));
+  },
+  'plugins.updates': async (p): Promise<Record<string, unknown>> => {
+    try {
+      const ctx = (pathsMod.updCtx as () => unknown)();
+      const sources = (companionSyncMod.pluginUpdateSources as () => Array<{ id: string }>)();
+      const list = await (pluginUpdater.checkPluginUpdates as (c: unknown, s: unknown[], o: unknown) => Promise<unknown[]>)(ctx, sources, {
+        force: !!(p && p.force),
+        profileDirP: (profileMod.desktopProfileDir as () => string)(),
+      });
+      return {
+        list,
+        autoUpdate: (pluginUpdater.isAutoUpdateEnabled as (c: unknown) => boolean)(ctx),
+        checkedAt: (loadSettings() as { pluginUpdateCheckedAt?: string }).pluginUpdateCheckedAt || null,
+      };
+    } catch (e) {
+      log('plugin-update', '插件更新清单加载失败: ' + String(((e as Error).message) || e));
+      return { list: [], autoUpdate: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'plugins.update': async (p): Promise<Record<string, unknown>> => {
+    const sources = (companionSyncMod.pluginUpdateSources as () => Array<{ id: string }>)();
+    const source = sources.find((s) => s.id === String(p && p.id));
+    if (!source) return { ok: false, error: '未知或不可更新的内置插件: ' + String(p && p.id) };
+    try {
+      const res = await (pluginUpdater.applyBuiltinPluginUpdate as (c: unknown, s: unknown, o: unknown) => Promise<Record<string, unknown>>)((pathsMod.updCtx as () => unknown)(), source, {
+        profileDirP: (profileMod.desktopProfileDir as () => string)(),
+        guard: (guardBoxMod.ensureGuard as () => unknown)(),
+        copyIntoProfile: (overlayDir: string, name: string) => (companionSyncMod.copyPluginPackage as (d: string, o: string, n: string) => void)((profileMod.desktopProfileDir as () => string)(), overlayDir, name),
+      });
+      if (!res.ok) return res;
+      if (res.noop) return { ok: true, noop: true, current: res.current, latest: res.latest };
+      log('plugin-update', '手动更新内置插件 ' + String(p && p.id) + ' → ' + res.latest + (res.restartRequired ? '（重启服务生效）' : ''));
+      return { ok: true, version: res.latest, restartRequired: res.restartRequired };
+    } catch (e) {
+      log('plugin-update', '更新插件 ' + String(p && p.id) + ' 失败: ' + String(((e as Error).message) || e));
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'plugins.auto-update': (p): Record<string, unknown> => {
+    try {
+      const s = loadSettings();
+      s.pluginAutoUpdate = !!(p && p.enabled);
+      saveSettings(s);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'guard.action': (p): Record<string, unknown> => {
+    const action = String((p && p.action) || '');
+    const value = p && p.value;
+    const g = (guardBoxMod.ensureGuard as () => Record<string, (...a: unknown[]) => unknown>)();
+    switch (action) {
+      case 'status': {
+        const st = loadSettings() as { shareWebProfile?: boolean };
+        return {
+          ok: true,
+          profile: desktopProfileFn(),
+          shareWebProfile: st.shareWebProfile === true,
+          snapshots: (g.listSnapshots as () => unknown[])().slice(0, 20),
+          incidents: (g.listIncidents as () => unknown[])().slice(0, 20),
+          lastGood: (g.lastGoodSnapshot as () => unknown)(),
+        };
+      }
+      case 'snapshot': {
+        const s = (g.snapshot as (r: string) => unknown)(String(value || 'manual'));
+        return { ok: !!s, snapshot: s };
+      }
+      case 'restore': {
+        const running = (bootMod.state as () => { running: boolean })().running;
+        if (running) {
+          return { ok: false, error: 'service-running', hint: '请先重启 Web 服务（或让回滚在重启间隙执行）' };
+        }
+        return (g.restore as (v: unknown) => Record<string, unknown>)(value) as Record<string, unknown>;
+      }
+      case 'check':
+        return { ok: true, report: (g.healthCheck as () => unknown)() };
+      case 'repair': {
+        const r = (g.repair as () => { applied: unknown })();
+        return { ok: true, applied: r.applied };
+      }
+      case 'incident':
+        return (g.readIncident as (v: unknown) => Record<string, unknown>)(value) as Record<string, unknown>;
+      case 'resolve-incident':
+        return (g.resolveIncident as (v: unknown) => Record<string, unknown>)(value) as Record<string, unknown>;
+      default:
+        return { ok: false, error: 'unknown action' };
+    }
+  },
+  'menu.action': async (p): Promise<Record<string, unknown> | null> => {
+    const action = String((p && p.action) || '');
+    const s = loadSettings() as { notifyOnTurnEnd?: boolean; shortcutPolicy?: string; exitAction?: string; closeToTray?: boolean };
+    switch (action) {
+      case 'toggle-notify': {
+        s.notifyOnTurnEnd = s.notifyOnTurnEnd === false;
+        saveSettings(s as Record<string, unknown>);
+        return { notifyOnTurnEnd: s.notifyOnTurnEnd, exitAction: s.exitAction || 'ask' };
+      }
+      case 'toggle-shortcut-policy': {
+        s.shortcutPolicy = s.shortcutPolicy === 'never' ? 'auto' : 'never';
+        saveSettings(s as Record<string, unknown>);
+        return { shortcutPolicy: s.shortcutPolicy, exitAction: s.exitAction || 'ask' };
+      }
+      case 'set-exit-action': {
+        const v = String((p && p.value) || '');
+        if (v !== 'ask' && v !== 'minimize' && v !== 'quit') return null;
+        s.exitAction = v;
+        s.closeToTray = v !== 'quit'; // 同步旧字段，降级回旧版时行为不回退
+        saveSettings(s as Record<string, unknown>);
+        return { notifyOnTurnEnd: s.notifyOnTurnEnd !== false, closeToTray: s.closeToTray !== false, exitAction: v };
+      }
+      case 'restart-service': {
+        const r = await (methods['boot.restart'] as (p2?: unknown) => Promise<Record<string, unknown>>)({} as Record<string, unknown>);
+        return r;
+      }
+      // check-agent-update / check-client-update / export-logs / about / feedback：
+      // P4 更新链与 GUI 对话框就位前的优雅占位（菜单静默关闭，无报错）。
+      default:
+        return null;
+    }
+  },
+};
+Object.assign(methods, batch);
 
 function respond(msg: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(msg) + '\n');
