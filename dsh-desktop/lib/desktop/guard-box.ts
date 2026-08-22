@@ -11,7 +11,7 @@ import os = require('node:os');
 // plugin-guard.js 尚未类型化（Wave 3 收编），先以窄签名消费；届时改为
 // import { createGuard } 的具名导入并获得真实返回类型。
 const { createGuard } = require('../../plugin-guard') as {
-  createGuard: (opts: GuardDeps) => unknown;
+  createGuard: (opts: GuardDeps) => GuardInstance;
 };
 
 /** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
@@ -29,15 +29,22 @@ interface GuardDeps {
   log(tag: string, msg: string): void;
 }
 
+/** 保护中心实例的已消费面（随 Wave 2/3 消费方扩展）。 */
+export interface GuardInstance {
+  snapshot(label: string): boolean;
+  junctionFindings(): unknown[];
+  repairJunctions(): { repaired: string[] };
+}
+
 let ctx!: GuardBoxCtx;
 
 export function init(d: GuardBoxCtx): void {
   ctx = d;
 }
 
-let guardInstance: unknown = null;
+let guardInstance: GuardInstance | null = null;
 
-export function ensureGuard(): unknown {
+export function ensureGuard(): GuardInstance {
   if (!guardInstance) {
     guardInstance = createGuard({
       getHome: () => ctx.getDshHome() || path.join(os.homedir(), '.dsh'),
