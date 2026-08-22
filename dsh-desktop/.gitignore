@@ -37,3 +37,4 @@ build/*
 /lib/desktop/junction-patrol.js
 /lib/desktop/shortcuts.js
 /lib/desktop/static-preview.js
+/lib/desktop/companion-sync.js

@@ -7,7 +7,7 @@ import { removePluginFromPatch } from '../scripts/plugin-manager-patch.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // ADR 0002：RETIRED_BUILTIN_PLUGINS 与 syncCompanionPlugins 已迁至 L2 模块。
-const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.js'), 'utf8');
+const main = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
 
 const retiredMarkets = [
   { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },

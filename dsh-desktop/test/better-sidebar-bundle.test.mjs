@@ -75,7 +75,7 @@ test('after-pack injects closure-unreachable deps into the bundled dsh package',
 
 test('COMPANION_PLUGINS registers dsh-better-sidebar', () => {
   // ADR 0002：注册表迁至 lib/desktop/companion-sync.js。
-  const mainSrc = readFileSync(join(ROOT, 'lib', 'desktop', 'companion-sync.js'), 'utf8');
+  const mainSrc = readFileSync(join(ROOT, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
   assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(mainSrc),
     'COMPANION_PLUGINS entry missing');
 });

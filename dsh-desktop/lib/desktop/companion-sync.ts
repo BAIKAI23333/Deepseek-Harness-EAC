@@ -1,36 +1,84 @@
 'use strict';
 
-// 配套 dsh 插件同步（自 main.js 原样迁出，ADR 0002 L2 业务服务层）：
-// 注入 web profile：余额小部件 + 文件更改追踪/还原 + 皮肤 + 内置插件治理。
+// 配套 dsh 插件同步（ADR 0002 L2 业务服务层；Wave 2 收官自 companion-sync.js
+// 类型化迁出，行为零变更）：注入 web profile：余额小部件 + 文件更改追踪/
+// 还原 + 皮肤 + 内置插件治理。
 
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
-const updater = require('../../updater');
-const pluginUpdater = require('../../plugin-updater');
-const { healProfileModuleShadowing } = require('../../profile-module-heal');
+import path = require('node:path');
+import fs = require('node:fs');
+import os = require('node:os');
+import { updCtx, APP_ROOT } from './runtime-paths';
+import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './profile';
+import { ensureGuard } from './guard-box';
+import { applySessionManageFix } from './runtime-patches';
+// 未类型化依赖（Wave 3 收编），先以窄签名消费。
+const updater = require('../../updater') as {
+  loadSettings(c: ReturnType<typeof updCtx>): { removedPlugins?: unknown };
+  saveSettings(c: ReturnType<typeof updCtx>, s: unknown): void;
+  compareVersions(a: string, b: string): number;
+};
+const pluginUpdater = require('../../plugin-updater') as {
+  versionOfDir(dir: string): string | null;
+};
+const { healProfileModuleShadowing } = require('../../profile-module-heal') as {
+  healProfileModuleShadowing(home: string, profile: string): string[];
+};
 const {
   configLinesFor,
   healSoulMdPatchRow,
   healRowConfig,
   removeBundledRowDuplicates,
   collectBundleEntryIds,
-} = require('../../patch-row-heal');
-const { syncBundledPresets, ensureDefaultAgentPreset } = require('../../preset-sync');
-const { migrateManagedCompactPresets } = require('../../compact-preset-migrate');
-const { hasEntryId, removePluginFromPatch } = require('../../scripts/plugin-manager-patch');
-const { APP_ROOT, updCtx } = require('./runtime-paths');
-const { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } = require('./profile');
-const { ensureGuard } = require('./guard-box');
-const { applySessionManageFix } = require('./runtime-patches');
+} = require('../../patch-row-heal') as {
+  configLinesFor(config: unknown): string;
+  healSoulMdPatchRow(patch: string): { healed: unknown[]; patch: string };
+  healRowConfig(patch: string, id: string, config: unknown): { healed: unknown[]; patch: string };
+  removeBundledRowDuplicates(patch: string, rowIds: Record<string, string>, bundled: unknown[], declared: Set<string>): { removed: string[]; patch: string };
+  collectBundleEntryIds(bundled: unknown[], nodeModulesDir: string): Set<string>;
+};
+const { syncBundledPresets, ensureDefaultAgentPreset } = require('../../preset-sync') as {
+  syncBundledPresets(src: string, dst: string, log: (m: string) => void): { installed: string[] };
+  ensureDefaultAgentPreset(home: string, name: string, log: (m: string) => void): string;
+};
+const { migrateManagedCompactPresets } = require('../../compact-preset-migrate') as {
+  migrateManagedCompactPresets(dir: string, log: (m: string) => void): { status: string; file: string }[];
+};
+const { hasEntryId, removePluginFromPatch } = require('../../scripts/plugin-manager-patch') as {
+  hasEntryId(patch: string, id: string): boolean;
+  removePluginFromPatch(text: string, id: string): string;
+};
 
 const IS_WIN = process.platform === 'win32';
 
-// 壳环境注入：notify 由宿主提供系统通知（同 junction-patrol 约定）。
-let ctx = {};
-function init(d) { ctx = d || {}; }
+/** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
+export interface CompanionSyncCtx {
+  log(tag: string, msg: string): void;
+  getDshHome(): string | null;
+  getUserDataDir(): string;
+  applyLegacySkinChoice(): void;
+  showMainWindow(): void;
+  notify(n: { title: string; body: string; icon?: string; onClick?: () => void }): void;
+}
 
-const COMPANION_PLUGINS = [
+let ctx!: CompanionSyncCtx;
+export function init(d: CompanionSyncCtx): void { ctx = d || ({} as CompanionSyncCtx); }
+
+interface CompanionPluginDef {
+  id: string;
+  name: string;
+  dir?: string;
+  disabled?: boolean;
+  config?: unknown;
+}
+
+interface PendingRow {
+  id: string;
+  name: string;
+  disabled: boolean;
+  config?: unknown;
+}
+
+export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'balance', name: '@deepseek-ai/dsh-balance' },
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
@@ -170,7 +218,7 @@ const COMPANION_PLUGINS = [
 // dsh-balance / dsh-terminal）绝不登记。
 // 运行时 npm 404（未上架/改名）优雅降级为「无上游」，绝不阻塞。
 // ---------------------------------------------------------------------------
-const PLUGIN_UPDATE_SOURCES = {
+export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: string }> = {
   'picturereader': { npm: 'picturereader' },
   'soul-md': { npm: 'dsh-soul-md' },
   'dsh-pet': { npm: 'dsh-pet' },
@@ -190,29 +238,29 @@ const PLUGIN_UPDATE_SOURCES = {
 // syncCompanionPlugins 共用，故置于本模块（打破循环依赖）。
 // ---------------------------------------------------------------------------
 
-function removedPluginIds() {
+export function removedPluginIds(): Set<string> {
   try {
     const s = updater.loadSettings(updCtx());
-    return new Set(Array.isArray(s.removedPlugins) ? s.removedPlugins : []);
+    return new Set(Array.isArray(s.removedPlugins) ? s.removedPlugins as string[] : []);
   } catch { return new Set(); }
 }
 
-function saveRemovedPluginIds(ids) {
+export function saveRemovedPluginIds(ids: Set<string>): void {
   const c = updCtx();
-  const s = updater.loadSettings(c);
+  const s = updater.loadSettings(c) as Record<string, unknown>;
   s.removedPlugins = Array.from(ids);
   updater.saveSettings(c, s);
 }
 
 /** 把内置插件表 + 更新源注册表合并成 plugin-updater 的 sources 输入。 */
-function pluginUpdateSources() {
+export function pluginUpdateSources(): { id: string; name: string; assetsDir: string; update: { npm?: string; github?: string } }[] {
   const removed = removedPluginIds();
-  const out = [];
+  const out: { id: string; name: string; assetsDir: string; update: { npm?: string; github?: string } }[] = [];
   for (const p of COMPANION_PLUGINS) {
     const update = PLUGIN_UPDATE_SOURCES[p.id];
     if (!update) continue;
     if (removed.has(p.id)) continue;
-    const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() : p.name);
+    const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() as string : p.name);
     const assetsDir = path.join(APP_ROOT, 'assets', 'plugins', dirName);
     if (!fs.existsSync(path.join(assetsDir, 'package.json'))) continue;
     out.push({ id: p.id, name: p.name, assetsDir, update });
@@ -221,7 +269,7 @@ function pluginUpdateSources() {
 }
 
 /** 内置插件当前生效的源目录：覆盖层（已更新版本）优先，资产版本回退。 */
-function builtinPluginSourceDir(dirName) {
+export function builtinPluginSourceDir(dirName: string): string {
   const assets = path.join(APP_ROOT, 'assets', 'plugins', dirName);
   const overlay = path.join(ctx.getUserDataDir(), 'builtin-plugin-updates', dirName);
   if (!fs.existsSync(path.join(overlay, 'package.json'))) return assets;
@@ -236,9 +284,9 @@ function builtinPluginSourceDir(dirName) {
 // 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
 // （package.json + lib/ + skin.json + LICENSE/NOTICE），随桌面端分发；
 // 默认全部以 disabled: true 注册（不启用任何皮肤），由「设置 → 皮肤」切换。
-const SKINS_DIR = path.join(APP_ROOT, 'assets', 'skins');
+export const SKINS_DIR = path.join(APP_ROOT, 'assets', 'skins');
 
-function readJsonFile(file) {
+export function readJsonFile(file: string): Record<string, unknown> | null {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
 }
 
@@ -249,18 +297,21 @@ function readJsonFile(file) {
 // 旧逻辑每次启动全量重拷（dsh-pet 15MB、dsh-dafeiyu ~58MB 资产，拖慢启动）。
 // 戳记文件放在包目录内（.eac-copy-stamp.json），pnpm 重写 node_modules 时
 // 随目录消失，天然触发重建。
-const COPY_STAMP = '.eac-copy-stamp.json';
+export const COPY_STAMP = '.eac-copy-stamp.json';
+
+// 随插件/皮肤包一起拷贝到 profile 的许可与出处文件（存在才拷贝）。
+export const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'README.md', 'README.zh.md', 'THIRD-PARTY-NOTICES.md'];
 
 // 与 copyPluginPackage 的拷贝清单保持一致（多算/漏算都会导致每次都重拷，
 // 只会浪费不会出错）。
-function pluginCopyEntries(src) {
-  const out = [];
-  const copyFile = (rel) => {
+export function pluginCopyEntries(src: string): string[] {
+  const out: string[] = [];
+  const copyFile = (rel: string): void => {
     const sf = path.join(src, rel);
     if (!fs.existsSync(sf) || fs.statSync(sf).isDirectory()) return;
     out.push(rel);
   };
-  const copyDir = (rel) => {
+  const copyDir = (rel: string): void => {
     const sd = path.join(src, rel);
     if (!fs.existsSync(sd) || !fs.statSync(sd).isDirectory()) return;
     for (const entry of fs.readdirSync(sd, { withFileTypes: true })) {
@@ -275,14 +326,14 @@ function pluginCopyEntries(src) {
   return out;
 }
 
-function pluginStampOf(src) {
+export function pluginStampOf(src: string): string | null {
   try {
     const pkg = readJsonFile(path.join(src, 'package.json')) || {};
     let files = 0;
     let bytes = 0;
     for (const rel of pluginCopyEntries(src)) {
       files += 1;
-      try { bytes += fs.statSync(path.join(src, rel)).size; } catch {}
+      try { bytes += fs.statSync(path.join(src, rel)).size; } catch { /* 文件消失按 0 计 */ }
     }
     return JSON.stringify({ v: String(pkg.version || ''), f: files, b: bytes });
   } catch {
@@ -290,7 +341,7 @@ function pluginStampOf(src) {
   }
 }
 
-function copyPluginPackage(profileDirP, src, name) {
+export function copyPluginPackage(profileDirP: string, src: string, name: string): void {
   const destRoot = path.join(profileDirP, 'node_modules', ...name.split('/'));
   const stampFile = path.join(destRoot, COPY_STAMP);
   const want = pluginStampOf(src);
@@ -300,14 +351,14 @@ function copyPluginPackage(profileDirP, src, name) {
     }
   } catch { /* 比对失败按需重拷 */ }
   fs.mkdirSync(path.dirname(destRoot), { recursive: true });
-  const copyFile = (rel) => {
+  const copyFile = (rel: string): void => {
     const sf = path.join(src, rel);
     if (!fs.existsSync(sf) || fs.statSync(sf).isDirectory()) return;
     const df = path.join(destRoot, rel);
     fs.mkdirSync(path.dirname(df), { recursive: true });
     fs.copyFileSync(sf, df);
   };
-  const copyDir = (rel) => {
+  const copyDir = (rel: string): void => {
     const sd = path.join(src, rel);
     if (!fs.existsSync(sd) || !fs.statSync(sd).isDirectory()) return;
     for (const entry of fs.readdirSync(sd, { withFileTypes: true })) {
@@ -346,22 +397,19 @@ function copyPluginPackage(profileDirP, src, name) {
   }
 }
 
-// 随插件/皮肤包一起拷贝到 profile 的许可与出处文件（存在才拷贝）。
-const EXTRA_PACKAGE_FILES = ['LICENSE', 'LICENSE.md', 'NOTICE', 'NOTICE.md', 'README.md', 'README.zh.md', 'THIRD-PARTY-NOTICES.md'];
-
 // pnpm（dsh plugin add / 插件市场）hoist 进 profile node_modules 的
 // @deepseek-ai 核心包真实拷贝，会遮蔽 <home>/profiles/node_modules 里指向
 // 随应用分发的安装闭包 junction，形成模块双实例：Symbol 身份不一致，
 // 作用域注册失效（如 "deployment:persona is already registered"），
 // 模型列表刷新、模式切换、工作区添加等全部瘫痪。启动时清掉这些
 // 遮蔽拷贝，让解析回落到 junction —— 与宿主同源、全局单实例。
-function healProfileModules() {
+export function healProfileModules(): void {
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
     const removed = healProfileModuleShadowing(home, desktopProfile());
     if (removed.length) ctx.log('boot', '已清理 profile node_modules 中遮蔽安装闭包的包拷贝: ' + removed.join(', '));
   } catch (err) {
-    ctx.log('boot', '清理 profile 模块遮蔽失败: ' + err.message);
+    ctx.log('boot', '清理 profile 模块遮蔽失败: ' + (err as Error).message);
   }
 }
 
@@ -369,7 +417,8 @@ function healProfileModules() {
 // node_modules 副本与 package.json 依赖：行在包被清会拖垮插件树，包在行在则
 // 退役插件继续加载。旧市场还会与 dsh-unified-market 重复注册 /api/dsh-market，
 // 使 dsh web 以 code=1 退出。启动时统一清理这些精确的历史内置条目。
-const RETIRED_BUILTIN_PLUGINS = [
+// （契约测试锚定字面量 `const RETIRED_BUILTIN_PLUGINS = [`，勿加内联注解。）
+export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'tdai-memory', name: 'dsh-tdai-memory' },
   { id: 'auto-compact', name: 'dsh-auto-compact' },
   { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },
@@ -378,7 +427,7 @@ const RETIRED_BUILTIN_PLUGINS = [
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
-function retireRemovedBuiltinPlugins(profileDirP) {
+export function retireRemovedBuiltinPlugins(profileDirP: string): void {
   for (const p of RETIRED_BUILTIN_PLUGINS) {
     const patchFile = path.join(profileDirP, 'cordis.patch.yml');
     try {
@@ -391,7 +440,7 @@ function retireRemovedBuiltinPlugins(profileDirP) {
         ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
       }
     } catch (err) {
-      ctx.log('boot', `清理退役内置插件 ${p.id} 行失败: ${String((err && err.message) || err)}`);
+      ctx.log('boot', `清理退役内置插件 ${p.id} 行失败: ${String(((err as Error).message) || err)}`);
     }
     const pkgDir = path.join(profileDirP, 'node_modules', ...p.name.split('/'));
     try {
@@ -400,7 +449,7 @@ function retireRemovedBuiltinPlugins(profileDirP) {
         ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 包副本`);
       }
     } catch (err) {
-      ctx.log('boot', `清理退役内置插件 ${p.id} 包失败: ${String((err && err.message) || err)}`);
+      ctx.log('boot', `清理退役内置插件 ${p.id} 包失败: ${String(((err as Error).message) || err)}`);
     }
     try {
       const pkgFile = path.join(profileDirP, 'package.json');
@@ -414,7 +463,7 @@ function retireRemovedBuiltinPlugins(profileDirP) {
   }
 }
 
-function syncCompanionPlugins() {
+export function syncCompanionPlugins(): void {
   if (!IS_WIN) return;
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
@@ -453,12 +502,12 @@ function syncCompanionPlugins() {
     if (defaultResult === 'set') ctx.log('boot', '已设置默认 agent preset: anchored-standard');
     else if (defaultResult === 'kept') ctx.log('boot', '用户已设置默认 agent preset，保持不变');
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
-    const pending = [];
+    const pending: PendingRow[] = [];
     const removedIds = removedPluginIds();
     // V4.2：用户曾从市场安装过与内置插件同名的包时，写包前先迁移残留
     // （package.json 依赖/bundles + patch 行），让内置版干净接管，避免
     // duplicate loader entry；完成后系统通知告知「插件树变化」。
-    const migratedBuiltins = [];
+    const migratedBuiltins: { name: string; dep: boolean; rows: number }[] = [];
     for (const p of COMPANION_PLUGINS) {
       // V4.2：用户移除过的内置插件不再复制/登记（见 pluginManagerSetRemoved）。
       if (removedIds.has(p.id)) {
@@ -470,7 +519,7 @@ function syncCompanionPlugins() {
       // V4 修复：旧回退是 name.slice('@deepseek-ai/'.length) —— 对无 scope 的
       // 长包名会截出错误目录（dsh-session-manager → 'manager'），该插件被
       // 静默跳过（行与包都不落盘）。
-      const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() : p.name);
+      const dirName = p.dir || (p.name.includes('/') ? p.name.split('/').pop() as string : p.name);
       // V4.3：覆盖层优先 —— 用户更新过的内置插件从 <userData>/builtin-plugin-updates
       // 拷贝（不被资产版本还原）；应用升级后资产版本更新则自动接管。
       const src = builtinPluginSourceDir(dirName);
@@ -479,15 +528,21 @@ function syncCompanionPlugins() {
         continue;
       }
       try {
-        const { removeMarketDuplicate, patchHasForeignRows } = require('../../builtin-collision');
+        const { removeMarketDuplicate, patchHasForeignRows } = require('../../builtin-collision') as {
+          removeMarketDuplicate(profileDir: string, name: string, o: { log(m: string): void }): { changed: boolean; ok: boolean; removedDep: unknown[]; removedRows: unknown[] };
+          patchHasForeignRows(patchText: string, name: string): boolean;
+        };
         // 市场同名包残留预检（v4.2，用户反馈问题 5）：只有「非应用自写」证据
         // （package.json 依赖/bundles 或非自写 patch 行）才算残留。
         const dupPreCheck = (() => {
           try {
             const pkg = readJsonFile(path.join(profileDirP, 'package.json'));
-            const spec = pkg && pkg.dependencies && pkg.dependencies[p.name];
+            const deps = pkg && (pkg.dependencies as Record<string, unknown> | undefined);
+            const spec = deps && deps[p.name];
             if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
-            if (pkg && pkg.dsh && pkg.dsh.profile && Array.isArray(pkg.dsh.profile.bundles) && pkg.dsh.profile.bundles.includes(p.name)) return true;
+            const dsh = pkg && (pkg.dsh as Record<string, unknown> | undefined);
+            const prof = dsh && (dsh.profile as Record<string, unknown> | undefined);
+            if (prof && Array.isArray(prof.bundles) && (prof.bundles as string[]).includes(p.name)) return true;
             const patchText = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8');
             // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
             // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
@@ -507,12 +562,12 @@ function syncCompanionPlugins() {
           // 行每次启动堆积。
           const migrated = removeMarketDuplicate(profileDirP, p.name, { log: (m) => ctx.log('boot', m) });
           if (migrated.changed && migrated.ok) {
-            migratedBuiltins.push({ name: p.name, dep: migrated.removedDep.length > 0, rows: migrated.removedRows });
+            migratedBuiltins.push({ name: p.name, dep: migrated.removedDep.length > 0, rows: migrated.removedRows.length });
             ctx.log('boot', `内置插件 ${p.name} 已接管市场同名包（移除依赖 ${migrated.removedDep.length} 个、patch 行 ${migrated.removedRows.length} 个）`);
           }
         }
       } catch (err) {
-        ctx.log('boot', `内置插件同名迁移失败(${p.id}): ${String((err && err.message) || err)}`);
+        ctx.log('boot', `内置插件同名迁移失败(${p.id}): ${String(((err as Error).message) || err)}`);
       }
       copyPluginPackage(profileDirP, src, p.name);
       // p.disabled: true 的配套插件默认以禁用行注册（如 dsh-pet 页面桌宠），
@@ -529,7 +584,7 @@ function syncCompanionPlugins() {
           onClick: () => ctx.showMainWindow(),
         });
       } catch (err) {
-        ctx.log('boot', '内置接管通知发送失败: ' + err.message);
+        ctx.log('boot', '内置接管通知发送失败: ' + (err as Error).message);
       }
     }
     // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
@@ -539,7 +594,8 @@ function syncCompanionPlugins() {
       const pkg = readJsonFile(path.join(src, 'package.json'));
       if (!pkg || typeof pkg.name !== 'string' || !pkg.name.includes('/')) continue;
       const skin = readJsonFile(path.join(src, 'skin.json'));
-      const rowId = skin && skin.wiring && typeof skin.wiring.id === 'string' ? skin.wiring.id : '';
+      const wiring = skin && (skin.wiring as Record<string, unknown> | undefined);
+      const rowId = wiring && typeof wiring.id === 'string' ? wiring.id : '';
       if (!/^ui-skin-[\w-]+$/.test(rowId)) continue;
       copyPluginPackage(profileDirP, src, pkg.name);
       pending.push({ id: rowId, name: pkg.name, disabled: true });
@@ -556,7 +612,7 @@ function syncCompanionPlugins() {
         fs.writeFileSync(marker, JSON.stringify(next, null, 2) + '\n');
       }
     } catch (err) {
-      ctx.log('boot', '写入内置插件清单失败: ' + err.message);
+      ctx.log('boot', '写入内置插件清单失败: ' + (err as Error).message);
     }
     // 注册到 profile 的 patch 层（幂等：已有行不重写，用户选择的皮肤/disabled 状态保留）。
     const patchFile = path.join(profileDirP, 'cordis.patch.yml');
@@ -583,15 +639,19 @@ function syncCompanionPlugins() {
     // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
     // 也有一行（syncCompanionPlugins 写的），整个插件树会以
     // “duplicate loader entry id” 崩溃。清掉 overlay 重复行（包内行保留）。
-    let bundled = [];
-    try { bundled = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
+    let bundled: unknown[] = [];
+    try {
+      const pkgDsh = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh as Record<string, unknown> | undefined;
+      const prof = pkgDsh?.profile as Record<string, unknown> | undefined;
+      bundled = Array.isArray(prof?.bundles) ? prof.bundles : [];
+    } catch { bundled = []; }
     // 同一 entry id 被两处声明（bundle 的包内 patch + overlay 的配套行）会以
     // “duplicate loader entry id” 拖垮整个插件树。旧逻辑只按「包名 ∈ bundles」
     // 匹配，git/fork/link 安装的插件包名与配套行包名不符时永远删不掉（issue
     // #16）。这里再解析每个 bundle 包实际声明的 entry id 集合：overlay 中 id
     // 已被任一 bundle 声明（无论包名如何）即视为重复。
     const declaredBundleIds = collectBundleEntryIds(bundled, path.join(profileDirP, 'node_modules'));
-    const rowIds = {};
+    const rowIds: Record<string, string> = {};
     for (const p of COMPANION_PLUGINS) rowIds[p.id] = p.name;
     const deduped = removeBundledRowDuplicates(patch, rowIds, bundled, declaredBundleIds);
     if (deduped.removed.length) {
@@ -634,27 +694,6 @@ function syncCompanionPlugins() {
     // 迁移带来的皮肤选择（migrateFromSharedWebProfile 记录）在此落位。
     ctx.applyLegacySkinChoice();
   } catch (err) {
-    ctx.log('boot', '同步配套插件失败: ' + err.message);
+    ctx.log('boot', '同步配套插件失败: ' + (err as Error).message);
   }
 }
-
-module.exports = {
-  COMPANION_PLUGINS,
-  PLUGIN_UPDATE_SOURCES,
-  SKINS_DIR,
-  COPY_STAMP,
-  EXTRA_PACKAGE_FILES,
-  RETIRED_BUILTIN_PLUGINS,
-  init,
-  removedPluginIds,
-  saveRemovedPluginIds,
-  pluginUpdateSources,
-  builtinPluginSourceDir,
-  readJsonFile,
-  pluginCopyEntries,
-  pluginStampOf,
-  copyPluginPackage,
-  healProfileModules,
-  retireRemovedBuiltinPlugins,
-  syncCompanionPlugins,
-};
