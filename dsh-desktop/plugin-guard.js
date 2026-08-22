@@ -396,7 +396,7 @@ function createGuard(opts) {
 
     if (list.some((f) => f.code === 'PATCH_DUP_ID' || f.code === 'PATCH_SOUL_CONFIG')) {
       try {
-        const { healSoulMdPatchRow, removeBundledRowDuplicates } = require('./patch-row-heal');
+        const { healSoulMdPatchRow, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
         const file = path.join(dir, 'cordis.patch.yml');
         let patch = fs.readFileSync(file, 'utf8');
         const healed = healSoulMdPatchRow(patch);
@@ -405,7 +405,8 @@ function createGuard(opts) {
         for (const id of patchRowIds(patch)) ids[id] = ids[id] || null;
         let bundled = [];
         try { bundled = readJson(path.join(dir, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
-        const { patch: deduped, removed } = removeBundledRowDuplicates(patch, ids, bundled, new Set());
+        const declaredBundleIds = collectBundleEntryIds(bundled, path.join(dir, 'node_modules'));
+        const { patch: deduped, removed } = removeBundledRowDuplicates(patch, ids, bundled, declaredBundleIds);
         if (removed.length) {
           patch = deduped;
           applied.push('移除与 bundle 重复的 patch 行: ' + removed.join(', '));

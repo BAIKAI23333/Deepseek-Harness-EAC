@@ -240,3 +240,48 @@ test('snapshot pruning keeps at most 10', () => {
   assert.equal(guard.listSnapshots().length, 10);
   rmSync(home, { recursive: true, force: true });
 });
+
+test('repair removes duplicate patch rows that conflict with bundle entry ids (issue #172)', () => {
+  const t0 = { after: (fn) => fn };
+  const { home, profile, guard } = makeHome(t0);
+
+  // 模拟市场安装的 bundle 插件：在 node_modules 中有自己的 cordis.patch.yml
+  const bundleDir = join(profile, 'node_modules', 'ui-skin-whale-song');
+  mkdirSync(join(bundleDir, 'lib'), { recursive: true });
+  writeFileSync(join(bundleDir, 'package.json'), JSON.stringify({
+    name: 'ui-skin-whale-song',
+    version: '1.0.0',
+    dsh: { bundle: { patch: 'cordis.patch.yml' } },
+  }));
+  writeFileSync(join(bundleDir, 'cordis.patch.yml'),
+    '- insert:\n    - id: ui-skin-whale-song\n      name: \'ui-skin-whale-song\'\n');
+
+  // 模拟 overlay 重复写入：bundle 的 entry id 和 overlay 的重复
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({
+    name: 'dsh-profile-web-desktop',
+    dsh: { profile: { bundles: ['ui-skin-whale-song'] } },
+  }));
+  writeFileSync(join(profile, 'cordis.patch.yml'),
+    '- insert:\n    - id: ui-skin-whale-song\n      name: \'ui-skin-whale-song\'\n' +
+    '- insert:\n    - id: ui-skin-whale-song\n      name: \'ui-skin-whale-song\'\n');
+
+  // healthCheck 应检测到重复
+  const { findings } = guard.healthCheck();
+  assert.ok(findings.some((f) => f.code === 'PATCH_DUP_ID'), 'duplicate row id must be flagged');
+
+  // repair 应自动修复（移除 overlay 中与 bundle 重复的行）
+  const result = guard.repair(findings);
+  assert.ok(result.applied.some((msg) => msg.includes('移除与 bundle 重复的 patch 行')),
+    'repair must remove duplicate rows, got: ' + JSON.stringify(result.applied));
+
+  // 修复后不应再有重复
+  const patchAfter = readFileSync(join(profile, 'cordis.patch.yml'), 'utf8');
+  const ids = [];
+  const re = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
+  let m;
+  while ((m = re.exec(patchAfter)) !== null) ids.push(m[1]);
+  const dups = ids.filter((id, i) => ids.indexOf(id) !== i);
+  assert.equal(dups.length, 0, 'no duplicate ids should remain after repair, found: ' + JSON.stringify(dups));
+
+  rmSync(home, { recursive: true, force: true });
+});
