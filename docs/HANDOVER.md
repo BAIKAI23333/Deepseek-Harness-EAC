@@ -1,8 +1,29 @@
 # DeepSeek Harness EAC 壳层重构 — 交接文档（模型切换）
 
-> 生成日期：2026-08-22
-> 上一执行模型交接给下一执行模型。目标：让接手者**无需重新调研**即可继续执行 T1-c / T2。
+> 生成日期：2026-08-22（同日更新：T1-c 与 T2 已完成，见文末「进度更新」）
+> 上一执行模型交接给下一执行模型。目标：让接手者**无需重新调研**即可继续执行后续阶段。
 > 一切结论均有源码/测试/运行记录背书，未经验证的猜测一律标注「待验证」。
+
+---
+
+## ⚡ 进度更新（2026-08-22 第二轮执行）
+
+| 阶段 | 状态 | 提交 |
+| --- | --- | --- |
+| T0 ADR | ✅ | d3bf62d |
+| T1-a 基础设施 | ✅ | d3bf62d |
+| T1-b 园艺层 | ✅ | d3bf62d |
+| **T1-c 维护层** | ✅ shortcuts/junction-patrol/client-update/static-preview 四模块迁出，main.js **3076 行**（累计 -42%），608 测试全绿 + 真实启动/UI 退出验证通过 | 670e99b |
+| **T2 Tauri PoC** | ✅ `tauri-shell/` 工程（Rust + Tauri 2.11.5），cargo build 一次通过；stdio JSON-RPC 桥 3/3（ping / shell.info / dsh.probe——sidecar 用与 Electron 共用的 vendor node 定位到内核 CLI）；窗口+托盘冒烟通过、无孤儿进程 | 本轮提交 |
+| T3 前端桥迁移 | ⏳ 下一步 | |
+| T4 打包链 | ⏳ | |
+| T5 回归矩阵 | ⏳ | |
+| T6 Linux 决策门 | ⏳ | |
+
+**T3 起点提示**：`tauri-shell/src/main.rs` 已实现 `--bridge-test`（无 GUI 桥验证）与 GUI 模式
+（窗口 + 托盘 + sidecar 常驻 + RunEvent::Exit 回收）。`sidecar/ping.js` 是 L2 协议样例。
+下一步是把 `lib/desktop/*` 挂进 sidecar（替代 ping.js）、实现 `window.dshDesktop` 的
+`bridge.ts` 初始化脚本（经回环 WS 或 Tauri remote capability 转发 invoke）。
 
 ---
 

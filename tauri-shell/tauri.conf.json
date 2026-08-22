@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Deepseek Harness EAC",
+  "version": "0.1.0",
+  "identifier": "com.deepseek.dsh.desktop.tauri",
+  "build": {},
+  "app": {
+    "windows": [
+      {
+        "title": "DSH EAC — Tauri ShellHost PoC",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "visible": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/icon.ico"]
+  }
+}
