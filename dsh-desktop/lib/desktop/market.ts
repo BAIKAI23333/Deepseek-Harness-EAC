@@ -129,13 +129,17 @@ export function finishMarketMarker(marker: string, job: MarketJob, attempts: num
 // assets/plugins/dsh-unified-market/lib/artifact-keep.mjs。
 // ---------------------------------------------------------------------------
 type EsmModule = Record<string, unknown>;
+// tsc(commonjs) 会把 import() 降级为 require()，而 require() 加载 .mjs 会抛
+// 「Cannot find module」/ ERR_REQUIRE_ESM —— 用 new Function 保住原生动态
+// import（Electron 与 Tauri sidecar 共用本产物，两壳同受益）。
+const dynamicImport = new Function('specifier', 'return import(specifier)') as (s: string) => Promise<unknown>;
 const ARTIFACT_KEEP_MODULE = path.join(APP_ROOT, 'assets', 'plugins', 'dsh-unified-market', 'lib', 'artifact-keep.mjs');
 let artifactKeepMod: EsmModule | null = null;
 
 export async function artifactKeep(): Promise<EsmModule> {
   if (artifactKeepMod) return artifactKeepMod;
   try {
-    artifactKeepMod = await import(pathToFileURL(ARTIFACT_KEEP_MODULE).href) as unknown as EsmModule;
+    artifactKeepMod = await dynamicImport(pathToFileURL(ARTIFACT_KEEP_MODULE).href) as unknown as EsmModule;
   } catch (err) {
     ctx.log('artifact-keep', '模块加载失败: ' + (err as Error).message);
     artifactKeepMod = {};
@@ -151,7 +155,7 @@ let allowBuildsMod: EsmModule | null = null;
 export async function allowBuilds(): Promise<EsmModule> {
   if (allowBuildsMod) return allowBuildsMod;
   try {
-    allowBuildsMod = await import(pathToFileURL(ALLOW_BUILDS_MODULE).href) as unknown as EsmModule;
+    allowBuildsMod = await dynamicImport(pathToFileURL(ALLOW_BUILDS_MODULE).href) as unknown as EsmModule;
   } catch (err) {
     ctx.log('allow-builds', '模块加载失败: ' + (err as Error).message);
     allowBuildsMod = {};

@@ -42,3 +42,4 @@ build/*
 /error-detail.js
 /bundle-integrity.js
 /watchdog.js
+/lib/desktop/boot-server.js

@@ -5,16 +5,7 @@
   "identifier": "com.deepseek.dsh.desktop.tauri",
   "build": {},
   "app": {
-    "windows": [
-      {
-        "title": "DSH EAC — Tauri ShellHost PoC",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 960,
-        "minHeight": 640,
-        "visible": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

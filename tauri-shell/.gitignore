@@ -1,2 +1,3 @@
 /target
 sidecar/server.js
+sidecar/bridge.js
