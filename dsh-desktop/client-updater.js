@@ -814,6 +814,11 @@ function buildApplyScript({ newExe, oldExe, portable, userDataDir, dshHome, inst
       'if "%SKIP_BACKUP%"=="0" if not defined REG_INST for /f "tokens=2*" %%a in (\'reg query "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Deepseek Harness EAC" /v InstallLocation 2^>nul ^| findstr /i InstallLocation\') do set "REG_INST=%%b"',
       'if "%SKIP_BACKUP%"=="0" if not defined REG_INST for /f "tokens=2*" %%a in (\'reg query "HKCU\\Software\\WOW6432Node\\Deepseek Harness EAC" /v InstallLocation 2^>nul ^| findstr /i InstallLocation\') do set "REG_INST=%%b"',
       'if "%SKIP_BACKUP%"=="0" if not defined REG_INST for /f "tokens=2*" %%a in (\'reg query "HKLM\\Software\\WOW6432Node\\Deepseek Harness EAC" /v InstallLocation 2^>nul ^| findstr /i InstallLocation\') do set "REG_INST=%%b"',
+      // 注册表值可能被安装器写脏（实测出现过 ["D:\\..."] 这种内嵌引号/括号的
+      // InstallLocation）：引号会在下方 if 展开时截断比较串，cmd 直接报
+      // 「此时不应有 Harness」并以 255 退出，备份链静默中断。剥掉全部双
+      // 引号后再参与对比（仅用于 WARN 日志与 manifest 记录，路径以实际为准）。
+      'if "%SKIP_BACKUP%"=="0" if defined REG_INST set "REG_INST=%REG_INST:"=%"',
       'if "%SKIP_BACKUP%"=="0" echo [%date% %time%] InstallLocation(registry)=%REG_INST% >> "%LOG%"',
       'if "%SKIP_BACKUP%"=="0" if /i not "%REG_INST%" == "" if /i not "%REG_INST%" == "%INST%" echo [%date% %time%] WARN: InstallLocation registry vs actual mismatch (backup/rollback use actual path) >> "%LOG%"',
       // --- 阶段 1：生成时间戳 + 建备份根目录 ---
