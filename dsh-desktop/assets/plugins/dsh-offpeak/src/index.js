@@ -96,13 +96,20 @@ function beijingNow(nowMs = Date.now()) {
   };
 }
 
-/** 是否为高峰时段。 */
-function isPeak(minutes, windows) {
+/** 是否为高峰时段。周末整天空闲。 */
+function isPeak(minutes, windows, date) {
+  // date 是 beijingNow().date(北京那一天)。高峰只在周一至周五,
+  // 周末整天空闲 —— 按 UTC 零点解析这个日期串,免得跟着机器本地时区跑偏。
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return false;
   return windows.some((w) => minutes >= w.start && minutes < w.end);
 }
 
-/** 当前所处高峰窗口的起点分钟数（非高峰返回 null）。 */
-function peakStartOf(minutes, windows) {
+/** 当前所处高峰窗口的起点分钟数（非高峰返回 null）。周末整天空闲。 */
+function peakStartOf(minutes, windows, date) {
+  // 周末整天空闲
+  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  if (weekday === 0 || weekday === 6) return null;
   const w = windows.find((win) => minutes >= win.start && minutes < win.end);
   return w === undefined ? null : w.start;
 }
@@ -231,7 +238,7 @@ export function apply(ctx, config = {}) {
     const sessionId = typeof session?.id === "string" ? session.id : "";
     state.lastCommandStartAt = bj.epochMs;
 
-    if (!isPeak(bj.minutes, windows)) {
+    if (!isPeak(bj.minutes, windows, bj.date)) {
       state.reminder = null;
       return;
     }
@@ -387,8 +394,12 @@ export function apply(ctx, config = {}) {
       const bj = beijingNow();
       const nowMinutes = bj.minutes;
       const nowHour = bj.hour;
-      const todayAllowed = ALLOWED_HOURS.filter((h) => h > nowHour);
-      const todayCurrent = ALLOWED_HOURS.includes(nowHour);
+      // 获取星期几（0=周日，6=周六）
+      const weekday = new Date(`${bj.date}T00:00:00Z`).getUTCDay();
+      const isWeekend = weekday === 0 || weekday === 6;
+      const allowedHours = isWeekend ? Array.from({ length: 24 }, (_, i) => i) : ALLOWED_HOURS;
+      const todayAllowed = allowedHours.filter((h) => h > nowHour);
+      const todayCurrent = allowedHours.includes(nowHour);
       const options = []; // { label, hour, dayOffset, atMs(分钟0档), minute:0, minutes:[] }
       const pushHour = (hour, dayOffset, minutes) => {
         // 以北京时间的年月日为准构造目标时刻（epoch ms = 北京时间 → UTC）。
@@ -434,7 +445,7 @@ export function apply(ctx, config = {}) {
           end: w.end,
           label: `${String(Math.floor(w.start / 60)).padStart(2, "0")}:00–${String(Math.floor(w.end / 60)).padStart(2, "0")}:00`,
         })),
-        inPeak: isPeak(bj.minutes, windows),
+        inPeak: isPeak(bj.minutes, windows, bj.date),
         model,
         modelKind,
         prices: PRICES,
