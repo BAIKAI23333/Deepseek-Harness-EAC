@@ -326,6 +326,7 @@ research/                     # 第三方微信/桥接协议调研资料
 | dsh-session-manager | 会话删除与归档管理 |
 | dsh-settings-groups | 设置页高级选项折叠 |
 | dsh-settings-nav-custom | 设置页左侧边栏自定义 |
+| dsh-settings-scroll-fix | 设置面板鼠标滚轮与溢出滚动修复 |
 | @dsh-external/dsh-side-session（提供者：dsh-external） | 临时会话：不污染主会话的独立追问 |
 | @deepseek-ai/dsh-skin-switch | 内置皮肤切换 |
 | dsh-soul-md（提供者：Scorp1o117） | soul.md 人设卡注入 |
