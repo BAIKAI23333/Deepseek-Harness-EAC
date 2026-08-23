@@ -11,6 +11,11 @@
 ;      b) UninstallString 指向已删除的卸载器（本机实测脏键：指向不存在的
 ;         D:\Deepseek Harness EACeac\uninstall.exe）—— 文件不存在时跳过
 ;         ExecWait，只清注册表键，避免静默安装被无效路径卡死。
+;      c) R6 复核实锤（mock 卸载器 + 最小安装器 A/B 对照）：ExecWait 必须用
+;         剥过引号的 $3 作程序路径 —— 原实现内嵌原始 $0，真实键值带整串引号时
+;         展开成 ""path" 导致 spawn 静默失败；_?= 必须裸写 —— NSIS 卸载器原样
+;         取命令行剩余串当目录，带引号反而失效（实测退出码 2、零删除），
+;         含空格目录无需引号；尾反斜杠先剥防边界歧义。
 
 !macro DSH_TakeoverOldShell KEYNAME
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "UninstallString"
@@ -30,12 +35,23 @@
         StrCpy $1 $1 "" 1
         StrCpy $1 $1 -1
       ${EndIf}
+      ; 尾反斜杠在带引号命令行里会转义收尾引号，先剥掉（盘符根除外）。
+      StrLen $2 $1
+      ${If} $2 > 3
+        StrCpy $2 $1 1 -1
+        ${If} $2 == '\'
+          StrCpy $1 $1 -1
+        ${EndIf}
+      ${EndIf}
     ${EndIf}
     ${If} ${FileExists} "$3"
       DetailPrint "DSH EAC: 检测到旧壳（${KEYNAME}），静默卸载以接管安装（数据不受影响）"
-      ; _?= 需要带引号的完整路径；旧卸载器为 NSIS 生成，支持 /S 静默。
-      ExecWait '"$0" /S _?=$1' $3
-      DetailPrint "DSH EAC: 旧壳卸载退出码 $3"
+      ; 程序路径必须用剥过引号的 $3：内嵌原始 $0 展开成 ""path" 会导致
+      ; spawn 失败（R6 实测复现）。_?= 必须裸写不加引号：NSIS 卸载器原样
+      ; 取命令行剩余串当安装目录，带引号会内嵌字面 " 而静默失效（实测退出码 2、
+      ; 零删除）；也正因原样取剩余，含空格目录无需引号（官方文档示例 _?=$INSTDIR）。
+      ExecWait '"$3" /S _?=$1' $R0
+      DetailPrint "DSH EAC: 旧壳卸载退出码 $R0"
     ${Else}
       DetailPrint "DSH EAC: 旧壳卸载键为脏值（卸载器缺失），仅清理注册表"
     ${EndIf}
