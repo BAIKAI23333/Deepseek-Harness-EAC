@@ -66,9 +66,12 @@ mkdirSync(path.join(staged, 'dsh-desktop', 'scripts'), { recursive: true });
 for (const f of SCRIPTS) {
   cpSync(path.join(dd, 'scripts', f), path.join(staged, 'dsh-desktop', 'scripts', f));
 }
-// package.json + lock 原样拷贝（npm ci 要求两者一致；--omit=dev 只装生产树）
+// package.json + lock 原样拷贝（npm ci 要求两者一致；--omit=dev 只装生产树）。
+// .npmrc（legacy-peer-deps）必须随行：内核包互相声明 peer，staged 目录里的
+// npm ci 若不带该配置会因 lock 缺 peer 闭包直接 EUSAGE 拒装（全新打包必踩）。
 cpSync(path.join(dd, 'package.json'), path.join(staged, 'dsh-desktop', 'package.json'));
 cpSync(path.join(dd, 'package-lock.json'), path.join(staged, 'dsh-desktop', 'package-lock.json'));
+cpSync(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc'));
 
 console.log('[stage] assets（114MB：38 插件 + 10 皮肤 + 图标）');
 cpSync(path.join(dd, 'assets'), path.join(staged, 'dsh-desktop', 'assets'), { recursive: true });
@@ -86,12 +89,14 @@ if (!skipNpm || !existsSync(nmDest)) {
   execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
 }
 
-// 上游修复的 vendored 覆盖（pwsh 超时修复，a99a770）——npm ci 会还原成
+// 上游修复的 vendored 覆盖（bash 输出折叠，PR #181）——npm ci 会还原成
 // registry 版本，把仓库内的修复副本盖回去。
-const vendoredFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-subprocess-local', 'lib', 'index.js');
-if (existsSync(vendoredFix)) {
-  cpSync(vendoredFix, path.join(nmDest, '@deepseek-ai', 'dsh-subprocess-local', 'lib', 'index.js'));
-  console.log('[stage] 已回填 dsh-subprocess-local 的 vendored 修复');
+// （dsh-subprocess-local 的 pwsh 超时 vendored 修复已废弃：0.1.1-rc.2 上游以
+//  Promise.race(done, delay(graceMs)) 原生实现同类兜底，随 registry 版本走。）
+const vendoredBashFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js');
+if (existsSync(vendoredBashFix)) {
+  cpSync(vendoredBashFix, path.join(nmDest, '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'));
+  console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
 }
 
 console.log('[stage] 完成：' + staged);
