@@ -353,12 +353,26 @@ export function pluginStampOf(src: string): string | null {
   }
 }
 
+// A source stamp alone is not enough: an interrupted copy or an antivirus
+// cleanup can remove files from the profile while leaving the stamp behind.
+// Verify the destination against the same copy manifest before skipping.
+function pluginCopyIsComplete(src: string, dest: string): boolean {
+  try {
+    return pluginCopyEntries(src).every((rel) => {
+      const target = path.join(dest, rel);
+      return fs.existsSync(target) && fs.statSync(target).isFile();
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function copyPluginPackage(profileDirP: string, src: string, name: string): void {
   const destRoot = path.join(profileDirP, 'node_modules', ...name.split('/'));
   const stampFile = path.join(destRoot, COPY_STAMP);
   const want = pluginStampOf(src);
   try {
-    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want) {
+    if (want && fs.existsSync(stampFile) && fs.readFileSync(stampFile, 'utf8') === want && pluginCopyIsComplete(src, destRoot)) {
       return; // 内容未变：跳过全量重拷
     }
   } catch { /* 比对失败按需重拷 */ }
