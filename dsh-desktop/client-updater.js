@@ -62,6 +62,77 @@ function isPortable() {
   return !!process.env.PORTABLE_EXECUTABLE_DIR;
 }
 
+/**
+ * Tauri 便携部署检测（P4/R6）：Rust 壳 spawn sidecar 时必带 DSH_SHELL_EXE
+ * （Electron 链路从不设置），且 make-portable 在 exe 同级放 .dsh-portable 标记
+ * —— 双条件同时成立才走「zip → 目录树交换」自更新；否则维持既有
+ * 单 exe（Electron 便携）/ Setup /S（安装版）语义，冻结链路零影响。
+ */
+function isTauriPortable() {
+  const shellExe = process.env.DSH_SHELL_EXE;
+  if (!shellExe) return false;
+  try {
+    return fs.existsSync(path.join(path.dirname(shellExe), '.dsh-portable'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 生成 Tauri 便携版 apply-update.ps1：等待壳进程（DSH_SHELL_PID）退出 →
+ * 解压新 zip 到安装目录内 staging → 逐顶层项 rename(.old)+move 交换 →
+ * 重启壳。失败路径尽力拉起现有程序；历史 .old 树在下次更新前清理。
+ * 脚本保持纯 ASCII，路径经参数传递（与安装版助手同一套纪律）。
+ */
+function buildTauriPortableApplyScript() {
+  return [
+    'param(',
+    '  [string]$ZipPath = "",',
+    '  [string]$InstallDir = "",',
+    '  [int]$AppPid = 0',
+    ')',
+    '$ErrorActionPreference = "Stop"',
+    '$Log = Join-Path $PSScriptRoot "apply-update.log"',
+    'function Write-Log([string]$m) { Add-Content -LiteralPath $Log -Value ("[{0}] {1}" -f (Get-Date -Format s), $m) }',
+    'try {',
+    '  Write-Log "tauri portable update start"',
+    '  if ($AppPid -gt 0) {',
+    '    for ($i = 0; $i -lt 150; $i++) {',
+    '      Start-Sleep -Milliseconds 2000',
+    '      if (-not (Get-Process -Id $AppPid -ErrorAction SilentlyContinue)) { break }',
+    '    }',
+    '    Start-Sleep -Seconds 2',
+    '  }',
+    '  $exe = Join-Path $InstallDir "dsh-eac-shell.exe"',
+    '  $staging = Join-Path $InstallDir ".update-staging"',
+    '  if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }',
+    '  Write-Log ("extracting " + $ZipPath)',
+    '  Expand-Archive -LiteralPath $ZipPath -DestinationPath $staging -Force',
+    '  Get-ChildItem -LiteralPath $InstallDir -Directory -Filter "*.old" -ErrorAction SilentlyContinue | ForEach-Object {',
+    '    try { Remove-Item -LiteralPath $_.FullName -Recurse -Force } catch {}',
+    '  }',
+    '  Get-ChildItem -LiteralPath $staging | ForEach-Object {',
+    '    $dest = Join-Path $InstallDir $_.Name',
+    '    if (Test-Path -LiteralPath $dest) { Rename-Item -LiteralPath $dest -NewName ($_.Name + ".old") -Force }',
+    '    Move-Item -LiteralPath $_.FullName -Destination $dest -Force',
+    '    Write-Log ("swapped " + $_.Name)',
+    '  }',
+    '  Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue',
+    '  Write-Log "swap complete"',
+    // 重启是尽力而为：文件交换已完成，拉起失败不应把更新标记为失败
+    //（用户可手动启动；真实场景 exe 必然有效）。
+    '  try { Start-Process -FilePath $exe -WorkingDirectory $InstallDir } catch {',
+    '    Write-Log ("relaunch failed: " + $_.Exception.Message)',
+    '  }',
+    '  exit 0',
+    '} catch {',
+    '  Write-Log ("update failed: " + $_.Exception.Message)',
+    '  try { Start-Process -FilePath (Join-Path $InstallDir "dsh-eac-shell.exe") -WorkingDirectory $InstallDir } catch {}',
+    '  exit 1',
+    '}',
+  ];
+}
+
 /** 解析仓库地址（格式非法或缺省时回退到内置默认仓库）。 */
 function resolveRepos(repos) {
   const r = repos && typeof repos === 'object' ? repos : {};
@@ -280,7 +351,8 @@ function selectAsset(release) {
   // 等附属资产不会被误选。
   // V4 平台围栏：文件名带 linux/arm64 等标记的一律不选（双平台发布时
   // 防止误拿；x64 正则本身已排除 arm64，这里再显式拒绝）。
-  const wanted = isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
+  // Tauri 便携：选 -portable.zip（树交换更新）；Electron 便携/安装版正则不变。
+  const wanted = isTauriPortable() ? /portable\.zip$/i : isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
   const platformOk = (name) => !/linux|arm64|aarch64|appimage|\.deb$|\.rpm$|\.snap$/i.test(name);
   const direct = release.assets.find((a) => wanted.test(a.name) && platformOk(a.name));
   if (direct) return { parts: [direct], name: direct.name, totalSize: direct.size };
@@ -1004,7 +1076,27 @@ function applyUpdate(ctx, pending, opts) {
   const nodeExe = (opts && opts.nodeExe) || '';
   let script;
   let child;
-  if (portable) {
+  if (isTauriPortable()) {
+    // Tauri 便携：exe + sidecar + dsh-desktop 目录树整体交换（P4/R6）。
+    // 等待对象是壳进程 PID（Rust spawn sidecar 时经 DSH_SHELL_PID 注入）。
+    script = path.join(updateDir, 'apply-update.ps1');
+    fs.writeFileSync(script, buildTauriPortableApplyScript().join('\r\n') + '\r\n');
+    const powershell2 = path.join(
+      process.env.SystemRoot || 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'
+    );
+    if (!fs.existsSync(powershell2)) throw new Error('找不到 Windows PowerShell: ' + powershell2);
+    const tauriInstallDir = process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : installDir;
+    const shellPid = parseInt(process.env.DSH_SHELL_PID || '', 10) || 0;
+    child = spawn(powershell2, [
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
+      '-ZipPath', newExe, '-InstallDir', tauriInstallDir, '-AppPid', String(shellPid),
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } else if (portable) {
     script = path.join(updateDir, 'apply-update.cmd');
     fs.writeFileSync(script, buildApplyScript({ newExe, oldExe, portable: true }).join('\r\n') + '\r\n');
     const args = [newExe, oldExe];
@@ -1053,4 +1145,4 @@ function applyUpdate(ctx, pending, opts) {
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, isPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls, DEFAULT_REPOS };
+module.exports = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isPortable, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls, DEFAULT_REPOS };

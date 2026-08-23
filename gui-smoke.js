@@ -11,7 +11,7 @@ const repo = path.resolve(__dirname);
 const tmpHome = path.join(repo, 'tmp-p2boot', 'gui-home');
 fs.mkdirSync(tmpHome, { recursive: true });
 const CDP_PORT = 9333;
-const EXE = path.join(repo, 'tauri-shell', 'target', 'debug', 'dsh-eac-shell.exe');
+const EXE = process.env.DSH_SMOKE_EXE || path.join(repo, 'tauri-shell', 'target', 'debug', 'dsh-eac-shell.exe');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const httpGetJson = (url) => new Promise((resolve, reject) => {
@@ -119,9 +119,10 @@ async function listOrphans() {
     })`);
     check('36px 玻璃栏注入', chromeReady === '36', 'height=' + chromeReady);
 
-    // 3) getInfo（sidecar chrome.init 真实数据）
+    // 3) getInfo（sidecar chrome.init 真实数据；版本动态比对，勿硬编码）
     const info = await c.evalJs('window.dshDesktop.getInfo()');
-    check('getInfo 返回真实数据', !!(info && info.appVersion === '4.6.0' && info.agentVersion), JSON.stringify({ v: info && info.appVersion, agent: info && info.agentVersion }));
+    const wantVer = JSON.parse(fs.readFileSync(path.join(repo, 'dsh-desktop', 'package.json'), 'utf8')).version;
+    check('getInfo 返回真实数据', !!(info && info.appVersion === wantVer && info.agentVersion), JSON.stringify({ v: info && info.appVersion, agent: info && info.agentVersion }));
 
     // 4) 窗口控制（Rust 拦截路径）
     const max1 = await c.evalJs('window.dshDesktop.windowControls.isMaximized()');

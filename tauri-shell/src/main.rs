@@ -44,15 +44,19 @@ use tokio_tungstenite::tungstenite::Message;
 const BRIDGE_JS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/sidecar/bridge.js"));
 const WS_PORT: u16 = 19873;
 
-/// 打包态（resource 布局：resources/sidecar + resources/dsh-desktop）与
-/// 开发态（CARGO_MANIFEST_DIR 布局）的资源根。exe 同级 resources/ 优先。
+/// 打包态与开发态（CARGO_MANIFEST_DIR 布局）的资源根。
+/// 实测（R6 Stage 1）：Tauri v2 resources map 目标相对安装根，NSIS 装出
+/// exe 同级 sidecar/ + dsh-desktop/ 兄弟目录；exe 同级直认优先，
+/// 兼容保留 resources/ 子目录布局探测，最后回退开发布局。
 fn resource_root() -> std::path::PathBuf {
     if let Ok(exe) = std::env::current_exe() {
-        let dir = exe.parent().map(|p| p.to_path_buf());
-        if let Some(dir) = dir {
-            let packaged = dir.join("resources").join("sidecar").join("server.js");
-            if packaged.exists() {
-                return dir.join("resources");
+        if let Some(dir) = exe.parent().map(|p| p.to_path_buf()) {
+            if dir.join("sidecar").join("server.js").exists() {
+                return dir;
+            }
+            let res = dir.join("resources");
+            if res.join("sidecar").join("server.js").exists() {
+                return res;
             }
         }
     }
@@ -132,6 +136,8 @@ impl Sidecar {
             // 壳层 exe 与资源根（client-update 的 installDir 判定 / 打包态定位）。
             cmd.env("DSH_SHELL_EXE", &exe);
         }
+        // 壳进程 PID：便携自更新助手的等待目标（等待壳退出后做目录树交换）。
+        cmd.env("DSH_SHELL_PID", std::process::id().to_string());
         cmd.env("DSH_RESOURCE_ROOT", resource_root());
         let mut child = cmd
             .spawn()
@@ -712,6 +718,114 @@ fn exit_page() -> String {
     )
 }
 
+/// 主窗导航助手（壳页打开/返回共用；show + navigate 原子化到主线程）。
+fn navigate_main(app: &tauri::AppHandle, href: String) {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        use tauri::Manager;
+        if let Some(win) = app2.get_webview_window("main") {
+            let _ = win.show();
+            if let Ok(parsed) = tauri::Url::parse(&href) {
+                let _ = win.navigate(parsed);
+            }
+        }
+    });
+}
+
+/// back 查询参数编码（与 /died 的 log 参数同规则；页面侧 URLSearchParams 解码）。
+fn encode_back(url: &str) -> String {
+    url.replace('\\', "%5C").replace(':', "%3A").replace('/', "%2F").replace(' ', "+")
+}
+
+/// 更新进度页（client-update.show / agent 更新共用；进度经 _onNotify 渲染）。
+fn update_page(version: &str, kind: &str) -> String {
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    format!(
+        "<!doctype html><meta charset=utf-8><title>正在更新</title>\
+         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
+         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <div style=\"text-align:center;max-width:520px;width:82%\">\
+         <div style=\"font-size:19px;font-weight:600;margin-bottom:8px\">正在更新 {0}</div>\
+         <div style=\"font-size:12.5px;color:#8b9ac4;margin-bottom:22px\">v{3} · 更新完成后应用会自动重启；插件、皮肤与会话全部保留。</div>\
+         <div style=\"height:8px;border-radius:6px;background:rgba(255,255,255,.08);overflow:hidden\">\
+         <div id=fill style=\"height:100%;width:0%;border-radius:6px;background:#5b8cff;transition:width .3s\"></div></div>\
+         <div id=status style=\"margin-top:14px;font-size:12.5px;color:#8b9ac4;font-family:Consolas,monospace\">准备中…</div>\
+         </div>\
+         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{1}/ws';{2}\
+         var BACK=new URLSearchParams(location.search).get('back')||'';\
+         window.dshDesktop._onNotify(function(m,p){{\
+           if (m==='client-update.progress'){{\
+             if (p && p.channel==='client' && p.total>0){{\
+               var pct=Math.max(0,Math.min(100,Math.round(p.received*100/p.total)));\
+               document.getElementById('fill').style.width=pct+'%';\
+               var extra='';\
+               if (p.speedMBps) extra=' · '+p.speedMBps.toFixed(1)+' MB/s';\
+               if (p.etaSec && isFinite(p.etaSec) && p.etaSec>0){{var s=Math.round(p.etaSec);extra+=' · 剩余 '+(s>=60?Math.floor(s/60)+' 分 '+(s%60)+' 秒':s+' 秒');}}\
+               document.getElementById('status').textContent='正在下载 '+pct+'%'+extra;\
+             }} else if (p && p.stage){{\
+               document.getElementById('status').textContent=p.stage;\
+             }}\
+           }} else if (m==='client-update.hide'){{\
+             if (BACK) location.replace(BACK);\
+           }}\
+         }});</script></body>",
+        if kind == "agent" { "dsh 内核" } else { "Deepseek Harness EAC" },
+        WS_PORT,
+        BRIDGE_JS,
+        esc(version),
+    )
+}
+
+/// 关于页（menu.action 'about'；版本经 chrome.init 动态读取）。
+fn about_page() -> String {
+    format!(
+        "<!doctype html><meta charset=utf-8><title>关于</title>\
+         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
+         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <div style=\"text-align:center;max-width:460px;padding:30px 38px;border:1px solid rgba(255,255,255,.08);\
+         border-radius:16px;background:color-mix(in srgb,#0b1220 92%,white)\">\
+         <div style=\"font-size:20px;font-weight:600;margin-bottom:6px\">Deepseek Harness EAC</div>\
+         <div id=ver style=\"font-size:13px;color:#8b9ac4;margin-bottom:14px\">读取版本中…</div>\
+         <div style=\"font-size:12px;color:#5f6f9c;line-height:1.8\">Tauri 壳（Rust L1）· Node sidecar（L2）· dsh 内核零改动（L3）<br/>\
+         本项目为社区增强封装，与官方 DeepSeek 无隶属关系。</div>\
+         <button onclick=\"if(BACK)location.replace(BACK)\" style=\"margin-top:20px;padding:8px 26px;border:1px solid rgba(255,255,255,.18);\
+         border-radius:9px;background:rgba(91,140,255,.15);color:#dfe6ff;font-size:13px;cursor:pointer\">返回</button>\
+         </div>\
+         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}\
+         var BACK=new URLSearchParams(location.search).get('back')||'';\
+         window.dshDesktop._call('chrome.init',{{}}).then(function(i){{\
+           document.getElementById('ver').textContent='封装 v'+i.appVersion+' · dsh 内核 '+i.agentVersion+'（'+(i.agentSource||'bundled')+'）';\
+         }}).catch(function(){{document.getElementById('ver').textContent='版本信息暂不可用';}});</script></body>",
+        WS_PORT, BRIDGE_JS
+    )
+}
+
+/// 向导页：serve 真实 assets/onboarding.html，注入桥 + window.onboarding shim
+/// （对齐 onboarding-preload.js 的 list/submit/close 三键），并隐藏页面自绘标题栏
+/// （窗口控制由桥的 36px 玻璃栏承担）。
+fn wizard_page() -> String {
+    let file = resource_root().join("dsh-desktop").join("assets").join("onboarding.html");
+    let html = std::fs::read_to_string(&file).unwrap_or_else(|_| {
+        "<!doctype html><meta charset=utf-8><title>向导</title><body style=\"background:#0b1220;color:#dfe6ff;font-family:sans-serif;display:grid;place-items:center;height:100vh\">向导资源缺失（assets/onboarding.html）</body>".to_string()
+    });
+    let injection = format!(
+        "<script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{};\
+         window.onboarding={{\
+           list:function(){{return window.dshDesktop._call('onboard.list',{{}});}},\
+           submit:function(ids){{return window.dshDesktop._call('onboard.submit',{{ids:ids}});}},\
+           close:function(){{window.dshDesktop._call('onboard.close',{{}});}}\
+         }};</script>\
+         <style>.bar{{display:none!important}}</style>",
+        WS_PORT, BRIDGE_JS
+    );
+    let marker = "<meta charset=\"utf-8\" />";
+    if html.contains(marker) {
+        html.replacen(marker, &format!("{}{}", marker, injection), 1)
+    } else {
+        format!("{}{}", injection, html)
+    }
+}
+
 async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     eprintln!("[http] serve {}", path);
     // 真正消费请求头（读到空行）：未读数据残留会让连接以 RST 而非 FIN 收尾，
@@ -740,6 +854,27 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (loading_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/exit") {
         (exit_page(), "text/html; charset=utf-8")
+    } else if path.starts_with("/update") {
+        // /update?v=..&kind=..（client-update.show 通知方拼好）
+        let mut version = String::new();
+        let mut kind = "client".to_string();
+        if let Some(q) = path.split_once('?') {
+            for kv in q.1.split('&') {
+                if let Some((k, v)) = kv.split_once('=') {
+                    let v = v.replace("%3A", ":").replace("%5C", "\\").replace("%2F", "/").replace('+', " ");
+                    if k == "v" {
+                        version = v;
+                    } else if k == "kind" {
+                        kind = v;
+                    }
+                }
+            }
+        }
+        (update_page(&version, &kind), "text/html; charset=utf-8")
+    } else if path.starts_with("/about") {
+        (about_page(), "text/html; charset=utf-8")
+    } else if path.starts_with("/wizard") {
+        (wizard_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/died") {
         // /died?code=..&log=..（查询参数由 boot.server-died 处理方拼好）
         let mut code = "unknown".to_string();
@@ -898,6 +1033,47 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
                         let _ = win.navigate(parsed);
                     }
                 }
+            });
+        }
+        // ---- P4：更新链 / 关于页 / 向导（sidecar 通知 → 壳导航） ----
+        "client-update.show" => {
+            let version = params.get("version").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = params.get("kind").and_then(|k| k.as_str()).unwrap_or("client");
+            println!("[shell] update window show v={} kind={}", version, kind);
+            let back = current_web_url().map(|u| encode_back(&u)).unwrap_or_default();
+            navigate_main(app, format!("http://127.0.0.1:{}/update?v={}&kind={}&back={}", WS_PORT, encode_back(version), encode_back(kind), back));
+        }
+        "client-update.hide" => {
+            if let Some(url) = current_web_url() {
+                navigate_main(app, url);
+            }
+        }
+        "shell.about" => {
+            let back = current_web_url().map(|u| encode_back(&u)).unwrap_or_default();
+            navigate_main(app, format!("http://127.0.0.1:{}/about?back={}", WS_PORT, back));
+        }
+        "wizard.show" => {
+            println!("[shell] wizard show mode={:?}", params.get("mode"));
+            let back = current_web_url().map(|u| encode_back(&u)).unwrap_or_default();
+            navigate_main(app, format!("http://127.0.0.1:{}/wizard?back={}", WS_PORT, back));
+        }
+        "wizard.close" => {
+            if let Some(url) = current_web_url() {
+                navigate_main(app, url);
+            }
+        }
+        "shell.relaunch" => {
+            // agent 更新完成后整壳重启（Tauri restart 会退出并重新拉起自身）。
+            println!("[shell] relaunch requested (agent update)");
+            app.restart();
+        }
+        "shell.quit-for-update" => {
+            // 客户端更新交接：更新助手已 detached，壳整体优雅退出
+            // （ExitRequested 钩子会同步有界关停 sidecar/dsh web）。
+            println!("[shell] quit requested (client update handoff)");
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                app2.exit(0);
             });
         }
         _ => {}

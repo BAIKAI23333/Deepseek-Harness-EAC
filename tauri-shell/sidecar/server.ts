@@ -64,8 +64,8 @@ const MOUNTED = ['proc', 'runtime-paths', 'profile', 'guard-box', 'runtime-patch
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
 const desktopProfileFn = profileMod.desktopProfile as () => string;
-const showBoxFallback = async (opts: { title?: string; message?: string }) => {
-  say('[dialog] ' + ((opts && opts.title) || '') + ': ' + ((opts && opts.message) || ''));
+const showBoxFallback = async (opts: Record<string, unknown>) => {
+  say('[dialog] ' + String((opts && opts.title) || '') + ': ' + String((opts && opts.message) || ''));
   return { response: 0 };
 };
 const notifyFallback = (n: { title: string; body: string }) => say('[notify] ' + n.title + ': ' + n.body);
@@ -157,18 +157,45 @@ junctionPatrolMod.init({
   showMainWindow: () => say('showMainWindow (host-delegated)'),
   notify: notifyFallback,
 });
+// /update 进度页开关状态（showUpdateWindow/destroy 维护）。
+let updateWindowOpen = false;
 clientUpdateMod.init({
   log,
   showBox: showBoxFallback,
-  isQuitting: () => false,
+  isQuitting: () => quitting,
   getAppVersion: () => pkgVersion,
   getUserDataDir: () => userDataDir,
   getDshHome: () => dshHome,
-  // 更新窗口/进度推送是 GUI 能力：P2 起由 Rust 宿主实现后接入。
-  showUpdateWindow: () => null,
-  makeUpdateProgressPusher: () => ({ client: () => {}, agent: () => {}, force: () => {} }),
-  prepareQuitForClientUpdate: async () => { say('prepareQuitForClientUpdate (host-coordinated later)'); },
-  exitProcess: () => process.exit(0),
+  // 更新进度窗 = 壳层 /update 页（boot.server-died 同款「通知 → 壳导航」模式）。
+  // 返回句柄只维护 isDestroyed/destroy 语义，供流程 finally 清理。
+  showUpdateWindow: (version: string, kind: string) => {
+    updateWindowOpen = true;
+    notify('client-update.show', { version: version || '', kind: kind || 'client' });
+    return {
+      isDestroyed: () => !updateWindowOpen,
+      destroy: () => {
+        if (updateWindowOpen) {
+          updateWindowOpen = false;
+          notify('client-update.hide', {});
+        }
+      },
+    };
+  },
+  // 进度推送 → WS 广播（/update 页经 _onNotify 渲染）。
+  makeUpdateProgressPusher: () => ({
+    client: (received: number, total: number, meta?: unknown) =>
+      notify('client-update.progress', Object.assign({ channel: 'client', received: received, total: total }, meta && typeof meta === 'object' ? meta : {})),
+    agent: (stage: string) => notify('client-update.progress', { channel: 'agent', stage: stage }),
+    force: (m: unknown) => notify('client-update.progress', Object.assign({ channel: 'force' }, m && typeof m === 'object' ? m : {})),
+  }),
+  // 更新交接前有界关停 dsh web（= Electron prepareQuitForClientUpdate 的服务面）。
+  prepareQuitForClientUpdate: async () => {
+    say('prepareQuitForClientUpdate: 关停 dsh web');
+    try { await (bootMod.stopServer as () => Promise<void>)(); } catch (e) { say('关停失败（继续交接）: ' + String(((e as Error).message) || e)); }
+  },
+  // 更新交接后的「退出进程」= 壳整体优雅退出（ExitRequested 有界收口
+  // sidecar/dsh web）。不在 sidecar 直接 process.exit：通知帧可能未冲刷即截断。
+  exitProcess: () => { notify('shell.quit-for-update', {}); },
   // 打包态取壳层 exe 目录（DSH_SHELL_EXE）；开发态 sidecar 的 node 不适用。
   getExecDir: () => (process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : path.dirname(process.execPath)),
 });
@@ -283,6 +310,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     rescueIntegration.clearRescueState?.();
     notify('boot.web-ready', r);
     startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
+    scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
     return r;
   },
   'boot.stop': async (): Promise<RpcResult> => {
@@ -352,8 +380,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
 
 // P3 渐进收编：尚未在 sidecar 落地的桥方法返回 null（桥/插件侧按「无数据」
 // 降级，与桥断开时行为一致，不炸页面）。每收编一个真实现就从这里删除。
-// 剩余：向导窗口/恢复页/救援链（P3 壳层 GUI 能力）、更新检查与日志导出（P4）。
-const PENDING_BRIDGE_METHODS = ['wizard.open'];
+const PENDING_BRIDGE_METHODS: string[] = [];
 for (const m of PENDING_BRIDGE_METHODS) {
   methods[m] = (): null => null;
 }
@@ -722,14 +749,228 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
         const r = await (methods['boot.restart'] as (p2?: unknown) => Promise<Record<string, unknown>>)({} as Record<string, unknown>);
         return r;
       }
-      // check-agent-update / check-client-update / export-logs / about / feedback：
-      // P4 更新链与 GUI 对话框就位前的优雅占位（菜单静默关闭，无报错）。
+      // ---- P4 更新链 + 壳页动作（对齐 main.js 各 case 语义） ----
+      case 'check-client-update': {
+        try {
+          await (clientUpdateMod.runClientUpdateFlow as (manual: boolean) => Promise<void>)(true);
+        } catch (e) {
+          log('client-update', '手动检查失败: ' + String(((e as Error).message) || e));
+        }
+        return { ok: true };
+      }
+      case 'check-agent-update': {
+        try {
+          await runAgentUpdateFlow(true);
+        } catch (e) {
+          log('update', '手动检查失败: ' + String(((e as Error).message) || e));
+        }
+        return { ok: true };
+      }
+      case 'export-logs': {
+        const f = methods['recovery.export-logs'] as () => Promise<Record<string, unknown>>;
+        return typeof f === 'function' ? await f() : { ok: false, error: 'unavailable' };
+      }
+      case 'about': {
+        // 壳层把主窗导航到 /about（back=当前 webUrl），菜单本身无返回值。
+        notify('shell.about', {});
+        return { ok: true };
+      }
       default:
+        // 未知动作：菜单静默关闭，无报错（对齐占位语义）。
         return null;
     }
   },
 };
 Object.assign(methods, batch);
+
+// ---- P4 更新链（agent 内核更新流，对齐 main.js runUpdateFlow） -------------
+const updater = require(path.join(DSH_DESKTOP_ROOT, 'updater.js')) as {
+  checkLatest(c: unknown): Promise<string>;
+  activeVersion(c: unknown): string;
+  loadSettings(c: unknown): Record<string, unknown>;
+  saveSettings(c: unknown, s: unknown): void;
+  compareVersions(a: string, b: string): number;
+  applyUpdate(c: unknown, latest: string, o: { onProgress: (ev: string) => void }): Promise<void>;
+};
+const onboardingLogic = require(path.join(DSH_DESKTOP_ROOT, 'scripts', 'onboarding.js')) as {
+  CORE_PLUGIN_IDS: string[];
+  RECOMMENDED_PLUGIN_IDS: string[];
+  pluginCurrentState(entries: unknown[], plugins: unknown[]): Record<string, boolean>;
+  buildSelectionOps(plugins: unknown[], coreIds: string[], want: Set<string>, current: Record<string, boolean> | null): Array<{ id: string; enable: boolean }>;
+  sanitizeSelection(ids: unknown, plugins: unknown[], coreIds: string[]): Set<string>;
+  buildCatalog(plugins: unknown[], o: unknown): unknown[];
+};
+let agentUpdateBusy = false;
+
+async function runAgentUpdateFlow(manual: boolean): Promise<void> {
+  if (quitting) return;
+  if (agentUpdateBusy) {
+    if (manual) await showBoxFallback({ type: 'info', title: '更新', message: '更新正在进行中，请稍候。' });
+    return;
+  }
+  const c = (pathsMod.updCtx as () => unknown)();
+  let latest: string;
+  try {
+    latest = await updater.checkLatest(c);
+  } catch (err) {
+    log('update', '检查失败: ' + String(((err as Error).message) || err));
+    if (manual) {
+      await showBoxFallback({ type: 'warning', title: '检查更新失败', message: '无法连接 npm registry。' });
+    }
+    return;
+  }
+  const current = updater.activeVersion(c);
+  const settings = loadSettings();
+  if (updater.compareVersions(latest, current) <= 0) {
+    if (manual) await showBoxFallback({ type: 'info', title: '检查更新', message: '当前已是最新版本。' });
+    return;
+  }
+  if (!manual && settings.skipVersion === latest) return;
+  const { response } = await showBoxFallback({
+    type: 'info',
+    title: '发现新版本',
+    message: `官方 @deepseek-ai/dsh 发布了新版本：${latest}`,
+    buttons: ['立即更新', '跳过此版本', '稍后'],
+  });
+  if (response === 1) {
+    settings.skipVersion = latest;
+    saveSettings(settings);
+    return;
+  }
+  if (response === 2) return;
+  agentUpdateBusy = true;
+  updateWindowOpen = true;
+  notify('client-update.show', { version: latest, kind: 'agent' });
+  const progressAgent = (ev: string): void => notify('client-update.progress', { channel: 'agent', stage: ev });
+  try {
+    const g = (guardBoxMod.ensureGuard as () => { snapshot(r: string): unknown })();
+    if (!g.snapshot('pre-update:dsh:' + latest)) {
+      throw new Error('更新前保护快照失败（profile 不可读），已中止更新以保证可回滚。');
+    }
+    await updater.applyUpdate(c, latest, { onProgress: progressAgent });
+    updateWindowOpen = false;
+    notify('client-update.hide', {});
+    const { response: r2 } = await showBoxFallback({
+      type: 'info',
+      title: '更新完成',
+      message: `已更新到 @deepseek-ai/dsh@${latest}`,
+      detail: '重启应用后生效。',
+      buttons: ['立即重启', '稍后重启'],
+    });
+    if (r2 === 0) {
+      // 整壳重启（sidecar 随壳有界收口；run-state 属 Electron watchdog 机制，Tauri 用崩溃计数替代）。
+      notify('shell.relaunch', {});
+    }
+  } catch (err) {
+    log('update', '更新失败: ' + String(((err as Error).message) || err));
+    await showBoxFallback({ type: 'error', title: '更新失败', message: '未能完成更新，仍使用当前版本。' });
+  } finally {
+    agentUpdateBusy = false;
+    if (updateWindowOpen) {
+      updateWindowOpen = false;
+      notify('client-update.hide', {});
+    }
+  }
+}
+
+// ---- 内置插件选择向导（wizard.open / onboard.*，对齐 main.js ipc 面） -------
+// 页面 = 壳层 /wizard（serve assets/onboarding.html + 桥注入），RPC 走本表。
+const companionPlugins = () => (companionSyncMod.COMPANION_PLUGINS as unknown[]) || [];
+function pluginDirSize(dirName: string): number {
+  let total = 0;
+  try {
+    const walk = (dir: string): void => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.isFile()) total += fs.statSync(full).size;
+      }
+    };
+    walk(path.join(DSH_DESKTOP_ROOT, 'assets', 'plugins', dirName));
+  } catch { /* 未落盘按 0 展示 */ }
+  return total;
+}
+function buildOnboardingCatalog(): unknown[] {
+  return (onboardingLogic.buildCatalog as (p: unknown[], o: unknown) => unknown[])(companionPlugins(), {
+    coreIds: onboardingLogic.CORE_PLUGIN_IDS,
+    recommendedIds: onboardingLogic.RECOMMENDED_PLUGIN_IDS,
+    describe: (name: string) => ((pluginOpsMod.pluginManagerPackageDescription as (n: string) => string)(name)),
+    dirSize: (dirName: string) => pluginDirSize(dirName),
+  });
+}
+function pluginCurrentState(): Record<string, boolean> | null {
+  const { entries } = (pluginOpsMod.pluginManagerReadPatch as () => { entries: unknown[] })();
+  return (onboardingLogic.pluginCurrentState as (e: unknown[], p: unknown[]) => Record<string, boolean>)(entries, companionPlugins());
+}
+let wizardMode: 'first' | 'rerun' = 'rerun';
+
+Object.assign(methods, {
+  // 打开向导（设置页「选择向导」入口）：壳层导航主窗到 /wizard。
+  'wizard.open': (): RpcResult => {
+    wizardMode = 'rerun';
+    notify('wizard.show', { mode: wizardMode });
+    return { ok: true };
+  },
+  'onboard.list': (): RpcResult => ({
+    mode: wizardMode,
+    catalog: buildOnboardingCatalog(),
+    current: wizardMode === 'rerun' ? pluginCurrentState() : null,
+  }),
+  'onboard.submit': async (p: RpcParams): Promise<RpcResult> => {
+    const ids = p && Array.isArray(p.ids) ? p.ids : [];
+    try {
+      (profileMod.ensureDesktopProfileInit as () => void)();
+      const want = (onboardingLogic.sanitizeSelection as (i: unknown, p: unknown[], c: string[]) => Set<string>)(ids, companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS);
+      const current = wizardMode === 'rerun' ? pluginCurrentState() : null;
+      const ops = (onboardingLogic.buildSelectionOps as unknown as (
+        p: unknown[], c: string[], w: Set<string>, cur: Record<string, boolean> | null,
+      ) => Array<{ id: string; enable: boolean }>)(companionPlugins(), onboardingLogic.CORE_PLUGIN_IDS, want, current);
+      const errors: string[] = [];
+      for (const op of ops) {
+        try {
+          const res = (pluginOpsMod.pluginManagerSetEnabled as (id: string, en: boolean) => { ok: boolean; error?: string })(op.id, op.enable);
+          if (!res.ok) errors.push(op.id + ': ' + (res.error || 'unknown'));
+          else log('plugin-manager', '向导已' + (op.enable ? '启用' : '停用') + '内置插件 ' + op.id);
+        } catch (err) {
+          errors.push(op.id + ': ' + String(((err as Error).message) || err));
+        }
+      }
+      const s = loadSettings();
+      s.pluginOnboardingDone = true;
+      s.builtinPluginSelection = Array.from(want);
+      saveSettings(s);
+      log('boot', '插件选择向导已应用：' + ops.length + ' 个插件状态变更' + (errors.length ? '，失败 ' + errors.join('; ') : ''));
+      const mode = wizardMode;
+      notify('wizard.close', { applied: ops.length });
+      if (mode === 'rerun') {
+        // 二次向导：重启 Web 服务让 host 侧插件生效（与市场安装后同路径）。
+        await (methods['boot.restart'] as (p2?: unknown) => Promise<Record<string, unknown>>)({} as Record<string, unknown>);
+      }
+      return { ok: true, applied: ops.length, errors };
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
+  'onboard.close': (): RpcResult => {
+    notify('wizard.close', { cancelled: true });
+    return { ok: true };
+  },
+});
+
+// ---- 自动更新定时器（对齐 main.js：启动 60s 首检 + 12h 周期） ----------------
+// boot.start 成功后调度一次；重复调用幂等。待装更新（下载完未安装）优先提示。
+let autoUpdateScheduled = false;
+function scheduleAutoUpdateChecks(): void {
+  if (autoUpdateScheduled) return;
+  autoUpdateScheduled = true;
+  setTimeout(() => {
+    try { (clientUpdateMod.offerPendingClientUpdate as () => void)(); } catch { /* 无待装更新 */ }
+    (clientUpdateMod.runClientUpdateFlow as (m: boolean) => Promise<void>)(false).catch(() => { /* 网络失败不打扰 */ });
+  }, 60000).unref();
+  setInterval(() => {
+    (clientUpdateMod.runClientUpdateFlow as (m: boolean) => Promise<void>)(false).catch(() => { /* 网络失败不打扰 */ });
+  }, 12 * 3600 * 1000).unref();
+}
 
 // ---- 救援链（硬门槛②；实现于 rescue-integration.ts，同产物编译） ----------
 const rescueIntegration = require('./rescue-integration') as {
