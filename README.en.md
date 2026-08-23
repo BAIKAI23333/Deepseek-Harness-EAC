@@ -68,16 +68,21 @@ On top of the official foundation, EAC embraces community creations — skins, p
 
 ### Windows
 
-> GitHub has no single-file size limit, so you can download the complete package directly.
+> Since v5.0 the desktop shell is Tauri (Rust) — smaller, faster to start. Download directly from Releases.
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | No installation required; double-click to run and carry it on a USB drive | ~226 MB |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | Installs to the system and creates desktop and Start Menu shortcuts | ~241 MB |
+| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek%20Harness%20EAC_5.0.0_x64-setup.exe) | Installs to the system and creates shortcuts; **automatically takes over an existing Electron install** | ~155 MB |
+| [Portable zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-5.0.0-portable.zip) | No installation required; extract and run `dsh-eac-shell.exe` | ~500 MB |
 
 See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases) for more versions.
 
-> ⚠️ **Install or place the app in an ASCII-only path** (the default `C:\Users\<you>\AppData\Local\Programs\` is fine). Non-ASCII paths such as `D:\迅雷下载\` can trigger a native Chromium renderer crash, causing the window to close automatically after several seconds.
+> 💡 **Upgrading from v4.x (Electron)**: just run the new Setup — it silently
+> uninstalls the old shell and takes over (same directory, same shortcuts).
+> Plugins, skins, sessions and settings are preserved: data lives in
+> `%APPDATA%\Deepseek Harness EAC\` and `~/.dsh`, untouched by the upgrade.
+> Legacy single-exe portable users should switch to the portable zip; in-app
+> self-update now swaps the whole app tree.
 
 ### Linux (x64)
 

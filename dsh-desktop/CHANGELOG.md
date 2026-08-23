@@ -24,6 +24,36 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
 排队消费对 update 类任务遗漏）；本地链接（link:/file:）插件从上游接管更新
 （junction EPERM 处理 + 失败回滚）；24h 发布保护期过滤；市场自身经官方
 内置插件更新自更新）→
+5.0.0（本版：桌面壳切换 Tauri —— Rust L1 壳 + Node sidecar L2 + dsh 内核
+零改动 L3 三层架构（ADR 0002）；安装包体积 241MB → 155MB；全功能桥
+（窗口/托盘/浮窗隔离/退出策略/救援链/快捷方式维护）；自更新接线（客户端
+整树交换 + agent 更新 + 自动检查定时器）；安装器自动接管旧 Electron 版；
+新增 /update /about /wizard 壳页；便携版改 zip 分发；Electron 链路冻结
+保留为可回退救生索）→
+
+## [5.0.0] · 2026-08-23
+
+### 桌面壳切换 Tauri（Rust），Electron 冻结保留
+
+- **三层壳边界（ADR 0002）**：L1 Rust 壳（窗口/托盘/浮窗/退出策略/壳页路由）
+  ↔ L2 Node sidecar（lib/desktop 全模块 + boot-server 服务编排 + 桥方法面）
+  ↔ L3 dsh 内核零改动。安装包从 ~241MB 降至 ~155MB。
+- **打包链路（P4）**：实测 Tauri v2 resources map 装出「exe 同级 sidecar/ +
+  dsh-desktop/」布局并修正 `resource_root()` 解析；`stage-resources.mjs`
+  装配运行树；`make-portable.mjs` 产出便携 zip（含 `.dsh-portable` 标记）。
+- **自更新接线（硬门槛③）**：客户端更新 = zip 整树交换（便携）/ Setup /S
+  （安装版），进度经壳层 `/update` 页实时展示；agent（dsh 内核）更新流移植
+  sidecar；启动 60s 首检 + 12h 周期自动检查；`update-smoke.js` 端到端冒烟。
+- **升级接管**：安装器自动检测旧 Electron 壳卸载键（productName 与
+  identifier 双候选），静默卸载后接管安装；脏值防御（卸载器缺失只清键）。
+- **壳页补全**：`/about`（关于）、`/wizard`（内置插件选择向导，serve 真实
+  onboarding.html + 桥 shim）、`/update`（更新进度）；menu.action 收编
+  check-client-update / check-agent-update / export-logs / about。
+- **验证资产**：`gui-smoke.js` 18 项 GUI 冒烟（安装形态全绿）、
+  `update-smoke.js` 10 项自更新冒烟、`npm test` 613 用例全绿。
+- **Electron 冻结**：main.js / preload.js / electron-builder.yml 标注
+  FROZEN，链路完整保留（`npx electron .` 可回退）；TS 迁移余量 7 个根模块
+  随 Electron 链路一并冻结。
 
 ## [4.6.0] · 2026-08-20
 

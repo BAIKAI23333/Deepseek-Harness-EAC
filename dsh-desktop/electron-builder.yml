@@ -1,3 +1,6 @@
+# ⚠️ FROZEN (v5.0, 2026-08)：Electron 打包配置冻结维护（可回退救生索）。
+# v5.0 默认分发走 Tauri：tauri-shell/tauri.conf.json + stage-resources.mjs
+# + make-portable.mjs。本文件保留以支持 `npm run dist` 回退产出。
 appId: com.deepseek.dsh.desktop
 # No version suffix in productName: a versioned install dir gets nested on
 # upgrades (.../v1.0/v2.0) when the registry keeps the old INSTALLDIR, which

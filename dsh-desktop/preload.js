@@ -1,5 +1,9 @@
 'use strict';
 
+// ⚠️ FROZEN (v5.0, 2026-08)：随 Electron 主链路冻结维护。
+// Tauri 壳的对应实现是 tauri-shell/sidecar/bridge.ts（键集契约由
+// bridge-preload-parity.test.mjs 双侧锁定，改任一侧必须同步另一侧）。
+
 // DSH Desktop — frameless window chrome + IPC bridge (sandbox-safe preload).
 //
 // 职责：

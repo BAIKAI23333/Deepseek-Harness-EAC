@@ -1,5 +1,9 @@
 'use strict';
 
+// ⚠️ FROZEN (v5.0, 2026-08)：Electron 主链路已冻结维护——仅作为 Tauri 壳
+// （tauri-shell/）的可回退救生索保留；除安全修复外不再新增功能。
+// 默认入口与分发产物见 tauri-shell/（ADR 0002 三层架构）。
+
 // DSH Desktop — Electron shell around the DeepSeek Harness browser UI.
 //
 // What it does:

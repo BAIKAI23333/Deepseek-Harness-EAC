@@ -68,16 +68,22 @@
 
 ### Windows
 
-> GitHub 无单文件大小限制，可直接下载完整安装包。
+> v5.0 起桌面壳切换为 Tauri（Rust），体积更小、启动更快；安装包直接从 Release 下载。
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | 免安装，双击即用，可放 U 盘 | ~226 MB |
-| [安装版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | 安装到系统，创建桌面/开始菜单快捷方式 | ~241 MB |
+| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek%20Harness%20EAC_5.0.0_x64-setup.exe) | 安装到系统，创建快捷方式；**自动检测并接管旧版 Electron 壳** | ~155 MB |
+| [便携版 zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-5.0.0-portable.zip) | 免安装解压即用，可放任意目录 | ~500 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
-> ⚠️ **务必安装/放置到纯英文路径**（默认 `C:\Users\<你>\AppData\Local\Programs\` 即可）：中文路径（如 `D:\迅雷下载\`）会触发 Chromium 渲染进程原生崩溃，窗口弹出数十秒后自动退出。
+> 💡 **v5.0 升级说明（老用户必读）**：
+> - 直接运行新版 Setup 即可，安装器会**自动静默卸载旧 Electron 版并接管**
+>   （同目录、同快捷方式名）；
+> - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
+>   与 `~/.dsh`，升级过程不触碰；
+> - 旧版「便携单 exe」用户请改用便携 zip（解压后双击 `dsh-eac-shell.exe`），
+>   应用内自更新此后按「整树交换」进行。
 
 ### Linux（x64）
 
@@ -102,14 +108,18 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 
 ### 数据目录
 
-> 便携版数据目录在 exe 旁的 `data\`；安装版在 `%APPDATA%\Deepseek Harness EAC\`。
+> 桌面端配置在 `%APPDATA%\Deepseek Harness EAC\`（设置/更新缓存），dsh 数据
+> 在 `~/.dsh`（`DSH_HOME`，会话与 API Key 与 CLI 共享）。安装版与便携版一致。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
 ### 升级方式
 
-- **客户端本体**：启动后自动检查上游新版本（GitHub Releases 双源回退），经你同意后下载安装；便携版原地替换自动重启，安装版引导新安装包。失败自动保留当前版本。
+- **客户端本体**：启动后自动检查上游新版本（GitHub Releases 双源回退），经你同意后下载安装；
+  便携版下载整包后自动「目录树交换」并重启，安装版引导新 Setup 静默覆盖。
+  失败自动保留当前版本。
 - **官方 agent（dsh）**：自动检测 `@deepseek-ai/dsh` 新版本，同意后安装到数据目录 overlay，原子切换，新版启动失败可一键回退内置版本。
-- 也可直接下载上方最新安装包覆盖安装，数据不会丢失；v2.0 起安装器在卸载旧版前自动结束运行中的新旧进程，覆盖安装不再报 "Failed to uninstall old application files"。
+- 也可直接下载上方最新安装包覆盖安装，数据不会丢失；v5.0 安装器还会自动
+  接管旧 Electron 版（检测到即静默卸载后再安装）。
 
 ---
 
@@ -182,42 +192,71 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 
 ## 开发者文档
 
-### 从源码构建
+### 从源码构建（Tauri 壳，v5.0 默认）
 
 ```powershell
 cd dsh-desktop
 npm install
-npm run fetch-runtime    # 内置 node.exe + npm CLI
+npm run fetch-runtime            # 内置 node.exe + npm CLI
+node tauri-shell/stage-resources.mjs   # 装配打包资源（sidecar + dsh-desktop 运行树）
+cd tauri-shell
+npx -y @tauri-apps/cli@2 build   # release 构建 + NSIS 安装包
+node make-portable.mjs           # 便携 zip（可选）→ target/release/portable/
+
+# 开发态（热迭代）：cargo run（Rust 工具链需 RUSTUP_HOME/CARGO_HOME）
+```
+
+> Rust 工具链：rustup + MSVC；NSIS 打包由 Tauri 自动下载（`%LOCALAPPDATA%\tauri\NSIS`）。
+> 偶发 `makensis` mmap error（杀软放大触发）——重跑即可。
+
+<details>
+<summary>Electron 壳（v4 冻结维护，仅回退用）</summary>
+
+```powershell
+cd dsh-desktop
+npm install
+npm run fetch-runtime
 npm run dist             # 构建 portable + NSIS 安装包 → dist/
 ```
 
 > 网络受限时：Electron 镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 
+</details>
+
 运行测试：
 
 ```powershell
-npm test                 # node --test test/*.test.mjs
+cd dsh-desktop
+npm test                 # node --test test/*.test.mjs（pretest 含 tsc 全量类型检查）
+node ../gui-smoke.js     # Tauri 壳 GUI 冒烟（18 项，需先 cargo build）
+node ../update-smoke.js  # 自更新链路冒烟（mock 发布源 + 目录树交换）
 ```
 
-### 架构
+### 架构（v5.0：三层壳边界，ADR 0002）
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Electron 壳 (main.js)                                   │
-│  · 单实例锁 / 窗口 / 菜单 / 生命周期                       │
-│  · 会话完成监听 (session-watcher.js) → 系统通知            │
-│  · 官方更新 (updater.js) → 用户同意后安装 overlay          │
-│  · 客户端自更新 (client-updater.js) → 下载/替换/重启       │
-│  · spawn vendor|resources 里的 node.exe                   │
+│  L1 Rust 壳 (tauri-shell/src/main.rs)                    │
+│  · 单实例锁 / 主窗+浮窗 / 托盘 / 退出策略                  │
+│  · 壳层 WS 方法本地拦截（win.* / menu 壳动作 / 日志）       │
+│  · 壳页 HTTP 路由（/loading /exit /died /update /about /wizard）│
+│  · spawn sidecar（stdio JSON-RPC）+ WS 中继 127.0.0.1:19873│
 └──────────────┬───────────────────────────────────────────┘
-               │  dsh web --host 127.0.0.1 --port 0
+               │  stdio JSON-RPC（L1 ↔ L2）
                ▼
-       内置 node.exe + @deepseek-ai/dsh
-       路径解析：用户目录 overlay > 内置包
+┌──────────────────────────────────────────────────────────┐
+│  L2 Node sidecar (tauri-shell/sidecar/server.ts)          │
+│  · 挂载 lib/desktop/* 全部模块 + boot-server 服务编排      │
+│  · 桥方法面（chrome.init / balance / plugins / rescue /    │
+│    client-update / onboard.* / menu.action …）             │
+└──────────────┬───────────────────────────────────────────┘
+               │  spawn vendor/node + dsh web --port 0
+               ▼
+       L3 dsh 内核（@deepseek-ai/dsh，零改动）
        输出 "dsh web: http://127.0.0.1:<port>"
-               │  解析 URL，轮询 HTTP 200
+               │  webUrl 经通知回传 L1
                ▼
-       原生窗口加载 Web UI（仅本机回环访问）
+       主窗导航真实 Web UI（仅本机回环访问）
 ```
 
 ### 目录结构
