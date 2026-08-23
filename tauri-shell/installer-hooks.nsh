@@ -60,7 +60,26 @@
   ${EndIf}
 !macroend
 
+;   3. 升级/接管前结束运行中的应用进程树（用户实测反馈：安装时报
+;      「不能打开要写入的文件: ...\dsh-pet\assets\thumb\东张西望.webm」——
+;      旧壳运行中（宠物动画等资源被占用）时，卸载与解压都会撞锁）。
+;      taskkill /T 按镜像名整树终结（node sidecar / dsh web 均为子孙进程，
+;      一并结束释放句柄）；进程不存在时退出码非零，属预期，不视为失败。
+
+!macro DSH_KillAppExe EXENAME
+  DetailPrint "DSH EAC: 结束运行中的 ${EXENAME} 进程树（升级需独占安装文件）"
+  nsExec::ExecToLog 'taskkill /F /T /IM "${EXENAME}"'
+  Pop $R1
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
+  ; 先杀进程再接管：旧壳运行中时其卸载器删不动被占用文件，宠物插件
+  ; webm 等资源锁不释放则解压同样报「不能打开要写入的文件」。
+  !insertmacro DSH_KillAppExe "dsh-eac-shell.exe"
+  !insertmacro DSH_KillAppExe "Deepseek Harness EAC.exe"
+  ; 句柄异步释放，给文件系统一点缓冲。
+  nsExec::ExecToLog 'ping -n 3 -w 500 127.0.0.1'
+  Pop $R1
   !insertmacro DSH_TakeoverOldShell "Deepseek Harness EAC"
   !insertmacro DSH_TakeoverOldShell "com.deepseek.dsh.desktop"
 !macroend
