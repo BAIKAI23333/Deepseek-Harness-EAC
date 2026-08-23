@@ -646,7 +646,60 @@ export function syncCompanionPlugins(): void {
     } catch (err) {
       ctx.log('boot', '写入内置插件清单失败: ' + (err as Error).message);
     }
-    // 注册到 profile 的 patch 层（幂等：已有行不重写，用户选择的皮肤/disabled 状态保留）。
+    ensurePluginHostDeps(profileDirP);
+    // 配套插件的宿主依赖兜底（真实目录，非链接）。rc.2 起 dsh-app-boot 首启会
+// 重建 <home>/profiles/node_modules 共享层：dev 时代指向宿主工程的符号链接
+// 与历史手工副本会被清掉，而 web-app 闭包不传递依赖 schemastery ——
+// better-sidebar / dsh-side-session 等 require 它会 ERR_MODULE_NOT_FOUND
+// 拖垮整个插件树（dsh web 退出码 1，「DSH 服务已停止」）。共享层归内核管
+// 理随时可能重建；插件层 <profile>/node_modules 不会被重建，在这里落真实
+// 副本（版本戳幂等，升级版本变化才重拷）。
+function ensurePluginHostDeps(profileDirP: string): void {
+  const copied = new Set<string>();
+  const ensureCopy = (rel: string, depth: number): void => {
+    if (depth > 4 || copied.has(rel)) return;
+    const src = path.join(APP_ROOT, 'node_modules', rel);
+    const srcPj = path.join(src, 'package.json');
+    const srcPkg = readJsonFile(srcPj);
+    const version = srcPkg && typeof srcPkg.version === 'string' ? srcPkg.version : '';
+    if (!version) return;
+    copied.add(rel);
+    const dest = path.join(profileDirP, 'node_modules', rel);
+    const stamp = path.join(dest, '.eac-host-dep.json');
+    const prev = readJsonFile(stamp);
+    const fresh = prev && prev.version === version && fs.existsSync(path.join(dest, 'package.json'));
+    if (!fresh) {
+      try {
+        fs.rmSync(dest, { recursive: true, force: true });
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.cpSync(src, dest, { recursive: true });
+        fs.writeFileSync(stamp, JSON.stringify({ version, at: new Date().toISOString() }, null, 2) + '\n');
+        ctx.log('boot', `已落位插件宿主依赖 ${rel}@${version}（真实目录，重建免疫）`);
+      } catch (err) {
+        ctx.log('boot', `宿主依赖落位失败 ${rel}: ` + String(((err as Error).message) || err));
+        return;
+      }
+    }
+    // 递归落位该包的 dependencies（应用树已提升的同名包；共享层若另有供应，
+    // 插件层的副本同版本族不冲突，以插件树自洽优先）。
+    const deps = (srcPkg && srcPkg.dependencies) as Record<string, string> | undefined;
+    if (deps && typeof deps === 'object') {
+      for (const dep of Object.keys(deps)) {
+        if (fs.existsSync(path.join(APP_ROOT, 'node_modules', dep, 'package.json'))) {
+          ensureCopy(dep, depth + 1);
+        }
+      }
+    }
+  };
+  ensureCopy('schemastery', 0);
+  // cosmokit 只在共享层没有时兜底（避免遮蔽内核闭包内的配套版本）。
+  const sharedCosmo = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules', '@deepseek-ai', 'cosmokit');
+  if (!fs.existsSync(sharedCosmo)) {
+    ensureCopy(path.join('@deepseek-ai', 'cosmokit'), 0);
+  }
+}
+
+// 注册到 profile 的 patch 层（幂等：已有行不重写，用户选择的皮肤/disabled 状态保留）。
     const patchFile = path.join(profileDirP, 'cordis.patch.yml');
     let patch = '';
     try { patch = fs.readFileSync(patchFile, 'utf8'); } catch { patch = ''; }
