@@ -4255,8 +4255,16 @@ function syncCompanionPlugins() {
       }
     }
     // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
+    // 禁用的皮肤黑名单（因兼容性问题或崩溃而禁用）
+    const DISABLED_SKINS = ['maid-atelier'];
+    
     for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
+      // 跳过禁用的皮肤
+      if (DISABLED_SKINS.includes(entry.name)) {
+        log('boot', `跳过禁用的皮肤: ${entry.name}`);
+        continue;
+      }
       const src = path.join(SKINS_DIR, entry.name);
       const pkg = readJsonFile(path.join(src, 'package.json'));
       if (!pkg || typeof pkg.name !== 'string' || !pkg.name.includes('/')) continue;
