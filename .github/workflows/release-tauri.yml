@@ -96,6 +96,10 @@ jobs:
       - name: 将标签版本号写入 package.json
         run: npm version ${{ steps.tag.outputs.version }} --no-git-tag-version --allow-same-version
 
+      - name: 将标签版本号写入 tauri.conf.json
+        working-directory: tauri-shell
+        run: node -e "const fs=require('fs');const f='tauri.conf.json';const c=JSON.parse(fs.readFileSync(f,'utf8'));c.version='${{ steps.tag.outputs.version }}';fs.writeFileSync(f,JSON.stringify(c,null,2)+'\n')"
+
       - name: 运行测试
         run: npm test
 
@@ -106,8 +110,6 @@ jobs:
       - name: 构建 Tauri（release + NSIS）
         working-directory: tauri-shell
         run: npx -y @tauri-apps/cli@2 build
-        # ⚠️ tauri.conf.json 的 version 为硬编码（当前 5.0.0）；跨版本发版时需
-        #    先把它改为随标签注入（如 --config 覆盖或改读 Cargo.toml 版本）。
 
       - name: 同步版本号进安装包名并打便携 zip
         working-directory: tauri-shell

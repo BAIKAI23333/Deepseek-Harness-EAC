@@ -39,9 +39,9 @@ const cu = require(path.join(repo, 'dsh-desktop', 'client-updater.js'));
   // 新版本 zip：顶层 { dsh-eac-shell.exe, .dsh-portable, sidecar/server.js }
   const newTree = path.join(work, 'new-tree');
   for (const d of [path.join(newTree, 'sidecar')]) fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(newTree, 'dsh-eac-shell.exe'), 'NEW-EXE-BYTES-v5.0.1');
+  fs.writeFileSync(path.join(newTree, 'dsh-eac-shell.exe'), 'NEW-EXE-BYTES-v5.1.1');
   fs.writeFileSync(path.join(newTree, '.dsh-portable'), '');
-  fs.writeFileSync(path.join(newTree, 'sidecar', 'server.js'), '// new v5.0.1');
+  fs.writeFileSync(path.join(newTree, 'sidecar', 'server.js'), '// new v5.1.1');
   execFileSync('powershell', ['-NoProfile', '-Command',
     "$ProgressPreference='SilentlyContinue'; Compress-Archive -LiteralPath (Get-ChildItem -LiteralPath $env:P_SRC | ForEach-Object { $_.FullName }) -DestinationPath $env:P_DST -Force",
   ], { env: { ...process.env, P_SRC: newTree, P_DST: path.join(work, 'new.zip') }, stdio: 'ignore' });
@@ -51,12 +51,12 @@ const cu = require(path.join(repo, 'dsh-desktop', 'client-updater.js'));
   const srv = http.createServer((req, res) => {
     if (req.url === '/releases') {
       const body = JSON.stringify([{
-        tag_name: 'v5.0.1',
-        name: 'v5.0.1',
+        tag_name: 'v5.1.1',
+        name: 'v5.1.1',
         body: 'mock release',
         assets: [
-          { name: 'Deepseek-Harness-EAC-5.0.1-portable.zip', browser_download_url: `${base}/new.zip`, size: zipBuf.length },
-          { name: 'Deepseek-Harness-EAC_5.0.1_x64-setup.exe', browser_download_url: `${base}/setup.exe`, size: zipBuf.length },
+          { name: 'Deepseek-Harness-EAC-5.1.1-portable.zip', browser_download_url: `${base}/new.zip`, size: zipBuf.length },
+          { name: 'Deepseek-Harness-EAC_5.1.1_x64-setup.exe', browser_download_url: `${base}/setup.exe`, size: zipBuf.length },
         ],
       }]);
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -79,8 +79,8 @@ const cu = require(path.join(repo, 'dsh-desktop', 'client-updater.js'));
     check('isTauriPortable 判定（标记文件）', cu.isTauriPortable() === true);
 
     const ctx = { userDataDir: updatesDir, log: () => {} };
-    const release = await cu.checkLatest(ctx, '5.0.0');
-    check('checkLatest 经 mock 源发现 5.0.1', release.isNewer === true && release.version === '5.0.1', `v${release.version} newer=${release.isNewer}`);
+    const release = await cu.checkLatest(ctx, '5.1.0');
+    check('checkLatest 经 mock 源发现 5.1.1', release.isNewer === true && release.version === '5.1.1', `v${release.version} newer=${release.isNewer}`);
 
     const sel = cu.selectAsset(release);
     check('selectAsset 选中 portable.zip', /\.zip$/i.test(sel.name), sel.name);
@@ -99,8 +99,8 @@ const cu = require(path.join(repo, 'dsh-desktop', 'client-updater.js'));
     execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps,
       '-ZipPath', dl.filePath, '-InstallDir', installDir, '-AppPid', '0'], { stdio: 'ignore' });
 
-    check('新 exe 已就位', fs.readFileSync(path.join(installDir, 'dsh-eac-shell.exe'), 'utf8') === 'NEW-EXE-BYTES-v5.0.1');
-    check('sidecar 已交换', fs.readFileSync(path.join(installDir, 'sidecar', 'server.js'), 'utf8') === '// new v5.0.1');
+    check('新 exe 已就位', fs.readFileSync(path.join(installDir, 'dsh-eac-shell.exe'), 'utf8') === 'NEW-EXE-BYTES-v5.1.1');
+    check('sidecar 已交换', fs.readFileSync(path.join(installDir, 'sidecar', 'server.js'), 'utf8') === '// new v5.1.1');
     check('.dsh-portable 标记保留', fs.existsSync(path.join(installDir, '.dsh-portable')));
     check('staging 已清理', !fs.existsSync(path.join(installDir, '.update-staging')));
     check('交换日志落盘', fs.existsSync(path.join(updatesDir, 'apply-update.log')));
