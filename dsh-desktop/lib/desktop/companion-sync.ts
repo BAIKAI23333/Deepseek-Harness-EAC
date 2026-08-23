@@ -214,6 +214,11 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 默认禁用 —— 与内置 picturereader 的「粘贴即用/图片桥自动分析」入口
   // 语义重叠，避免粘贴图片时重复/竞争注入。
   { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
+  // 提示词优化（dsh-webui-prompt-optimizer 0.1.0，提取自 statem-li/dsh-webui）：
+  // 输入区右侧优化图标，用当前会话模型流式改写提示词；单轮写回草稿、
+  // 多轮并行出「均衡/精简/详尽」三候选择优迭代，可包装 /goal。
+  // 纯客户端 + host 半边（loopback 路由），peer 依赖全部由 dsh 宿主提供。
+  { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer', dir: 'dsh-webui-prompt-optimizer' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -470,8 +475,24 @@ export function retireRemovedBuiltinPlugins(profileDirP: string): void {
   }
 }
 
+// 安全模式守卫：<home>/guard/safe-mode.json active 时，配套插件的 patch 行
+// 追加必须停摆——否则「安全模式重启」后 sync 会把全部插件行写回 patch，
+// 下一次服务重启时安全模式被静默击穿（快照恢复前用户始终处于假安全模式）。
+// 插件包文件拷贝不受影响（加载由 patch 行驱动，拷贝只是让文件就位）。
+function safeModeActive(): boolean {
+  try {
+    const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
+    const st = JSON.parse(fs.readFileSync(path.join(home, 'guard', 'safe-mode.json'), 'utf8')) as { active?: boolean };
+    return st?.active === true;
+  } catch {
+    return false;
+  }
+}
+
 export function syncCompanionPlugins(): void {
   if (!IS_WIN) return;
+  const inSafeMode = safeModeActive();
+  if (inSafeMode) ctx.log('boot', '安全模式激活中：跳过配套插件 patch 行同步（退出安全模式后恢复）');
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
@@ -670,7 +691,8 @@ export function syncCompanionPlugins(): void {
       changed = true;
       ctx.log('boot', '已移除与 bundle 登记重复的 patch 行: ' + deduped.removed.join(', '));
     }
-    for (const p of pending) {
+    // 安全模式下不回写配套行（见 safeModeActive 注释）；退役清理与去重照常。
+    for (const p of inSafeMode ? [] : pending) {
       if (hasEntryId(patch, p.id)) continue;
       // 已在 bundle 列表里的插件由其包内 patch 挂载，overlay 不能再写行
       // （会 duplicate loader entry id，拖垮整个插件树）。issue #16：
