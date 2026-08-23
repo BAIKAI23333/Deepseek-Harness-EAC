@@ -30,6 +30,8 @@ const updater = require('../../updater') as {
   overlayBinPath(c: UpdCtx): string | null;
   activeVersion(c: UpdCtx): string | null;
   overlayVersion(c: UpdCtx): string | null;
+  bundledVersion(): string | null;
+  compareVersions(a: string, b: string): number;
 };
 
 let ctx!: RuntimePathsCtx;
@@ -62,15 +64,31 @@ export function updCtx(): UpdCtx {
   };
 }
 
-// Updated overlay takes precedence over the bundled copy.
+// Updated overlay takes precedence over the bundled copy — 除非 overlay 比
+// 随包内置内核旧（应用升级后，过时的官方更新 overlay 不得遮蔽更新的内置内核；
+// 平局仍取 overlay，保持既有语义）。
+function effectiveOverlay(): string | null {
+  const c = updCtx();
+  const ov = updater.overlayBinPath(c);
+  if (!ov || !fs.existsSync(ov)) return null;
+  const ovVer = updater.overlayVersion(c);
+  const bundled = updater.bundledVersion();
+  if (ovVer && bundled && updater.compareVersions(ovVer, bundled) < 0) return null;
+  return ov;
+}
+
 export function dshBin(): string {
-  const ov = updater.overlayBinPath(updCtx());
-  if (ov && fs.existsSync(ov)) return ov;
+  const ov = effectiveOverlay();
+  if (ov) return ov;
   return require.resolve('@deepseek-ai/dsh/lib/bin.js');
 }
 
-export function dshVersion(): string { return updater.activeVersion(updCtx()) || '未知'; }
+export function dshVersion(): string {
+  const c = updCtx();
+  if (effectiveOverlay()) return updater.overlayVersion(c) || updater.activeVersion(c) || '未知';
+  return updater.bundledVersion() || '未知';
+}
 
 export function dshVersionSource(): string {
-  return updater.overlayVersion(updCtx()) ? '用户目录（已更新）' : '内置';
+  return effectiveOverlay() ? '用户目录（已更新）' : '内置';
 }

@@ -13,7 +13,14 @@ window.__ModuleLoader__.load({
 
 		const react = require("react");
 		const { jsx, jsxs } = require("react/jsx-runtime");
-		const { bindSnapshotSelector } = require("@deepseek-ai/dsh-client-web-react");
+		const { useSyncExternalStoreWithSelector } = require("@deepseek-ai/dsh-client-ui-renderer");
+		// dsh-client-web-react 0.1.1-rc.2 起停发：ui-renderer 导出同源 uSES-with-selector，
+		// 在此以相同语义重建 bindSnapshotSelector（旧包 bind.ts 的逐行等价实现）。
+		const bindSnapshotSelector = (w) => {
+			const subscribe = (fn) => w.subscribe(fn);
+			const getSnapshot = () => w.getSnapshot();
+			return (sel, eq) => useSyncExternalStoreWithSelector(subscribe, getSnapshot, void 0, sel, eq);
+		};
 		const { Button } = require("@deepseek-ai/dsh-client-ui-primitives");
 
 		const NS = "dsh-prompt";

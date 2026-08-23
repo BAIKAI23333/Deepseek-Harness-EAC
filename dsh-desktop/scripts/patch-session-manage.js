@@ -59,8 +59,11 @@ const HOST_API_ANCHOR = 'return ok(request, { archivedSessionIds: [...ctx.worksp
 const HOST_API_INSERT = 'return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t},\n\t\t\tasync unarchiveSession(request) {\n\t\t\t\tconst { sessionId } = request.payload;\n\t\t\t\tawait ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\t\t\treturn ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] });\n\t\t\t},\n\t\t\tasync deleteSession(request) {\n\t\t\t\tconst { sessionId } = request.payload;\n\t\t\t\t// 拒绝「正在运行」的会话（agent 活跃时写路径会重建目录，删除不安全）。\n\t\t\t\tif (dshSessionRunningState.get(sessionId) === true) {\n\t\t\t\t\treturn err(request, {\n\t\t\t\t\t\tcode: "session-running",\n\t\t\t\t\t\tmessage: "cannot delete a running session: stop it first",\n\t\t\t\t\t\tdetails: { sessionId }\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t\ttry {\n\t\t\t\t\t// 会话目录布局（dsh-session-persistence-jsonl 约定，注入时同步复制）：\n\t\t\t\t\t// <sessionsRoot>/<projectKey(cwd)>/<encodeSegment(id)>/ 。\n\t\t\t\t\tconst headers = await ctx.get("sessionPersistence").list();\n\t\t\t\t\tconst header = headers.find((entry) => entry && entry.id === sessionId);\n\t\t\t\t\tif (header !== void 0) {\n\t\t\t\t\t\tconst encodeSeg = (raw) => {\n\t\t\t\t\t\t\tif (raw === ".") return "~002E";\n\t\t\t\t\t\t\tif (raw === "..") return "~002E~002E";\n\t\t\t\t\t\t\tlet out = "";\n\t\t\t\t\t\t\tfor (let i = 0; i < raw.length; i++) {\n\t\t\t\t\t\t\t\tconst code = raw.charCodeAt(i);\n\t\t\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\t\t\tif (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) out += ch;\n\t\t\t\t\t\t\t\telse out += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn out;\n\t\t\t\t\t\t};\n\t\t\t\t\t\tconst projectKeyOf = (cwd) => {\n\t\t\t\t\t\t\tlet readable = "";\n\t\t\t\t\t\t\tlet separatorRun = false;\n\t\t\t\t\t\t\tfor (let i = 0; i < cwd.length; i++) {\n\t\t\t\t\t\t\t\tconst code = cwd.charCodeAt(i);\n\t\t\t\t\t\t\t\tconst ch = String.fromCharCode(code);\n\t\t\t\t\t\t\t\tif (ch === "/" || ch === "\\\\" || ch === ":") {\n\t\t\t\t\t\t\t\t\tif (!separatorRun) readable += "-";\n\t\t\t\t\t\t\t\t\tseparatorRun = true;\n\t\t\t\t\t\t\t\t} else if (ch !== "~" && /^[A-Za-z0-9._-]$/.test(ch)) {\n\t\t\t\t\t\t\t\t\treadable += ch;\n\t\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t\t} else {\n\t\t\t\t\t\t\t\t\treadable += "~" + code.toString(16).toUpperCase().padStart(4, "0");\n\t\t\t\t\t\t\t\t\tseparatorRun = false;\n\t\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\t}\n\t\t\t\t\t\t\treturn `--${(readable.replace(/^-+/, "") || "root").slice(0, 251)}--`;\n\t\t\t\t\t\t};\n\t\t\t\t\t\tconst root = dshHomePath("sessions");\n\t\t\t\t\t\tconst dir = join(root, header.cwd === void 0 ? "_no-cwd" : projectKeyOf(header.cwd), encodeSeg(sessionId));\n\t\t\t\t\t\tawait rm(dir, { recursive: true, force: true });\n\t\t\t\t\t}\n\t\t\t\t} catch (error) {\n\t\t\t\t\tif (!(error instanceof WorkspaceUnknownSessionError)) throw error;\n\t\t\t\t}\n\t\t\t\t// 摘除 live 注册表（优雅 flush + 释放持久化状态 + session/disposed\n\t\t\t\t// 广播 → 客户端实时收到 session-removed）；非 live 则广播合成移除帧。\n\t\t\t\tconst removed = ctx.sessions.remove(sessionId);\n\t\t\t\tif (!removed) ctx.emit("session/disposed", { id: sessionId });\n\t\t\t\t// 清理归档集合（含陈旧归档项）。\n\t\t\t\tawait ctx.workspaceRegistry.unarchiveSession(sessionId);\n\t\t\t\treturn ok(request, { deleted: true });\n\t\t\t}';
 
 // 模块级：每会话最近一次 agent 运行状态（删除守卫用；agent/status 事件维护）。
-const HOST_MAP_ANCHOR = 'import { release } from "node:os";';
-const HOST_MAP_INSERT = 'import { release } from "node:os";\n// dsh-desktop patch (session manage): 每会话最近一次 agent 运行状态（删除守卫用）。\nconst dshSessionRunningState = /* @__PURE__ */ new Map();';
+// 0.1.1-rc.2 起该 import 行新增 homedir —— 双候选兼容新旧内核构建产物。
+const HOST_MAP_ANCHOR = 'import { homedir, release } from "node:os";';
+const HOST_MAP_ANCHOR_RC7 = 'import { release } from "node:os";';
+const HOST_MAP_INSERT = 'import { homedir, release } from "node:os";\n// dsh-desktop patch (session manage): 每会话最近一次 agent 运行状态（删除守卫用）。\nconst dshSessionRunningState = /* @__PURE__ */ new Map();';
+const HOST_MAP_INSERT_RC7 = 'import { release } from "node:os";\n// dsh-desktop patch (session manage): 每会话最近一次 agent 运行状态（删除守卫用）。\nconst dshSessionRunningState = /* @__PURE__ */ new Map();';
 
 // host 流里的 agent/status 监听器：同步维护运行状态表。
 const HOST_STATUS_ANCHOR = 'ctx.on("agent/status", ({ agent, status }) => {\n\t\t\t\t\t\tqueue.push(frame({\n\t\t\t\t\t\t\ttype: "host/session-status",\n\t\t\t\t\t\t\tsessionId: agent.id,\n\t\t\t\t\t\t\trunning: status === "running"\n\t\t\t\t\t\t}));\n\t\t\t\t\t}),';
@@ -136,12 +139,16 @@ function applyReplacements(file, replacements, upgradeRules, log) {
     log('session-manage 补丁: 已应用，跳过 ' + file);
     return false;
   }
-  for (const { anchor, insert } of replacements) {
-    if (!src.includes(anchor)) {
-      log('session-manage 补丁: 锚点未匹配（dsh 版本可能已变化），跳过 ' + file + ' :: ' + anchor.slice(0, 60));
+  for (const r of replacements) {
+    // 多候选（anyOf）：同一处补丁在不同内核版本构建产物上的锚点差异，
+    // 依序取第一个命中的候选；全部未命中才判定失配跳过整文件。
+    const candidates = r.anyOf || [r];
+    const hit = candidates.find((c) => src.includes(c.anchor));
+    if (!hit) {
+      log('session-manage 补丁: 锚点未匹配（dsh 版本可能已变化），跳过 ' + file + ' :: ' + candidates[0].anchor.slice(0, 60));
       return false;
     }
-    src = src.replace(anchor, insert);
+    src = src.replace(hit.anchor, hit.insert);
   }
   src = '// ' + MARKER + ': 对话删除/归档管理运行时补丁\n' + src;
   try {
@@ -175,7 +182,10 @@ function patchSessionManage(nmRoot, log = () => {}) {
       replacements: [
         { anchor: HOST_IMPORT_ANCHOR, insert: HOST_IMPORT_NEW },
         { anchor: HOST_IMPORT_JOIN_ANCHOR, insert: HOST_IMPORT_JOIN_NEW },
-        { anchor: HOST_MAP_ANCHOR, insert: HOST_MAP_INSERT },
+        { anyOf: [
+          { anchor: HOST_MAP_ANCHOR, insert: HOST_MAP_INSERT },
+          { anchor: HOST_MAP_ANCHOR_RC7, insert: HOST_MAP_INSERT_RC7 },
+        ] },
         { anchor: HOST_API_ANCHOR, insert: HOST_API_INSERT },
         { anchor: HOST_SCHEMA_ANCHOR, insert: HOST_SCHEMA_INSERT },
         { anchor: HOST_HANDLER_ANCHOR, insert: HOST_HANDLER_INSERT },
