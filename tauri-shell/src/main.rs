@@ -1,3 +1,7 @@
+// release 构建隐藏控制台：release 的 exe 为 windows 子系统，双击启动不再弹出
+// 标题为 exe 路径的命令行窗口（debug 保留控制台便于看 eprintln 诊断）。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // Deepseek Harness EAC — Tauri ShellHost（ADR 0002 L1；P2 GUI 主链路）
 //
 // 运行模式：
@@ -130,8 +134,13 @@ impl Sidecar {
         cmd.arg(sidecar_script())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            // 开发期诊断直通终端；打包后无控制台即丢弃。
-            .stderr(Stdio::inherit());
+            // 开发期诊断直通终端；release 无控制台，显式丢弃（inherit 在
+            // windows 子系统下无有效句柄）。
+            .stderr(if cfg!(debug_assertions) { Stdio::inherit() } else { Stdio::null() });
+        // node.exe 是控制台子系统程序：GUI 父进程派生时若不加
+        // CREATE_NO_WINDOW 会自建控制台窗口（0x08000000）。
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
         if let Ok(exe) = std::env::current_exe() {
             // 壳层 exe 与资源根（client-update 的 installDir 判定 / 打包态定位）。
             cmd.env("DSH_SHELL_EXE", &exe);
