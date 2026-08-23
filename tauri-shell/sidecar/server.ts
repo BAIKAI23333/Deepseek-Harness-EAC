@@ -432,11 +432,20 @@ function startBalanceLoop(): void {
 }
 
 // 剪贴板（PowerShell Set-Clipboard；Electron clipboard 的无 GUI 等价物）。
-function writeClipboardText(text: string): Promise<boolean> {
+// 剪贴板是全系统互斥句柄：被其他进程占开时 Set-Clipboard 报 ExternalException
+// （打开剪贴板失败），通常亚秒级释放——有界重试把瞬时锁变成成功。
+function writeClipboardText(text: string, attempts = 3): Promise<boolean> {
   return new Promise((resolve) => {
     const ps = cp.spawn('powershell', ['-NoProfile', '-Command', '$input | Set-Clipboard'], { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] });
     ps.on('error', () => resolve(false));
-    ps.on('exit', (code) => resolve(code === 0));
+    ps.on('exit', (code) => {
+      if (code === 0) { resolve(true); return; }
+      if (attempts > 1) {
+        setTimeout(() => { void writeClipboardText(text, attempts - 1).then(resolve); }, 300);
+        return;
+      }
+      resolve(false);
+    });
     ps.stdin.end(text, 'utf8');
   });
 }
