@@ -192,6 +192,8 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 
 ## 开发者文档
 
+完整的当前分支开发参考见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)，包括 Tauri 三层架构、L2 模块边界、开发/测试/打包命令、运行时数据目录、桥接契约和排障清单。
+
 ### 从源码构建（Tauri 壳，v5.0 默认）
 
 ```powershell

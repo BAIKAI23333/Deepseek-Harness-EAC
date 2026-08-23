@@ -36,10 +36,9 @@ function arg(name, def) {
 const EXE = arg('exe');
 const DEBUG_PORT = Number(arg('port', '9341'));
 const MOCK_PORT = Number(arg('mockport', '9342'));
-// 插件选择（2026-08-19 实测）：dsh-task-status 已从 npm registry 下架（404）；
-// dsh-tool-vision 已被客户端内置接管（市场拒装 builtin:true）。默认用
-// dsh-tdai-memory（0.2.10 在架、非内置、走完整 pnpm 市场链路）。
-const INSTALL_TARGET = arg('plugin', 'dsh-tdai-memory');
+// 插件选择：使用市场快照中非内置、以 npm 包名安装的插件，确保包名可直接
+// 用于 profile bundles 与 node_modules 落盘断言。可通过 --plugin 覆盖。
+const INSTALL_TARGET = arg('plugin', 'dsh-spend');
 const SKIP_MARKET = arg('skip-market') === '1';
 const SKIP_CHAT = arg('skip-chat') === '1';
 if (!EXE || !fs.existsSync(EXE)) {

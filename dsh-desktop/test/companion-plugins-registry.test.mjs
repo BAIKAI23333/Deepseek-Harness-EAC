@@ -43,9 +43,9 @@ const EXCEPTIONS = new Set([
 
 test('every vendored plugin dir is registered in COMPANION_PLUGINS', () => {
   const pluginsDir = join(root, 'assets', 'plugins');
-  const dirs = readdirSync(pluginsDir)
-    .filter((d) => existsSync(join(pluginsDir, d, 'package.json')))
-    .sort();
+  const dirs = readdirSync(pluginsDir).sort();
+  const withoutManifest = dirs.filter((d) => !existsSync(join(pluginsDir, d, 'package.json')));
+  assert.deepEqual(withoutManifest, [], '插件目录缺少 package.json，可能是已退役插件或不完整安装的残留');
   const slice = companionSlice();
   const missing = [];
   for (const d of dirs) {
@@ -70,6 +70,7 @@ test('every registration row with dir points at a real vendored package', () => 
 
 test('regression: settings-groups stays registered, retired marketplace never returns', () => {
   const slice = companionSlice();
+  assert.doesNotMatch(slice, /dsh-tdai-memory|tdai-memory/, '已退役的 tdai-memory 不得重新进入内置插件清单');
   assert.match(slice, /id:\s*'settings-groups'/, '侧边栏普通/高级分组（Bug #58）—— V4.6.1 起负责常规页页内折叠');
   const retiredStart = main.indexOf('const RETIRED_BUILTIN_PLUGINS');
   assert.ok(retiredStart >= 0, 'RETIRED_BUILTIN_PLUGINS must exist in lib/desktop/companion-sync.ts');

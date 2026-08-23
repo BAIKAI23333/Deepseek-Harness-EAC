@@ -9,7 +9,7 @@
 //
 // 用法：node stage-resources.mjs [--skip-npm]（--skip-npm 复用上次 npm ci 产物）
 
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,54 @@ const SCRIPTS = [
   'onboarding.js', 'make-release-hashes.js',
 ];
 
+function requireFile(file, label) {
+  if (!existsSync(file) || !statSync(file).isFile()) {
+    throw new Error(`[stage] 缺少${label || '文件'}: ${path.relative(root, file)}`);
+  }
+}
+
+function copyRequired(src, dest, label) {
+  requireFile(src, label);
+  mkdirSync(path.dirname(dest), { recursive: true });
+  cpSync(src, dest);
+}
+
+function pluginEntrypoints(pkg) {
+  const result = [];
+  const add = (value) => {
+    if (typeof value === 'string' && value.trim()) result.push(value.replace(/^\.\//, ''));
+  };
+  add(pkg.main);
+  add(pkg.module);
+  if (typeof pkg.exports === 'string') add(pkg.exports);
+  else if (pkg.exports && typeof pkg.exports === 'object') {
+    const walk = (value) => {
+      if (typeof value === 'string') add(value);
+      else if (value && typeof value === 'object') Object.values(value).forEach(walk);
+    };
+    walk(pkg.exports);
+  }
+  return [...new Set(result)].filter((entry) => !entry.includes('*') && !/\.d\.(?:ts|mts|cts)$/i.test(entry));
+}
+
+function validatePluginTree(dir, label) {
+  const entries = readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const pluginDir = path.join(dir, entry.name);
+    const manifest = path.join(pluginDir, 'package.json');
+    if (!existsSync(manifest)) {
+      throw new Error(`[stage] ${label}插件目录没有 package.json: ${path.relative(root, pluginDir)}`);
+    }
+    let pkg;
+    try { pkg = JSON.parse(readFileSync(manifest, 'utf8')); }
+    catch (err) { throw new Error(`[stage] ${label}插件 manifest 无法解析: ${path.relative(root, manifest)} (${err.message})`); }
+    const points = pluginEntrypoints(pkg);
+    if (points.length === 0) throw new Error(`[stage] ${label}插件没有可校验入口: ${path.relative(root, manifest)}`);
+    for (const rel of points) requireFile(path.join(pluginDir, rel), `${label}插件入口`);
+  }
+}
+
 console.log('[stage] 清理旧装配目录');
 rmSync(staged, { recursive: true, force: true });
 mkdirSync(path.join(staged, 'sidecar'), { recursive: true });
@@ -56,25 +104,27 @@ for (const f of ['server.js', 'bridge.js', 'rescue-integration.js']) {
 console.log('[stage] dsh-desktop 根模块 + lib/desktop + scripts + package.json');
 for (const f of ROOT_FILES) {
   const src = path.join(dd, f);
-  if (existsSync(src)) cpSync(src, path.join(staged, 'dsh-desktop', f));
+  copyRequired(src, path.join(staged, 'dsh-desktop', f), '根模块');
 }
 mkdirSync(path.join(staged, 'dsh-desktop', 'lib', 'desktop'), { recursive: true });
 for (const f of LIB_DESKTOP) {
-  cpSync(path.join(dd, 'lib', 'desktop', f), path.join(staged, 'dsh-desktop', 'lib', 'desktop', f));
+  copyRequired(path.join(dd, 'lib', 'desktop', f), path.join(staged, 'dsh-desktop', 'lib', 'desktop', f), '桌面库');
 }
 mkdirSync(path.join(staged, 'dsh-desktop', 'scripts'), { recursive: true });
 for (const f of SCRIPTS) {
-  cpSync(path.join(dd, 'scripts', f), path.join(staged, 'dsh-desktop', 'scripts', f));
+  copyRequired(path.join(dd, 'scripts', f), path.join(staged, 'dsh-desktop', 'scripts', f), '脚本');
 }
 // package.json + lock 原样拷贝（npm ci 要求两者一致；--omit=dev 只装生产树）。
 // .npmrc（legacy-peer-deps）必须随行：内核包互相声明 peer，staged 目录里的
 // npm ci 若不带该配置会因 lock 缺 peer 闭包直接 EUSAGE 拒装（全新打包必踩）。
-cpSync(path.join(dd, 'package.json'), path.join(staged, 'dsh-desktop', 'package.json'));
-cpSync(path.join(dd, 'package-lock.json'), path.join(staged, 'dsh-desktop', 'package-lock.json'));
-cpSync(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc'));
+copyRequired(path.join(dd, 'package.json'), path.join(staged, 'dsh-desktop', 'package.json'), 'package.json');
+copyRequired(path.join(dd, 'package-lock.json'), path.join(staged, 'dsh-desktop', 'package-lock.json'), 'package-lock.json');
+copyRequired(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc'), '.npmrc');
 
 console.log('[stage] assets（114MB：38 插件 + 10 皮肤 + 图标）');
 cpSync(path.join(dd, 'assets'), path.join(staged, 'dsh-desktop', 'assets'), { recursive: true });
+validatePluginTree(path.join(dd, 'assets', 'plugins'), '源');
+validatePluginTree(path.join(staged, 'dsh-desktop', 'assets', 'plugins'), 'staging');
 
 console.log('[stage] vendor node/npm 运行时');
 mkdirSync(path.join(staged, 'dsh-desktop', 'vendor'), { recursive: true });
