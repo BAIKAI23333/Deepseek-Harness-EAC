@@ -19,8 +19,8 @@
 //   · 安装目录不允许包含空白字符，规避 shell 转义问题（发行版名允许含空格，
 //     libuv 的引号处理会覆盖）。
 
-const { spawn, spawnSync } = require('node:child_process');
-const fs = require('node:fs');
+import { spawn, spawnSync } from 'node:child_process';
+import fs = require('node:fs');
 
 const PKG = '@deepseek-ai/dsh';
 const WSL_EXE = 'wsl.exe';
@@ -29,7 +29,7 @@ const WSL_EXE = 'wsl.exe';
 // State
 // ---------------------------------------------------------------------------
 
-const state = {
+const state: Record<string, any> = {
   configured: false,
   distro: '',
   installDir: '',        // Linux 绝对路径（无空白）
@@ -41,12 +41,12 @@ const state = {
   versionCache: null,
 };
 
-function log(msg) {
+function log(msg: string): void {
   try { if (state.logFn) { state.logFn('wsl', msg); return; } } catch {}
   console.log('[wsl] ' + msg);
 }
 
-function fail(msg) {
+function fail(msg: string): never {
   state.lastError = msg;
   throw new Error(msg);
 }
@@ -56,19 +56,21 @@ function fail(msg) {
 // ---------------------------------------------------------------------------
 
 /** 同步执行一条 WSL 命令（探活/读文件用；长命令请用 runWsl）。 */
-function runWslSync(cmd, timeoutMs = 60000) {
+function runWslSync(cmd: string, timeoutMs = 60000): { ok: boolean; code: number | null; stdout: string; stderr: string } {
   const res = spawnSync(WSL_EXE, ['-d', state.distro, '-e', 'sh', '-lc', cmd], {
     encoding: 'utf8',
     windowsHide: true,
     timeout: timeoutMs,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  if (res.error) return { ok: false, code: -1, stdout: '', stderr: String(res.error.message || res.error) };
+  if (res.error) return { ok: false, code: -1, stdout: '', stderr: String(res.error) };
   return { ok: res.status === 0, code: res.status, stdout: res.stdout || '', stderr: res.stderr || '' };
 }
 
 /** 异步执行一条 WSL 命令，收集输出；onLine 可选地收到每行 stdout（进度日志）。 */
-function runWsl(cmd, { timeoutMs = 20 * 60 * 1000, onLine } = {}) {
+interface WslResult { ok: boolean; code: number | null; timedOut?: boolean; stdout: string; stderr: string; error?: string }
+
+function runWsl(cmd: string, { timeoutMs = 20 * 60 * 1000, onLine }: { timeoutMs?: number; onLine?: (line: string) => void } = {}): Promise<WslResult> {
   return new Promise((resolve) => {
     const child = spawn(WSL_EXE, ['-d', state.distro, '-e', 'sh', '-lc', cmd], {
       windowsHide: true,
@@ -121,7 +123,7 @@ function wslListDistros() {
  * 解析配置并探活（同步，boot 早期调用；失败抛错，错误信息可展示给用户）。
  * @param opts { distro?, installDir?, log }
  */
-function configure(opts = {}) {
+function configure(opts: { log?: (tag: string, msg: string) => void; distro?: string; [k: string]: unknown } = {}) {
   state.logFn = opts.log || null;
   state.lastError = '';
   state.distro = String(opts.distro || '').trim();
@@ -219,7 +221,7 @@ function bundledVersion() {
  * 语义与 updater.js 的 Windows 路径对齐（save-exact / omit=dev /
  * 安装后校验入口文件 / 失败清理 staging）。
  */
-async function installAgent(version, onLine) {
+async function installAgent(version: string, onLine?: (line: string) => void) {
   const dir = state.installDir;
   const bin = `${dir}/agent-staging/node_modules/@deepseek-ai/dsh/lib/bin.js`;
   const cmd = `sh -lc 'set -eu; rm -rf ${dir}/agent-staging; mkdir -p ${dir}/agent-staging; cd ${dir}/agent-staging; export NPM_CONFIG_UPDATE_NOTIFIER=false NPM_CONFIG_FUND=false NPM_CONFIG_AUDIT=false; npm install --save-exact --omit=dev --no-audit --no-fund --no-update-notifier ${PKG}@${version}; test -f ${bin}; cd ${dir}; if [ -d agent ]; then rm -rf agent-prev; mv agent agent-prev; fi; mv agent-staging agent; echo WSL_INSTALL_OK'`;
@@ -241,12 +243,12 @@ async function ensureInstalled() {
   if (check.ok && check.stdout.includes('EXISTS')) return false;
   const version = bundledVersion();
   log(`agent 缺失，开始在 WSL 内安装 ${PKG}@${version}（首次约数分钟）…`);
-  await installAgent(version, (line) => log('npm: ' + line));
+  await installAgent(version, (line: string) => log('npm: ' + line));
   return true;
 }
 
 /** 官方更新：与 ensureInstalled 同一路径（版本由 main.js 的检查流程决定）。 */
-async function applyUpdate(version, onLine) {
+async function applyUpdate(version: string, onLine?: (line: string) => void) {
   log(`开始更新 WSL 内 dsh 到 ${version}…`);
   await installAgent(version, onLine);
   return true;

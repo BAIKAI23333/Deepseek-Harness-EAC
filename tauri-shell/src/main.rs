@@ -41,10 +41,32 @@ use std::process::Stdio;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AMutex};
 use tokio_tungstenite::tungstenite::Message;
 
-const SIDECAR_SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/sidecar/server.js");
 const BRIDGE_JS: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/sidecar/bridge.js"));
-const DSH_DESKTOP_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../dsh-desktop");
 const WS_PORT: u16 = 19873;
+
+/// 打包态（resource 布局：resources/sidecar + resources/dsh-desktop）与
+/// 开发态（CARGO_MANIFEST_DIR 布局）的资源根。exe 同级 resources/ 优先。
+fn resource_root() -> std::path::PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        let dir = exe.parent().map(|p| p.to_path_buf());
+        if let Some(dir) = dir {
+            let packaged = dir.join("resources").join("sidecar").join("server.js");
+            if packaged.exists() {
+                return dir.join("resources");
+            }
+        }
+    }
+    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).canonicalize()
+        .unwrap_or_else(|_| std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")))
+}
+
+fn sidecar_script() -> std::path::PathBuf {
+    resource_root().join("sidecar").join("server.js")
+}
+
+fn dsh_desktop_dir() -> String {
+    resource_root().join("dsh-desktop").to_string_lossy().replace('\u{5C}', "/")
+}
 
 static SHELL_NOTIFY: OnceLock<broadcast::Sender<Value>> = OnceLock::new();
 static WEB_URL: OnceLock<RwLock<String>> = OnceLock::new();
@@ -81,7 +103,7 @@ fn resolve_node() -> String {
             return p;
         }
     }
-    let vendored = format!("{}/vendor/node/node.exe", DSH_DESKTOP_DIR);
+    let vendored = format!("{}/vendor/node/node.exe", dsh_desktop_dir());
     if std::path::Path::new(&vendored).exists() {
         return vendored;
     }
@@ -100,12 +122,18 @@ struct Sidecar {
 impl Sidecar {
     async fn spawn() -> Result<Self, String> {
         let node = resolve_node();
-        let mut child = Command::new(&node)
-            .arg(SIDECAR_SCRIPT)
+        let mut cmd = Command::new(&node);
+        cmd.arg(sidecar_script())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // 开发期诊断直通终端；打包后无控制台即丢弃。
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        if let Ok(exe) = std::env::current_exe() {
+            // 壳层 exe 与资源根（client-update 的 installDir 判定 / 打包态定位）。
+            cmd.env("DSH_SHELL_EXE", &exe);
+        }
+        cmd.env("DSH_RESOURCE_ROOT", resource_root());
+        let mut child = cmd
             .spawn()
             .map_err(|e| format!("spawn node({}) failed: {}", node, e))?;
         let stdin = child.stdin.take().ok_or("no stdin")?;
@@ -752,7 +780,7 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
 
 fn run_bridge_test() -> i32 {
     println!("[bridge] node = {}", resolve_node());
-    println!("[bridge] sidecar = {}", SIDECAR_SCRIPT);
+    println!("[bridge] sidecar = {}", sidecar_script().display());
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

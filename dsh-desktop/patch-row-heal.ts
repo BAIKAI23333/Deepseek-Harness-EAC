@@ -29,7 +29,7 @@ const path = require('path');
  * takes down the whole plugin tree (`dsh web` exits 1), so the step must
  * always mirror the row it belongs to.
  */
-function configLinesFor(config, baseIndent = 4) {
+function configLinesFor(config: Record<string, unknown>, baseIndent = 4): string {
   const step = ' '.repeat(baseIndent + 2);
   const step2 = ' '.repeat(baseIndent + 4);
   let out = `${step}config:\n`;
@@ -48,7 +48,7 @@ function configLinesFor(config, baseIndent = 4) {
  * config key the "missing config" healers leave it untouched forever.
  * Idempotent; returns the patch unchanged when nothing needs fixing.
  */
-function normalizeRowConfigIndent(patch, id) {
+function normalizeRowConfigIndent(patch: string, id: string): string {
   if (typeof patch !== 'string' || patch === '' || !id) return patch;
   const esc = String(id).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const rowRe = new RegExp(`^([\\t ]*)- id: ${esc}(?![A-Za-z0-9_.-])`);
@@ -90,8 +90,8 @@ function normalizeRowConfigIndent(patch, id) {
  * Idempotent: rows that already have a config block are left untouched.
  * Returns { patch, healed } — healed lists row ids that were modified.
  */
-function healSoulMdPatchRow(patch, config = { path: 'soul.md' }) {
-  const healed = [];
+function healSoulMdPatchRow(patch: string, config: Record<string, unknown> = { path: 'soul.md' }): { patch: string; healed: string[] } {
+  const healed: string[] = [];
   if (typeof patch !== 'string' || patch === '') return { patch, healed };
   const normalized = normalizeRowConfigIndent(patch, 'soul-md');
   if (normalized !== patch) healed.push('soul-md');
@@ -123,8 +123,8 @@ function healSoulMdPatchRow(patch, config = { path: 'soul.md' }) {
  * 报 duplicated mapping key 拖垮启动。现改为**扫描整个条目块**：id 行之后
  * 所有缩进更深的行里任意位置已有 config 键即不补（幂等，用户改过的值优先）。
  */
-function healRowConfig(patch, id, config) {
-  const healed = [];
+function healRowConfig(patch: string, id: string, config: Record<string, unknown>): { patch: string; healed: string[] } {
+  const healed: string[] = [];
   if (typeof patch !== 'string' || patch === '' || !id || !config) return { patch, healed };
   const normalized = normalizeRowConfigIndent(patch, id);
   if (normalized !== patch) healed.push(id);
@@ -171,8 +171,8 @@ function healRowConfig(patch, id, config) {
  * name. Returns a Set<string>; a missing/unparseable package contributes
  * nothing.
  */
-function bundlePatchEntryIds(bundleDir) {
-  const ids = new Set();
+function bundlePatchEntryIds(bundleDir: string): Set<string> {
+  const ids = new Set<string>();
   if (!bundleDir) return ids;
   try {
     const pkgPath = path.join(bundleDir, 'package.json');
@@ -198,8 +198,8 @@ function bundlePatchEntryIds(bundleDir) {
  * @param {string[]} bundleNames - profile `dsh.profile.bundles` list.
  * @param {string} profileNodeModules - `<profile>/node_modules`.
  */
-function collectBundleEntryIds(bundleNames, profileNodeModules) {
-  const ids = new Set();
+function collectBundleEntryIds(bundleNames: string[], profileNodeModules: string): Set<string> {
+  const ids = new Set<string>();
   for (const name of bundleNames || []) {
     const dir = name
       ? path.join(profileNodeModules, ...String(name).split('/'))
@@ -229,8 +229,8 @@ function collectBundleEntryIds(bundleNames, profileNodeModules) {
  *
  * Returns { patch, removed }.
  */
-function removeBundledRowDuplicates(patch, rowIds, bundleNames, bundleEntryIds) {
-  const removed = [];
+function removeBundledRowDuplicates(patch: string, rowIds: string[], bundleNames: string[], bundleEntryIds: Set<string>): { patch: string; removed: string[] } {
+  const removed: string[] = [];
   if (typeof patch !== 'string' || patch === ''
     || (!bundleNames || !bundleNames.length) && (!bundleEntryIds || !bundleEntryIds.size)) {
     return { patch, removed };
@@ -239,7 +239,7 @@ function removeBundledRowDuplicates(patch, rowIds, bundleNames, bundleEntryIds) 
   const nameTargets = new Set(Object.entries(rowIds || {})
     .filter(([, pkg]) => (bundleNames || []).includes(pkg))
     .map(([id]) => id));
-  const isDup = (id) => (id !== null && declaredIds.has(id)) || (id !== null && nameTargets.has(id));
+  const isDup = (id: string) => (id !== null && declaredIds.has(id)) || (id !== null && nameTargets.has(id));
   const lines = patch.split(/\r?\n/);
   const out = [];
   for (let i = 0; i < lines.length; i++) {
@@ -247,10 +247,10 @@ function removeBundledRowDuplicates(patch, rowIds, bundleNames, bundleEntryIds) 
     if (/^-\s*insert:/.test(line)) {
       // Parse id + name from the block body (id must be the immediate next
       // line to stay unambiguous).
-      let id = null;
+      let id: string | null = null;
       const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
       if (mid) id = mid[1];
-      if (isDup(id)) {
+      if (id !== null && isDup(id)) {
         removed.push(id);
         // Skip the block body: indented non-comment lines up to the next
         // top-level key / block / comment / blank line.

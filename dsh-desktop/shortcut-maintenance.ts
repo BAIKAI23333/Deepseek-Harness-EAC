@@ -1,6 +1,6 @@
 'use strict';
 
-const path = require('node:path');
+import path = require('node:path');
 
 const STANDARD_SHORTCUT_NAME = 'Deepseek Harness EAC.lnk';
 const RUNTIME_SHORTCUT_DESCRIPTION = 'DeepSeek Harness 桌面客户端';
@@ -8,7 +8,7 @@ const INSTALLER_SHORTCUT_DESCRIPTIONS = new Set([
   'DeepSeek Harness (dsh) 开箱即用的 Windows 桌面客户端：内置 dsh CLI 与 Node 运行时，一键启动 Web UI',
 ]);
 
-function normalizeWindowsPath(value, stripIconIndex = false) {
+function normalizeWindowsPath(value: unknown, stripIconIndex = false): string {
   let text = String(value || '').trim();
   if (text.startsWith('"') && text.endsWith('"')) text = text.slice(1, -1);
   if (stripIconIndex) text = text.replace(/,\s*-?\d+\s*$/, '');
@@ -16,27 +16,27 @@ function normalizeWindowsPath(value, stripIconIndex = false) {
   return path.win32.normalize(text).replace(/[\\/]+$/, '').toLowerCase();
 }
 
-function sameWindowsPath(a, b, stripIconIndex = false) {
+function sameWindowsPath(a: unknown, b: unknown, stripIconIndex = false): boolean {
   const left = normalizeWindowsPath(a, stripIconIndex);
   const right = normalizeWindowsPath(b, stripIconIndex);
   return Boolean(left && right && left === right);
 }
 
-function shortcutTargetKind(link, target, previousTarget) {
+function shortcutTargetKind(link: LnkLike | null | undefined, target: string, previousTarget?: string | null): string | null {
   if (!link || !link.target) return null;
   if (sameWindowsPath(link.target, target)) return 'current';
   if (previousTarget && sameWindowsPath(link.target, previousTarget)) return 'previous';
   return null;
 }
 
-function shortcutTargetsApp(link, target, previousTarget) {
+function shortcutTargetsApp(link: LnkLike | null | undefined, target: string, previousTarget?: string | null): boolean {
   return shortcutTargetKind(link, target, previousTarget) !== null;
 }
 
-function desktopShortcutDirs(userDesktop, publicRoot) {
-  const rows = [];
-  const seen = new Set();
-  const add = (scope, dir) => {
+function desktopShortcutDirs(userDesktop: string, publicRoot: string): Array<{ scope: string; dir: string }> {
+  const rows: Array<{ scope: string; dir: string }> = [];
+  const seen = new Set<string>();
+  const add = (scope: string, dir: string) => {
     const normalized = normalizeWindowsPath(dir);
     if (!normalized || seen.has(normalized)) return;
     seen.add(normalized);
@@ -47,15 +47,18 @@ function desktopShortcutDirs(userDesktop, publicRoot) {
   return rows;
 }
 
-function classifyManagedShortcut(entry, {
+interface LnkLike { target?: string; icon?: string; args?: string; arguments?: string; description?: string }
+interface ClassifyOpts { target?: string; previousTarget?: string | null; managedIcon?: string }
+
+function classifyManagedShortcut(entry: { filePath?: string; link?: LnkLike | null } | null, {
   target,
   previousTarget,
   managedIcon,
-} = {}) {
+}: ClassifyOpts = {}): string | null {
   if (!entry || path.win32.basename(String(entry.filePath || '')).toLowerCase()
     !== STANDARD_SHORTCUT_NAME.toLowerCase()) return null;
-  const link = entry.link;
-  if (!shortcutTargetsApp(link, target, previousTarget)) return null;
+  const link = entry && entry.link;
+  if (!shortcutTargetsApp(link || null, target || '', previousTarget)) return null;
   if (String((link && (link.args ?? link.arguments)) || '').trim() !== '') return null;
 
   const description = String((link && link.description) || '');
@@ -66,7 +69,7 @@ function classifyManagedShortcut(entry, {
   }
   if (INSTALLER_SHORTCUT_DESCRIPTIONS.has(description)
     && (!icon
-      || sameWindowsPath(icon, link.target, true)
+      || sameWindowsPath(icon, (link && link.target) || '', true)
       || sameWindowsPath(icon, target, true)
       || (previousTarget && sameWindowsPath(icon, previousTarget, true)))) {
     return 'installer';
@@ -74,8 +77,8 @@ function classifyManagedShortcut(entry, {
   return null;
 }
 
-function preferredManagedEntry(entries, portable, target) {
-  const score = (row) => {
+function preferredManagedEntry(entries: Array<{ filePath?: string; link?: LnkLike | null; managedKind?: string | null; scope?: string; targetKind?: string | null }>, portable: boolean, target: string) {
+  const score = (row: { filePath?: string; link?: LnkLike | null; managedKind?: string | null; scope?: string; targetKind?: string | null }): number => {
     // 当前可用目标的优先级最高；不能为了偏爱某个创建者而保留一份仍指向
     // 旧 exe 的快捷方式，并删除已经指向当前 exe 的那份。
     let value = shortcutTargetKind(row.link, target, null) === 'current' ? 1000 : 0;
@@ -95,14 +98,23 @@ function preferredManagedEntry(entries, portable, target) {
   })[0] || null;
 }
 
+interface PlanOpts {
+  entries?: Array<{ filePath?: string; link?: LnkLike | null }>;
+  target?: string;
+  previousTarget?: string | null;
+  managedIcon?: string;
+  portable?: boolean;
+  policy?: string;
+}
+
 function planDesktopShortcutMaintenance({
   entries = [],
-  target,
+  target = '',
   previousTarget,
   managedIcon,
-  portable,
+  portable = false,
   policy = 'auto',
-} = {}) {
+}: PlanOpts = {}) {
   if (policy === 'never') return { create: false, removals: [], preferred: null };
 
   const classified = entries.map((entry) => ({
@@ -112,7 +124,7 @@ function planDesktopShortcutMaintenance({
   }));
   const appEntries = classified.filter((entry) => entry.targetKind);
   const managedEntries = classified.filter((entry) => entry.managedKind);
-  const preferred = preferredManagedEntry(managedEntries, Boolean(portable), target);
+  const preferred = preferredManagedEntry(managedEntries as Array<{ filePath?: string; link?: LnkLike | null; managedKind?: string | null; scope?: string; targetKind?: string | null }>, Boolean(portable), target);
   // 自动重复只会由两个创建者交叉产生：NSIS + 运行时。相同创建者的两份
   // 元数据完全一致，无法可靠区分“软件重复”与“用户手动复制”，因此不删。
   const managedKinds = new Set(managedEntries.map((entry) => entry.managedKind));

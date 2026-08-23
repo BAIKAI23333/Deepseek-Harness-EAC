@@ -13,15 +13,18 @@
 // structurally scan complete frame ranges, then zstdDecompressSync each
 // frame (node:zlib — same codec dsh itself uses). No third-party deps.
 
-const fs = require('node:fs');
-const path = require('node:path');
-const zlib = require('node:zlib');
+import fs = require('node:fs');
+import path = require('node:path');
+import zlib = require('node:zlib');
 
 const ZSTD_MAGIC = 4247762216; // 28 B5 2F FD little-endian
 
 // Structural zstd frame scanner (ported from dsh-session-persistence-jsonl).
-function scanZstdFrames(buffer) {
-  const frames = [];
+interface ScanFrame { start: number; end: number }
+interface ScanResult { frames: ScanFrame[]; tornStart: number | null }
+
+function scanZstdFrames(buffer: Buffer): ScanResult {
+  const frames: ScanFrame[] = [];
   let offset = 0;
   while (offset < buffer.length) {
     const start = offset;
@@ -64,15 +67,15 @@ function scanZstdFrames(buffer) {
     }
     frames.push({ start, end: offset });
   }
-  return { frames };
+  return { frames, tornStart: null };
 }
 
-function decodeFrame(buf) {
+function decodeFrame(buf: Buffer): string {
   return zlib.zstdDecompressSync(buf).toString('utf8');
 }
 
 // Expand one JSONL row into its events (storage rows pack many chunk events).
-function expandRow(line) {
+function expandRow(line: string): unknown[] {
   let row;
   try { row = JSON.parse(line); } catch { return []; }
   if (!row || typeof row !== 'object') return [];
@@ -88,7 +91,16 @@ function expandRow(line) {
 }
 
 class SessionWatcher {
-  constructor({ sessionsDir, onTurnEnd, log }) {
+  sessionsDir: string;
+  onTurnEnd: (info: Record<string, unknown>) => void;
+  log: (tag: string, msg: string) => void;
+  files: Map<string, {
+    size: number; consumed: number; header: Record<string, unknown> | null;
+    title: string | null; baseline: boolean; hasTurnEvents: boolean;
+  }>;
+  timer: NodeJS.Timeout | null;
+
+  constructor({ sessionsDir, onTurnEnd, log }: { sessionsDir: string; onTurnEnd?: () => void; log?: (tag: string, msg: string) => void }) {
     this.sessionsDir = sessionsDir;
     this.onTurnEnd = onTurnEnd || (() => {});
     this.log = log || (() => {});
@@ -110,8 +122,8 @@ class SessionWatcher {
   listLogs() {
     try {
       if (!fs.existsSync(this.sessionsDir)) return [];
-      const out = [];
-      const walk = (dir) => {
+      const out: string[] = [];
+      const walk = (dir: string) => {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
           const p = path.join(dir, entry.name);
           if (entry.isDirectory()) walk(p);
@@ -121,7 +133,7 @@ class SessionWatcher {
       walk(this.sessionsDir);
       return out;
     } catch (err) {
-      this.log('watch', 'listLogs 失败: ' + err.message);
+      this.log('watch', 'listLogs 失败: ' + String((err as Error) && (err as Error).message || err));
       return [];
     }
   }
@@ -129,12 +141,12 @@ class SessionWatcher {
   scan() {
     let any = false;
     for (const file of this.listLogs()) {
-      try { any = this.process(file) || any; } catch (err) { this.log('watch', '处理失败 ' + file + ': ' + err.message); }
+      try { any = this.process(file) || any; } catch (err) { this.log('watch', '处理失败 ' + file + ': ' + String((err as Error) && (err as Error).message || err)); }
     }
     return any;
   }
 
-  process(file) {
+  process(file: string): boolean {
     let st;
     try { st = fs.statSync(file); } catch { this.files.delete(file); return false; }
     let rec = this.files.get(file);
@@ -154,7 +166,7 @@ class SessionWatcher {
         try {
           const text = decodeFrame(buf.subarray(frames[0].start, frames[0].end));
           const firstLine = text.split('\n')[0];
-          const h = JSON.parse(firstLine);
+          const h = JSON.parse(firstLine) as Record<string, any>;
           if (h && h.type === 'session') rec.header = h;
         } catch { /* keep null; retry next poll */ }
       }
@@ -170,7 +182,7 @@ class SessionWatcher {
       try { text = decodeFrame(buf.subarray(start, end)); } catch { break; }
       for (const line of text.split('\n')) {
         if (!line) continue;
-        for (const ev of expandRow(line)) {
+        for (const ev of expandRow(line) as Array<Record<string, any>>) {
           if (!ev || typeof ev !== 'object') continue;
           if (ev.type === 'session/title' && ev.data && typeof ev.data.title === 'string') rec.title = ev.data.title;
           if (ev.type === 'turn/start' || ev.type === 'turn/end') rec.hasTurnEvents = true;
@@ -197,7 +209,7 @@ class SessionWatcher {
     return count > 0;
   }
 
-  emit(rec, count) {
+  emit(rec: { header?: Record<string, any> | null; title?: string | null }, count: number): void {
     const h = rec.header || {};
     if (h.delegationDepth > 0) return; // subagent logs are noise for toasts
     let title = 'DSH 任务完成';
@@ -210,7 +222,7 @@ class SessionWatcher {
     body = [cwdBase, shortId ? '会话 ' + shortId : null].filter(Boolean).join(' · ');
     body += (count > 1 ? '（' + count + ' 轮任务完成）' : '');
     try { this.onTurnEnd({ title, body, sessionId: h.id, cwd: h.cwd }); }
-    catch (err) { this.log('watch', 'onTurnEnd 回调异常: ' + err.message); }
+    catch (err) { this.log('watch', 'onTurnEnd 回调异常: ' + String((err as Error) && (err as Error).message || err)); }
   }
 }
 

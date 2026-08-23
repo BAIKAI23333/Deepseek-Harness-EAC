@@ -14,7 +14,18 @@ import fs = require('node:fs');
 import cp = require('node:child_process');
 import readline = require('node:readline');
 
-const DSH_DESKTOP_ROOT = path.resolve(__dirname, '..', '..', 'dsh-desktop');
+// 资源根：开发态 tauri-shell/sidecar → 仓库根/dsh-desktop；
+// 打包态 resources/sidecar → resources/dsh-desktop（少一级）。
+function resolveDesktopRoot(): string {
+  const upTwo = path.resolve(__dirname, '..', '..', 'dsh-desktop');
+  if (fs.existsSync(path.join(upTwo, 'package.json'))) return upTwo;
+  const upOne = path.resolve(__dirname, '..', 'dsh-desktop');
+  if (fs.existsSync(path.join(upOne, 'package.json'))) return upOne;
+  return upTwo;
+}
+const DSH_DESKTOP_ROOT = process.env.DSH_RESOURCE_ROOT
+  ? path.join(process.env.DSH_RESOURCE_ROOT, 'dsh-desktop')
+  : resolveDesktopRoot();
 const LIB = (m: string): string => path.join(DSH_DESKTOP_ROOT, 'lib', 'desktop', m);
 
 function say(s: string): void { process.stderr.write('[sidecar] ' + s + '\n'); }
@@ -158,7 +169,8 @@ clientUpdateMod.init({
   makeUpdateProgressPusher: () => ({ client: () => {}, agent: () => {}, force: () => {} }),
   prepareQuitForClientUpdate: async () => { say('prepareQuitForClientUpdate (host-coordinated later)'); },
   exitProcess: () => process.exit(0),
-  getExecDir: () => path.dirname(process.execPath),
+  // 打包态取壳层 exe 目录（DSH_SHELL_EXE）；开发态 sidecar 的 node 不适用。
+  getExecDir: () => (process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : path.dirname(process.execPath)),
 });
 previewMod.init({ log, showBox: showBoxFallback, exitDamaged: () => process.exit(1), isPackaged: () => false, resourcesPath: () => '' });
 marketMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
