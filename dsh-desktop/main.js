@@ -219,6 +219,57 @@ let sessionWatcher = null;
 let userDataDir = '';
 let logsDir = '';
 let dshHome = '';
+
+// 检测其他dsh web进程的锁文件
+function getDshWebLockPath() {
+  const home = dshHome || path.join(os.homedir(), '.dsh');
+  return path.join(home, 'dsh-web.lock');
+}
+
+// 检查是否有其他dsh web进程在运行
+function isAnotherDshWebRunning() {
+  const lockPath = getDshWebLockPath();
+  try {
+    if (!fs.existsSync(lockPath)) return false;
+    const content = fs.readFileSync(lockPath, 'utf8').trim();
+    const pid = parseInt(content, 10);
+    if (isNaN(pid)) return false;
+    // 检查进程是否还活着
+    try {
+      process.kill(pid, 0); // 信号0用于检查进程是否存在
+      return true;
+    } catch {
+      // 进程不存在，清理锁文件
+      fs.unlinkSync(lockPath);
+      return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+// 创建锁文件
+function createDshWebLock() {
+  const lockPath = getDshWebLockPath();
+  try {
+    fs.writeFileSync(lockPath, String(process.pid), 'utf8');
+  } catch (err) {
+    console.error('Failed to create dsh web lock file:', err);
+  }
+}
+
+// 清理锁文件
+function removeDshWebLock() {
+  const lockPath = getDshWebLockPath();
+  try {
+    if (fs.existsSync(lockPath)) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch (err) {
+    console.error('Failed to remove dsh web lock file:', err);
+  }
+}
+
 let desktopLog = null;
 let desktopLogGuard = null;
 let tray = null;
@@ -601,6 +652,34 @@ function stablePortCtx() {
 }
 
 async function startServer(unsafePortRetries = 4, overlays = []) {
+  // 检测是否有其他dsh web进程在运行
+  if (isAnotherDshWebRunning()) {
+    const lockPath = getDshWebLockPath();
+    const msg = `检测到另一个 dsh web 进程正在运行（锁文件：${lockPath}）。\n\n` +
+      '请先关闭其他 dsh web 实例，然后重试。\n\n' +
+      '如果确定没有其他实例运行，可以手动删除锁文件后重试。';
+    log('dsh', msg);
+    // 显示对话框
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'dsh web 冲突',
+      message: '另一个 dsh web 进程正在运行',
+      detail: msg,
+      buttons: ['确定', '删除锁文件并继续'],
+      defaultId: 0,
+      cancelId: 0,
+    });
+    if (response === 1) {
+      // 用户选择删除锁文件并继续
+      removeDshWebLock();
+    } else {
+      // 用户取消
+      throw new Error('另一个 dsh web 进程正在运行');
+    }
+  }
+  // 创建锁文件
+  createDshWebLock();
+  
   // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
   if (serverProc && !serverProc.killed && !quitting) {
     log('dsh', 'startServer 重入：先终结旧进程再启动');
@@ -3004,6 +3083,7 @@ function createTray() {
       { type: 'separator' },
       // V4（用户建议④）：不关闭应用重启 dsh web 服务（皮肤/插件生效路径）。
       { label: '重启 Web 服务', click: () => { showMainWindow(); restartWebServiceCore(); } },
+      { label: '完全重启', click: () => { forceQuit = true; app.relaunch(); app.quit(); } },
       { type: 'separator' },
       { label: '反馈建议…', click: () => { showMainWindow(); shell.openExternal('https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues'); } },
       { type: 'separator' },
@@ -3058,6 +3138,7 @@ function startBalanceLoop() {
   balanceTimer = setInterval(() => refreshBalance().catch(() => {}), 15 * 60 * 1000);
   if (balanceTimer.unref) balanceTimer.unref();
 }
+
 
 
 // ---------------------------------------------------------------------------
@@ -3241,6 +3322,8 @@ if (!gotLock) {
     const t0 = Date.now();
     log('boot', '正在退出，停止 dsh web 进程树…');
     markCleanExit();
+    // 清理dsh web锁文件
+    removeDshWebLock();
     (async () => {
       try {
         closeAllFloatWindows();
@@ -3275,3 +3358,27 @@ if (!gotLock) {
   });
   app.whenReady().then(boot).catch((err) => fatal('应用初始化失败', err));
 }
+
+/*
+ *                  _ooOoo_
+ *                 o8888888o
+ *                 88" . "88
+ *                 (| -_- |)
+ *                 O\  =  /O
+ *              ____/`---'\____
+ *            .'  \\|     |//  `.
+ *           /  \\|||  :  |||//  \
+ *          /  _||||| -:- |||||_  \
+ *          |   | \\\  -  /// |   |
+ *          | \_|  ''\---/''  |_/ |
+ *          \  .-\__  '-'  __/-.  /
+ *        ___'. .'  /--.--\  `. .'___
+ *     ."" '<  `.___\_<|>_/___.' >' "".
+ *    | | :  `- \`.;`\ _ /`;.`/ -`  : | |
+ *    \  \ `-.   \_ __\ /__ _/   .-` /  /
+ *====`-.____`-.___\_____/___.-`____.-'====
+ *                  `=---='
+ *^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ *         佛祖保佑         永无BUG
+ *^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ */

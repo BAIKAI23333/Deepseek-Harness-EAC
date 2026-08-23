@@ -135,7 +135,10 @@ function dshHome() {
 //  一键检测/修复失效的根因 —— 修复点）。
 function desktopProfile() {
   const p = process.env.DSH_DESKTOP_PROFILE || process.env.DSH_PROFILE
-  return p && /^[A-Za-z0-9_-]+$/.test(p) ? p : 'web'
+  if (p && /^[A-Za-z0-9_-]+$/.test(p)) return p
+  // 桌面环境下默认使用 web-desktop，避免插件安装到 web profile 而加载时使用 web-desktop profile
+  if (process.env.DSH_DESKTOP === '1') return 'web-desktop'
+  return 'web'
 }
 
 /**
