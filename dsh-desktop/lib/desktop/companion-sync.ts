@@ -204,6 +204,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
   // V4.6.1 起侧边栏 display/order 由 nav-custom 单一写者接管，groups 只保留页内折叠。
   { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
+  // 设置面板滚轮修复：不绑定 CSS Modules 哈希类名，按设置页语义与真实
+  // overflow 尺寸识别导航/内容滚动区；MutationObserver 跟随动态内容，卸载时
+  // 完整清理样式、标记与监听器。纯客户端实现（host 半边 no-op）。
+  { id: 'settings-scroll-fix', name: 'dsh-settings-scroll-fix', dir: 'dsh-settings-scroll-fix' },
   // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
   // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
   // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。

@@ -292,6 +292,7 @@ research/                     # Third-party WeChat / bridge protocol research
 | dsh-session-manager | Session deletion and archive management |
 | dsh-settings-groups | Collapsible advanced options on the Settings page |
 | dsh-settings-nav-custom | Customization for the Settings sidebar |
+| dsh-settings-scroll-fix | Mouse-wheel and overflow scrolling repair for Settings |
 | @dsh-external/dsh-side-session (provider: dsh-external) | Temporary side conversations that do not affect the main conversation |
 | @deepseek-ai/dsh-skin-switch | Built-in skin switching |
 | dsh-soul-md (provider: Scorp1o117) | `soul.md` persona-card injection |
