@@ -196,19 +196,35 @@ function patchAgentPresetMenu(file) {
   return true;
 }
 
-// Menu 二级菜单滚动补丁：primitives 的 submenu 容器没有高度上限，preset 较多时
-// 子菜单超出视口且不可滚动（scrollable 类在菜单含 submenu 项时会被整体禁用）。
-// 给 submenu 容器注入内联 max-height + overflow-y。锚点用行级定位（submenu 行
-// 后第一个 role: "menu", 行），缩进从目标行提取，兼容上游编译产物缩进变化。
+// Menu 二级菜单滚动补丁：dsh-web-frontend 主 bundle 里 primitives 的 submenu
+// 容器没有高度上限，preset 较多时子菜单超出视口且不可滚动。给 submenu 容器
+// 注入内联 max-height + overflow-y。rc.2 起 primitives 被打包进主 bundle
+// （dsh-web-frontend/dist/assets/index-*.js，压缩变量 xxx.submenu），不再有
+// 独立包 —— 目标改为扫描主 bundle。锚点：submenu.map( 前的 role:"menu",。
 // 幂等 marker: dsh-desktop:menu-submenu-scroll。
 const MENU_SUBMENU_MARKER = 'dsh-desktop:menu-submenu-scroll';
-const MENU_SUBMENU_FILE = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-ui-primitives', 'lib', 'index.js');
-const MENU_SUBMENU_ANCHOR = 'Menu_module_css_default.submenu';
+const MENU_SUBMENU_ANCHOR = 'submenu.map(';
 
 function patchMenuSubmenuScroll(file) {
-  const target = file || MENU_SUBMENU_FILE;
+  let target = file;
+  if (!target) {
+    const dir = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-web-frontend', 'dist', 'assets');
+    if (!fs.existsSync(dir)) {
+      console.log('[patch-deps] dsh-web-frontend 不存在，跳过');
+      return false;
+    }
+    const candidates = fs.readdirSync(dir).filter((f) => f.startsWith('index-') && f.endsWith('.js'));
+    for (const f of candidates) {
+      const full = path.join(dir, f);
+      if (fs.readFileSync(full, 'utf8').includes(MENU_SUBMENU_ANCHOR)) { target = full; break; }
+    }
+    if (!target) {
+      console.log('[patch-deps] 主 bundle 未含 submenu 渲染（版本可能已更新），跳过');
+      return false;
+    }
+  }
   if (!fs.existsSync(target)) {
-    console.log('[patch-deps] dsh-client-ui-primitives 不存在，跳过');
+    console.log('[patch-deps] 目标 bundle 不存在，跳过');
     return false;
   }
   let src = fs.readFileSync(target, 'utf8');
@@ -217,17 +233,16 @@ function patchMenuSubmenuScroll(file) {
     return true;
   }
   const submenuIdx = src.indexOf(MENU_SUBMENU_ANCHOR);
-  const roleIdx = submenuIdx >= 0 ? src.indexOf('role: "menu",', submenuIdx) : -1;
-  const lineStart = roleIdx >= 0 ? src.lastIndexOf('\n', roleIdx) + 1 : -1;
-  const roleLineEnd = roleIdx >= 0 ? src.indexOf('\n', roleIdx) : -1;
-  if (lineStart < 0 || roleLineEnd < 0) {
+  const roleIdx = submenuIdx >= 0 ? src.lastIndexOf('role:"menu",', submenuIdx) : -1;
+  // role:"menu", 必须紧邻 submenu.map（submenu 容器的 role），距离过大说明命中了别处
+  if (submenuIdx < 0 || roleIdx < 0 || submenuIdx - roleIdx > 100) {
     console.log('[patch-deps] Menu submenu 未匹配到目标代码（版本可能已更新），跳过');
     return false;
   }
-  const indent = src.slice(lineStart, roleIdx);
-  src = src.slice(0, roleLineEnd) + '\n' + indent + 'style: { maxHeight: "min(50vh, 24rem)", overflowY: "auto" }, /*' + MENU_SUBMENU_MARKER + '*/' + src.slice(roleLineEnd);
+  const styleInject = 'role:"menu",style:{maxHeight:"min(50vh,24rem)",overflowY:"auto"},/*' + MENU_SUBMENU_MARKER + '*/';
+  src = src.slice(0, roleIdx) + styleInject + src.slice(roleIdx + 'role:"menu",'.length);
   fs.writeFileSync(target, src);
-  console.log('[patch-deps] 已补丁 primitives：二级菜单超高可滚动');
+  console.log('[patch-deps] 已补丁主 bundle：二级菜单超高可滚动');
   return true;
 }
 
