@@ -16,9 +16,16 @@
     "noEmitOnError": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    // vnext-absorb 对齐重构版严格度（保留 commonjs + 就地产出，勿切 nodenext）：
+    // noUncheckedIndexedAccess / exactOptionalPropertyTypes / noImplicitOverride。
+    // 刻意不启用 erasableSyntaxOnly：项目 Wave 0 约定 import x = require() 直译
+    // （emit 与手写 require 逐行一致），且测试 import 编译产物 .js、无需 type-stripping。
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true
   },
   // 只纳入已转换的 .ts；allowJs 保持关闭——未转换的 .js 是手写事实源，
   // 绝不允许被编译器触碰或覆盖（TS5055 保护 + 打包清单防呆）。
-  "include": ["lib/desktop/**/*.ts", "../tauri-shell/sidecar/**/*.ts", "*.ts"]
+  "include": ["lib/desktop/**/*.ts", "../tauri-shell/sidecar/**/*.ts", "scripts/**/*.ts", "*.ts"]
 }

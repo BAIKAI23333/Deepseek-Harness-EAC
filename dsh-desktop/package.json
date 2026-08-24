@@ -21,7 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
     "pretest": "npm run build",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node scripts/test-runner.js"
   },
   "dependencies": {
     "@deepseek-ai/cordis-plugin-group": "1.0.1",
