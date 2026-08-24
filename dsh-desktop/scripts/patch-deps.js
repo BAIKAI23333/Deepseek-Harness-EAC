@@ -146,7 +146,13 @@ function patchAgentPresetMenu(file) {
   }
   const seatBody = src.slice(seatStart + AGENT_PRESET_SEAT_START.length, seatTail);
   const rowBody = src.slice(rowStart + AGENT_PRESET_ROW_START.length, rowTail);
-  // composer 座位：官方保留主列表，第三方收进「第三方模式」submenu（label 复用原两行渲染体）
+  // composer 座位：官方保留主列表，第三方收进「第三方模式」submenu。
+  // submenu 子项复用两行渲染体，但 Menu 的 submenu item 是 flex-row center，
+  // 会压扁两行结构导致字体重叠 —— 给子项 item span 加内联纵向布局覆盖。
+  const seatSubItemBody = seatBody.replace(
+    'className: AgentPresetSeat_module_css_default.item,',
+    'className: AgentPresetSeat_module_css_default.item, style: { flexDirection: "column" },'
+  );
   const seatNew =
     'items: [...state.options.filter((option) => option.trust !== "user").map((option) => {' + seatBody +
     '\n\t\t\t\t}), ...(function () {\n' +
@@ -164,7 +170,7 @@ function patchAgentPresetMenu(file) {
     '\t\t\t\t\t\t\t\tchildren: t("menu.thirdPartyModeHint")\n' +
     '\t\t\t\t\t\t\t})]\n' +
     '\t\t\t\t\t\t}),\n' +
-    '\t\t\t\t\t\tsubmenu: user.map((option) => {' + seatBody +
+    '\t\t\t\t\t\tsubmenu: user.map((option) => {' + seatSubItemBody +
     '\n\t\t\t\t\t\t})\n' +
     '\t\t\t\t\t}];\n' +
     '\t\t\t\t}())],\n\t\t\t\tselectedId: state.current,';
