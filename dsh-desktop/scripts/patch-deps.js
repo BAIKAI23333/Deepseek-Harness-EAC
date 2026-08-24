@@ -80,10 +80,13 @@ function patchSettingsNavScroll() {
 // 暴露 sandbox_permissions/justification 会让适配器强制提交一条必然失败的同级
 // 升级请求。仅在默认 danger-full-access 时不暴露这对可选字段；执行层的严格
 // 升级校验不变。会话切换到较窄策略后需重载工具 schema 才会再次暴露升级字段。
+// 覆盖三个工具：dsh-tool-pwsh / dsh-tool-fs / dsh-tool-bash（同为
+// `defaultMode === void 0 ? [] : ESCALATION_TARGETS` 模式，缺一即漏）。
 const OPTIONAL_ESCALATION_MARKER = 'dsh-desktop-optional-escalation';
 const OPTIONAL_ESCALATION_TARGETS = [
   path.join(root, 'node_modules', '@deepseek-ai', 'dsh-tool-pwsh', 'lib', 'index.js'),
   path.join(root, 'node_modules', '@deepseek-ai', 'dsh-tool-fs', 'lib', 'index.js'),
+  path.join(root, 'node_modules', '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'),
 ];
 const OPTIONAL_ESCALATION_OLD = 'defaultMode === void 0 ? [] : ESCALATION_TARGETS';
 const OPTIONAL_ESCALATION_NEW = 'defaultMode === void 0 || defaultMode === "danger-full-access" ? [] : ESCALATION_TARGETS /* dsh-desktop-optional-escalation */';
