@@ -260,8 +260,7 @@ async fn serve_ws(state: BridgeState, app: tauri::AppHandle) {
 }
 
 /// 退出策略（= main.js getExitAction/askExitAction）：
-/// minimize → 隐藏到托盘；quit → 优雅退出；ask → /exit 选择页（三选 +
-/// 「记住我的选择」，对齐 Electron 的 askExitAction 弹窗）。
+/// minimize → 隐藏到托盘；quit → 优雅退出；ask → 弹出独立退出选择窗口。
 async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
     use tauri::Manager;
     let action = sidecar_exit_action(app).await.unwrap_or_else(|| "ask".to_string());
@@ -274,21 +273,7 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
         "quit" => app.exit(0),
         _ => {
             if allow_ask {
-                let back = current_web_url().unwrap_or_default();
-                let href = format!(
-                    "http://127.0.0.1:{}/exit?back={}",
-                    WS_PORT,
-                    back.replace(':', "%3A").replace('/', "%2F")
-                );
-                let app2 = app.clone();
-                let _ = app.run_on_main_thread(move || {
-                    if let Some(win) = app2.get_webview_window("main") {
-                        let _ = win.show();
-                        if let Ok(parsed) = tauri::Url::parse(&href) {
-                            let _ = win.navigate(parsed);
-                        }
-                    }
-                });
+                open_exit_dialog(app);
             } else {
                 // 非用户主动路径（防误触兜底）：隐藏。
                 if let Some(w) = app.get_webview_window("main") {
@@ -298,6 +283,15 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
         }
     }
 }
+
+/// 注入退出确认 overlay 到主窗（无新窗口，不替换现有内容）。
+fn open_exit_dialog(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        win.eval(include_str!("exit-overlay.js")).ok();
+    }
+}
+
 
 /// 从 sidecar 的 chrome.init 读 exitAction（settings 同源）。
 async fn sidecar_exit_action(_app: &tauri::AppHandle) -> Option<String> {
@@ -340,12 +334,27 @@ async fn handle_shell_method(
         }
         "win.close" => {
             // 退出策略（= Electron exitAction）：minimize→隐藏；quit→退出；
-            // ask→导航到 /exit 选择页（三选 + 记住选择，对齐 Electron 弹窗语义）。
+            // ask→弹出独立退出选择窗口。
             apply_exit_policy(app, true).await;
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "win.close-dialog" => {
+            // 移除 overlay，恢复主窗
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
+            }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.close-force" => {
             app.exit(0);
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "win.hide-and-close-dialog" => {
+            // 最小化到托盘：隐藏主窗 + 移除 overlay，不恢复
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.hide();
+                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
+            }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.hide" => {
@@ -445,6 +454,10 @@ async fn handle_shell_method(
         "log.page-error" => {
             let msg = params.get("message").and_then(|v| v.as_str()).unwrap_or("");
             eprintln!("[page-error] {}", msg);
+            Ok(None)
+        }
+        "shell.exit-dismiss" => {
+            // 已改为 overlay 注入，不再需要此方法
             Ok(None)
         }
         "recovery.restart" => {
@@ -736,44 +749,6 @@ fn died_page(log_path: &str, code: &str) -> String {
     )
 }
 
-/// 退出选择页（= Electron askExitAction 弹窗的三选 + 记住选择）。
-fn exit_page() -> String {
-    format!(
-        "<!doctype html><meta charset=utf-8><title>退出 Deepseek Harness</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
-         <div style=\"text-align:center;max-width:420px;padding:28px 32px;border:1px solid rgba(255,255,255,.08);\
-         border-radius:16px;background:color-mix(in srgb,#0b1220 92%,white)\">\
-         <div style=\"font-size:19px;font-weight:600;margin-bottom:8px\">退出 Deepseek Harness</div>\
-         <div style=\"font-size:12.5px;color:#8b9ac4;margin-bottom:20px\">后台运行时窗口会隐藏到系统托盘，任务完成后会发通知。</div>\
-         <div style=\"display:flex;flex-direction:column;gap:10px\">\
-         <button data-v=\"minimize\" style=\"padding:10px;border:1px solid rgba(255,255,255,.14);border-radius:10px;\
-           background:rgba(91,140,255,.14);color:#dfe6ff;font-size:13.5px;cursor:pointer\">最小化到后台</button>\
-         <button data-v=\"quit\" style=\"padding:10px;border:1px solid rgba(255,120,133,.25);border-radius:10px;\
-           background:rgba(232,17,35,.10);color:#ffb3ba;font-size:13.5px;cursor:pointer\">退出程序</button>\
-         <button data-v=\"cancel\" style=\"padding:8px;border:none;border-radius:10px;background:transparent;\
-           color:#8b9ac4;font-size:12.5px;cursor:pointer\">取消</button>\
-         </div>\
-         <label style=\"display:flex;align-items:center;justify-content:center;gap:6px;margin-top:16px;\
-           font-size:12px;color:#8b9ac4;cursor:pointer\">\
-           <input type=\"checkbox\" id=\"remember\" /> 记住我的选择，不再询问</label>\
-         </div>\
-         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}\
-         var BACK=new URLSearchParams(location.search).get('back')||'';\
-         document.querySelectorAll('button[data-v]').forEach(function(b){{\
-           b.addEventListener('click',function(){{\
-             var v=b.getAttribute('data-v');\
-             var remember=document.getElementById('remember').checked;\
-             if (v==='cancel') {{ if (BACK) location.replace(BACK); return; }}\
-             var fin=function(){{ window.dshDesktop._call(v==='quit'?'win.close-force':'win.hide',{{}}); }};\
-             if (remember) {{ window.dshDesktop.menu.action('set-exit-action',{{value:v}}).then(fin).catch(fin); }}\
-             else fin();\
-           }});\
-         }});</script></body>",
-        WS_PORT, BRIDGE_JS
-    )
-}
-
 /// 主窗导航助手（壳页打开/返回共用；show + navigate 原子化到主线程）。
 fn navigate_main(app: &tauri::AppHandle, href: String) {
     let app2 = app.clone();
@@ -907,7 +882,7 @@ fn recovery_center_page() -> String {
 async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     eprintln!("[http] serve {}", path);
     // 真正消费请求头（读到空行）：未读数据残留会让连接以 RST 而非 FIN 收尾，
-    // WebView2 视为响应中断并反复重试（/exit 加载卡死的根因）。
+    // WebView2 视为响应中断并反复重试。
     {
         use tokio::io::AsyncReadExt;
         let mut consumed = Vec::with_capacity(1024);
@@ -932,8 +907,6 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (recovery_center_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
-    } else if path.starts_with("/exit") {
-        (exit_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/update") {
         // /update?v=..&kind=..（client-update.show 通知方拼好）
         let mut version = String::new();
@@ -1178,6 +1151,10 @@ fn main() {
                 let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
+            }
+            // 主窗导航完成：清理可能残留的退出 overlay
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
             }
         }))
         .invoke_handler(tauri::generate_handler![shell_ping, sidecar_call])
