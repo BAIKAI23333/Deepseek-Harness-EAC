@@ -43,7 +43,7 @@ const SCRIPTS = [
 // vnext 隔离体系（vnext-absorb Phase 2）：sidecar require 的 lib/{state,log,
 // supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
 const LIB_VNEXT = [
-  'state.js', 'log.js',
+  'state.js', 'log.js', 'plugin-copy.js',
   'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
   'supervisor/permissions.js', 'supervisor/incidents.js',
   'extension-host/manager.js', 'extension-host/bridge-server.js',
@@ -122,10 +122,13 @@ mkdirSync(path.join(staged, 'dsh-desktop', 'lib', 'desktop'), { recursive: true 
 for (const f of LIB_DESKTOP) {
   copyRequired(path.join(dd, 'lib', 'desktop', f), path.join(staged, 'dsh-desktop', 'lib', 'desktop', f), '桌面库');
 }
-console.log('[stage] vnext 隔离体系（lib 模块 + 原生 .node）');
+console.log('[stage] vnext 隔离体系（lib 模块 + shared 协议 + 原生 .node）');
 for (const f of LIB_VNEXT) {
   copyRequired(path.join(dd, 'lib', f), path.join(staged, 'dsh-desktop', 'lib', f), 'vnext 库');
 }
+// shared/protocol.js：隔离体系单点协议源，extension-host/rpc.js 运行时 require
+// （../../shared/protocol.js）——漏装配会让 sidecar 启动即 MODULE_NOT_FOUND。
+copyRequired(path.join(dd, 'shared', 'protocol.js'), path.join(staged, 'dsh-desktop', 'shared', 'protocol.js'), '共享协议');
 mkdirSync(path.join(staged, 'dsh-desktop', 'native'), { recursive: true });
 for (const f of NATIVE_MODULES) {
   copyRequired(path.join(dd, 'native', f), path.join(staged, 'dsh-desktop', 'native', f), '原生模块');

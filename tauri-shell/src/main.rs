@@ -1211,12 +1211,16 @@ fn main() {
                             // 恢复中心直开模式（DSH_DESKTOP_RECOVERY=1）：不建主窗、
                             // 不拉起 dsh web —— 直开恢复中心窗口，sidecar 的 boot.start
                             // 检测该 env 后跳过服务启动（保持存活供 rc.* 动作调用）。
+                            // 必须先起 serve_ws：恢复中心页（http_serve /recovery-center）
+                            // 与 rc.preload 的 WS 桥都挂在这个同端口服务上，漏起则
+                            // 窗口白屏、rc.* 全部不可达（G2 实测抓出）。
                             if std::env::var("DSH_DESKTOP_RECOVERY").as_deref() == Ok("1") {
                                 let app_rc = app_handle.clone();
                                 let app_rc_inner = app_rc.clone();
                                 let _ = app_rc.run_on_main_thread(move || {
                                     open_recovery_center_window(&app_rc_inner);
                                 });
+                                serve_ws(st, app_handle).await;
                                 return;
                             }
 
