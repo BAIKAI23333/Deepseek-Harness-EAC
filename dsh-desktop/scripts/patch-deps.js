@@ -207,9 +207,50 @@ function patchAgentPresetMenu(file) {
 // 注入内联 max-height + overflow-y。rc.2 起 primitives 被打包进主 bundle
 // （dsh-web-frontend/dist/assets/index-*.js，压缩变量 xxx.submenu），不再有
 // 独立包 —— 目标改为扫描主 bundle。锚点：submenu.map( 前的 role:"menu",。
-// 幂等 marker: dsh-desktop:menu-submenu-scroll。
-const MENU_SUBMENU_MARKER = 'dsh-desktop:menu-submenu-scroll';
+// 幂等 marker: dsh-desktop:menu-submenu-hover（容器整段重建）+
+// --dsh-desktop-submenu-label（submenu 项两行布局）。
+// ⚠️ 锚点前提：下方所有字符串锚点在目标 bundle 里必须唯一，否则替换会误伤
+// 多处；新增/改动前需先 grep 确认唯一性。
+const MENU_SUBMENU_HOVER_MARKER = 'dsh-desktop:menu-submenu-hover';
+const MENU_SUBMENU_MAXH = 'calc(100dvh - 96px)';
+// 二级菜单宽度与一级菜单对齐：submenu 容器 fit-content 会被 label 里最长的
+// 不可断 token 撑到很窄（实测约 163px，一级菜单约 334px）。给 submenu 一个
+// 与一级菜单接近的 min-width，描述行更舒展。
+const MENU_SUBMENU_MINW = 320;
 const MENU_SUBMENU_ANCHOR = 'submenu.map(';
+// itemWrap 的 onMouseLeave 默认立即关闭，鼠标从一级菜单项移到二级菜单要
+// 跨过二者间隙会先触发离开而缩回。改为延迟关闭（600ms，留足缓慢移动跨
+// 间隙的时间），配合二级菜单自身的 onMouseEnter 取消定时器并保持，鼠标可
+// 平滑滑入。定时器存 window 全局，幂等重放安全。enter 也先清定时器，防止
+// 上一处 leave 排的关闭在移回时误触发。
+const ITEMWRAP_LEAVE_ANCHOR = 'onMouseLeave:()=>{z(null)}';
+const ITEMWRAP_LEAVE_NEW = 'onMouseLeave:()=>{clearTimeout(window.__dshMenuTimer);window.__dshMenuTimer=setTimeout(()=>z(null),600)}';
+// 上一版已打 300ms 延迟的 bundle，升级锚点改为 600ms
+const ITEMWRAP_LEAVE_UPGRADE_ANCHOR = 'setTimeout(()=>z(null),300)';
+const ITEMWRAP_LEAVE_UPGRADE_NEW = 'setTimeout(()=>z(null),600)';
+const ITEMWRAP_ENTER_ANCHOR = 'onMouseEnter:()=>{z(se?B.id:null)}';
+const ITEMWRAP_ENTER_NEW = 'onMouseEnter:()=>{clearTimeout(window.__dshMenuTimer);z(se?B.id:null)}';
+// submenu 自身 onMouseLeave 若立即 z(null)，从二级菜单移回一级菜单会先关掉
+// 二级菜单再重开，时序不稳表现为「移回后不再展开」。改为延迟 400ms，
+// 移回一级菜单时 itemWrap enter 清定时器并保持。
+const SUBMENU_LEAVE_ANCHOR = 'onMouseLeave:()=>{clearTimeout(window.__dshMenuTimer);z(null)}';
+const SUBMENU_LEAVE_NEW = 'onMouseLeave:()=>{clearTimeout(window.__dshMenuTimer);window.__dshMenuTimer=setTimeout(()=>z(null),400)}';
+// root span 的 onPointerLeave 默认立即关闭整个菜单。二级菜单是 portal 到 body
+// 的独立 DOM，鼠标从一级菜单跨过去必然离开 root span → 菜单（含二级）被立即
+// 收起，表现为「二级菜单还没展开就消失」。改为走同一延迟定时器（300ms），
+// 与 itemWrap / submenu 的 onMouseEnter 取消逻辑统一，鼠标可平滑滑入二级菜单。
+const ROOT_POINTERLEAVE_ANCHOR = 'onPointerLeave:_?()=>{n&&A()}:void 0';
+const ROOT_POINTERLEAVE_NEW = 'onPointerLeave:_?()=>{clearTimeout(window.__dshMenuTimer);window.__dshMenuTimer=setTimeout(()=>{n&&A()},300)}:void 0';
+// submenu 项两行布局补丁：Menu 的 .itemLabel 默认 white-space:nowrap +
+// overflow:hidden，会把 agent-preset 的两行 label（名称+描述）压扁裁成
+// 字体重叠。给 submenu 项注入内联覆盖：允许换行、内容可见、item 顶部对齐。
+// 幂等 marker 用 style 里的 CSS 自定义属性（React 支持 --xxx 键透传，
+// 未被引用则无副作用），避免破坏 JS 语法。
+const SUBMENU_ITEM_MARKER = '--dsh-desktop-submenu-label';
+const SUBMENU_BTN_ANCHOR = 'f.jsxs("button",{type:"button",role:"menuitem",className:Re.item,disabled:he.disabled';
+const SUBMENU_BTN_NEW = 'f.jsxs("button",{type:"button",role:"menuitem",className:Re.item,style:{alignItems:"flex-start",flexShrink:0},disabled:he.disabled';
+const SUBMENU_LABEL_ANCHOR = 'f.jsx("span",{className:Re.itemLabel,children:he.label})';
+const SUBMENU_LABEL_NEW = 'f.jsx("span",{className:Re.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:he.label})';
 
 function patchMenuSubmenuScroll(file) {
   let target = file;
@@ -234,21 +275,76 @@ function patchMenuSubmenuScroll(file) {
     return false;
   }
   let src = fs.readFileSync(target, 'utf8');
-  if (src.includes(MENU_SUBMENU_MARKER)) {
-    console.log('[patch-deps] Menu 二级菜单滚动补丁已应用，跳过');
-    return true;
+  let changed = false;
+  // 三个改动各自按锚点独立幂等，不再用单一 marker 门控整个 if 块——
+  // 旧版 bundle 已有 hover marker 时，后续新增的 minWidth / root pointerleave
+  // 改动仍要能补打上（锚点替换后原始文本消失，自然幂等）。
+
+  // 1) submenu 容器：悬停保持 + 高度/宽度自适应（minWidth 缺失才重建整段）
+  if (!src.includes('minWidth:' + MENU_SUBMENU_MINW)) {
+    const submenuIdx = src.indexOf(MENU_SUBMENU_ANCHOR);
+    const roleIdx = submenuIdx >= 0 ? src.lastIndexOf('role:"menu",', submenuIdx) : -1;
+    // role:"menu", 必须紧邻 submenu.map（submenu 容器的 role），距离过大说明命中了别处
+    if (submenuIdx < 0 || roleIdx < 0 || submenuIdx - roleIdx > 400) {
+      console.log('[patch-deps] Menu submenu 未匹配到目标代码（版本可能已更新），跳过');
+      return false;
+    }
+    // 替换 role:"menu", 到 submenu.map( 之间整段（旧版可能已注入 style + scroll marker）：
+    // 二级菜单悬停保持（onMouseEnter 取消关闭定时器并重新激活，onMouseLeave 关闭），
+    // 高度自适应视口（内容少自然高度，超高才滚动）、宽度对齐一级菜单，配合
+    // itemWrap / root 延迟关闭让鼠标可跨过一级菜单与二级菜单之间的间隙。
+    const newBlock = 'role:"menu",onMouseEnter:()=>{clearTimeout(window.__dshMenuTimer);z(B.id)},' + SUBMENU_LEAVE_NEW + ',style:{maxHeight:"' + MENU_SUBMENU_MAXH + '",overflowY:"auto",minWidth:' + MENU_SUBMENU_MINW + '},/*' + MENU_SUBMENU_HOVER_MARKER + '*/children:B.';
+    src = src.slice(0, roleIdx) + newBlock + src.slice(submenuIdx);
+    changed = true;
+    console.log('[patch-deps] 已补丁主 bundle：二级菜单悬停保持 + 高度/宽度自适应');
   }
-  const submenuIdx = src.indexOf(MENU_SUBMENU_ANCHOR);
-  const roleIdx = submenuIdx >= 0 ? src.lastIndexOf('role:"menu",', submenuIdx) : -1;
-  // role:"menu", 必须紧邻 submenu.map（submenu 容器的 role），距离过大说明命中了别处
-  if (submenuIdx < 0 || roleIdx < 0 || submenuIdx - roleIdx > 100) {
-    console.log('[patch-deps] Menu submenu 未匹配到目标代码（版本可能已更新），跳过');
-    return false;
+
+  // 2) 一级菜单项：悬停离开延迟关闭（600ms，缓慢跨间隙不折叠）
+  if (src.includes(ITEMWRAP_LEAVE_ANCHOR)) {
+    src = src.replace(ITEMWRAP_LEAVE_ANCHOR, ITEMWRAP_LEAVE_NEW);
+    changed = true;
+    console.log('[patch-deps] 已补丁主 bundle：菜单项悬停离开延迟关闭（鼠标可跨间隙滑入二级菜单）');
+  } else if (src.includes(ITEMWRAP_LEAVE_UPGRADE_ANCHOR)) {
+    src = src.replace(ITEMWRAP_LEAVE_UPGRADE_ANCHOR, ITEMWRAP_LEAVE_UPGRADE_NEW);
+    changed = true;
+    console.log('[patch-deps] 已补丁主 bundle：菜单项悬停离开延迟加长到 600ms');
   }
-  const styleInject = 'role:"menu",style:{maxHeight:"min(50vh,24rem)",overflowY:"auto"},/*' + MENU_SUBMENU_MARKER + '*/';
-  src = src.slice(0, roleIdx) + styleInject + src.slice(roleIdx + 'role:"menu",'.length);
-  fs.writeFileSync(target, src);
-  console.log('[patch-deps] 已补丁主 bundle：二级菜单超高可滚动');
+
+  // 3) 菜单根：pointerleave 延迟关闭（二级菜单是 body portal，鼠标跨过去不再立即收起）
+  if (src.includes(ROOT_POINTERLEAVE_ANCHOR)) {
+    src = src.replace(ROOT_POINTERLEAVE_ANCHOR, ROOT_POINTERLEAVE_NEW);
+    changed = true;
+    console.log('[patch-deps] 已补丁主 bundle：菜单根 pointerleave 延迟关闭（二级菜单不再被立即收起）');
+  }
+
+  // 4) 一级菜单项 onMouseEnter 也清定时器：从二级菜单移回时，上一处 leave 排的
+  //    关闭定时器不会在移回后被误触发
+  if (src.includes(ITEMWRAP_ENTER_ANCHOR)) {
+    src = src.replace(ITEMWRAP_ENTER_ANCHOR, ITEMWRAP_ENTER_NEW);
+    changed = true;
+    console.log('[patch-deps] 已补丁主 bundle：菜单项悬停进入清关闭定时器（移回二级菜单保持）');
+  }
+
+  // 5) submenu 自身 onMouseLeave 改为延迟关闭：从二级菜单移回一级菜单不再先关再开
+  if (src.includes(SUBMENU_LEAVE_ANCHOR)) {
+    src = src.replace(SUBMENU_LEAVE_ANCHOR, SUBMENU_LEAVE_NEW);
+    changed = true;
+    console.log('[patch-deps] 已补丁主 bundle：二级菜单悬停离开延迟关闭（移回一级菜单保持）');
+  }
+  if (!src.includes(SUBMENU_ITEM_MARKER)) {
+    const btnIdx = src.indexOf(SUBMENU_BTN_ANCHOR);
+    const labelIdx = btnIdx >= 0 ? src.indexOf(SUBMENU_LABEL_ANCHOR, btnIdx) : -1;
+    if (btnIdx < 0 || labelIdx < 0) {
+      console.log('[patch-deps] Menu submenu item 未匹配到目标代码（版本可能已更新），跳过');
+    } else {
+      src = src.slice(0, btnIdx) + SUBMENU_BTN_NEW + src.slice(btnIdx + SUBMENU_BTN_ANCHOR.length);
+      const l2 = src.indexOf(SUBMENU_LABEL_ANCHOR, btnIdx);
+      src = src.slice(0, l2) + SUBMENU_LABEL_NEW + src.slice(l2 + SUBMENU_LABEL_ANCHOR.length);
+      changed = true;
+      console.log('[patch-deps] 已补丁主 bundle：submenu 项两行布局不再被裁剪');
+    }
+  }
+  if (changed) fs.writeFileSync(target, src);
   return true;
 }
 
