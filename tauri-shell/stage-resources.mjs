@@ -100,8 +100,20 @@ function validatePluginTree(dir, label) {
   }
 }
 
-console.log('[stage] 清理旧装配目录');
-rmSync(staged, { recursive: true, force: true });
+console.log('[stage] 清理旧装配目录' + (skipNpm ? '（--skip-npm：保留上次的生产 node_modules）' : ''));
+// 注意：node_modules 必须在整树清空前判定并豁免，否则 --skip-npm 永远不生效
+// （先 rm 全目录再 existsSync 检查，检查对象必不存在）。
+const stagedNm = path.join(staged, 'dsh-desktop', 'node_modules');
+const keepStagedNm = skipNpm && existsSync(stagedNm);
+rmSync(path.join(staged, 'sidecar'), { recursive: true, force: true });
+if (keepStagedNm) {
+  for (const entry of readdirSync(path.join(staged, 'dsh-desktop'))) {
+    if (entry === 'node_modules') continue;
+    rmSync(path.join(staged, 'dsh-desktop', entry), { recursive: true, force: true });
+  }
+} else {
+  rmSync(staged, { recursive: true, force: true });
+}
 mkdirSync(path.join(staged, 'sidecar'), { recursive: true });
 mkdirSync(path.join(staged, 'dsh-desktop'), { recursive: true });
 
@@ -158,7 +170,7 @@ if (existsSync(path.join(dd, 'vendor', 'npm'))) {
 
 console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
-if (!skipNpm || !existsSync(nmDest)) {
+if (!keepStagedNm) {
   execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
 }
 

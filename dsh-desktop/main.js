@@ -707,8 +707,10 @@ async function startServer(unsafePortRetries = 4, overlays = []) {
       .flatMap((p) => ['--patch', p]);
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
     // 硬编码别名，不接受父级 --profile）；app 入口由 profile bundles 决定，
-    // --host/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
-    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
+    // --host/--no-open/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
+    // --no-open：web-app 内核插件的 openBrowser 默认 true，就绪后会用系统默认
+    // 浏览器再开一次本端口 URL；壳已有自己的窗口，必须关掉这个行为。
+    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--no-open', '--port', String(webPort), ...patchArgs], {
       cwd: userDataDir,
       env: childEnv(),
       windowsHide: true,
