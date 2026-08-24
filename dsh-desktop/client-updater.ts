@@ -25,13 +25,14 @@
 //      · 安装版：隐藏 PowerShell 按当前主进程 PID 有界等待；超时只结束该
 //        PID（不按镜像名、不杀进程树）→ 以向导方式启动新 Setup 安装包。
 
-const https = require('node:https');
-const http = require('node:http');
-const fs = require('node:fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
-const { compareVersions } = require('./updater');
+import https = require('node:https');
+import http = require('node:http');
+import fs = require('node:fs');
+import path = require('node:path');
+import crypto = require('node:crypto');
+import cp = require('node:child_process');
+import updater = require('./updater');
+const { compareVersions } = updater;
 
 // Electron 主进程下优先用 net 模块（Chromium 网络栈）发请求：走系统代理
 // 与系统 CA 信任库。用户网络里 Node https 常见的两类硬伤它都能正确处理：
@@ -39,7 +40,7 @@ const { compareVersions } = require('./updater');
 //      "unable to verify the first certificate"，检查更新直接失败；
 //   ② 系统代理（如 127.0.0.1:7890）Node https 根本不读，直连 GitHub
 //      超时。纯 Node 环境（单测）下 electron 不可用，自动回落 node https。
-let electronNet = null;
+let electronNet: any = null;
 try {
   const electron = require('electron');
   if (electron && typeof electron.net === 'object' && typeof electron.net.request === 'function') {
@@ -48,7 +49,7 @@ try {
 } catch { /* plain node (tests): fall back to node https */ }
 
 /** 统一取响应头字段（net 与 http 的 header 值类型不一致，可能是数组）。 */
-function headerValue(headers, name) {
+function headerValue(headers: Record<string, unknown> | null | undefined, name: string): unknown {
   const v = headers && headers[name];
   return Array.isArray(v) ? v[0] : v;
 }
@@ -58,7 +59,46 @@ const REPO_SLUG = /^[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_.-]{1,64}$/;
 const MIN_VALID_BYTES = 64 * 1024 * 1024; // 完整安装包远大于 64MB，防止把错误页当 exe
 const GITHUB_DOWNLOAD_PROXY = 'https://gh.geekertao.top/';
 
-function isPortable() {
+interface UpdateCtx {
+  userDataDir: string;
+  log(section: string, message: string): void;
+}
+
+interface ReleaseAsset {
+  name: string;
+  url: string;
+  size: number;
+  sha256?: string;
+}
+
+interface ReleaseInfo {
+  source: string;
+  version: string;
+  name: string | null;
+  body: string;
+  htmlUrl: string | null;
+  assets: ReleaseAsset[];
+  isNewer?: boolean;
+}
+
+interface SelectedAsset {
+  parts: ReleaseAsset[];
+  name: string;
+  totalSize: number;
+}
+
+interface DownloadResult {
+  path: string;
+  size: number;
+}
+
+interface EndpointSpec {
+  name: string;
+  url: string;
+  headers?: Record<string, unknown>;
+}
+
+function isPortable(): boolean {
   return !!process.env.PORTABLE_EXECUTABLE_DIR;
 }
 
@@ -68,7 +108,7 @@ function isPortable() {
  * —— 双条件同时成立才走「zip → 目录树交换」自更新；否则维持既有
  * 单 exe（Electron 便携）/ Setup /S（安装版）语义，冻结链路零影响。
  */
-function isTauriPortable() {
+function isTauriPortable(): boolean {
   const shellExe = process.env.DSH_SHELL_EXE;
   if (!shellExe) return false;
   try {
@@ -84,7 +124,7 @@ function isTauriPortable() {
  * 重启壳。失败路径尽力拉起现有程序；历史 .old 树在下次更新前清理。
  * 脚本保持纯 ASCII，路径经参数传递（与安装版助手同一套纪律）。
  */
-function buildTauriPortableApplyScript() {
+function buildTauriPortableApplyScript(): string[] {
   return [
     'param(',
     '  [string]$ZipPath = "",',
@@ -134,11 +174,11 @@ function buildTauriPortableApplyScript() {
 }
 
 /** 解析仓库地址（格式非法或缺省时回退到内置默认仓库）。 */
-function resolveRepos(repos) {
-  const r = repos && typeof repos === 'object' ? repos : {};
+function resolveRepos(repos?: unknown): { github: string; gitee: string } {
+  const r = repos && typeof repos === 'object' ? repos as Record<string, unknown> : {};
   const github = REPO_SLUG.test(String(r.github || '')) ? r.github : DEFAULT_REPOS.github;
   const gitee = REPO_SLUG.test(String(r.gitee || '')) ? r.gitee : DEFAULT_REPOS.gitee;
-  return { github, gitee };
+  return { github: String(github), gitee: String(gitee) };
 }
 
 /**
@@ -148,10 +188,10 @@ function resolveRepos(repos) {
  * SHA-256 校验失败、更新中止。附加版本号与公布哈希后，代理缓存键随内容变化，
  * 自动绕开旧缓存（版本号必带，哈希可加强到内容级）。
  */
-function githubProxyUrl(url, { version = '', sha256 = '' } = {}) {
+function githubProxyUrl(url: string | null | undefined, { version = '', sha256 = '' }: { version?: string; sha256?: string } = {}): string | null {
   const value = String(url || '').trim();
   if (!/^https:\/\/github\.com\//i.test(value)) return null;
-  const params = [];
+  const params: string[] = [];
   if (version) params.push(`v=${encodeURIComponent(String(version))}`);
   if (sha256) params.push(`sha256=${encodeURIComponent(String(sha256))}`);
   const suffix = params.length ? (value.includes('?') ? '&' : '?') + params.join('&') : '';
@@ -159,9 +199,9 @@ function githubProxyUrl(url, { version = '', sha256 = '' } = {}) {
 }
 
 /** 组装下载候选：代理优先，随后原始地址，再接其他 Release 源。opts 透传给代理地址生成（缓存破坏参数）。 */
-function downloadUrls(primaryUrl, fallbackUrls = [], opts = {}) {
+function downloadUrls(primaryUrl: string | null | undefined, fallbackUrls: unknown[] = [], opts: { version?: string; sha256?: string } = {}): string[] {
   const primary = String(primaryUrl || '').trim();
-  const candidates = [];
+  const candidates: string[] = [];
   const proxied = githubProxyUrl(primary, opts);
   if (proxied) candidates.push(proxied);
   if (primary) candidates.push(primary);
@@ -172,7 +212,7 @@ function downloadUrls(primaryUrl, fallbackUrls = [], opts = {}) {
   return [...new Set(candidates)];
 }
 
-function apiEndpoints() {
+function apiEndpoints(): EndpointSpec[] {
   if (process.env.DSH_DESKTOP_RELEASE_API) {
     // 自定义镜像：兼容 latest 单对象与 releases 列表两种形态。
     return [{ name: '自定义镜像', url: process.env.DSH_DESKTOP_RELEASE_API }];
@@ -194,17 +234,23 @@ function apiEndpoints() {
 
 // --- HTTP ----------------------------------------------------------------
 
+interface ResponseBundle {
+  status: number | undefined;
+  headers: Record<string, unknown>;
+  stream: any;
+}
+
 /**
  * 统一的"取响应"原语：resolve { status, headers, stream }。
  * electron.net 路径自动跟随重定向（含跨域）、自动走系统代理与系统 CA；
  * node https 回退路径手动跟随重定向（≤5 次）。timeoutMs 只约束到响应头
  * 到达（TTFB），响应体由调用方各自控制。
  */
-function getResponse(url, { headers = {}, timeoutMs = 20000, redirects = 0 } = {}) {
+function getResponse(url: string, { headers = {}, timeoutMs = 20000, redirects = 0 }: { headers?: Record<string, unknown>; timeoutMs?: number; redirects?: number } = {}): Promise<ResponseBundle> {
   if (redirects > 5) return Promise.reject(new Error('重定向次数过多'));
   if (electronNet) {
     return new Promise((resolve, reject) => {
-      let req;
+      let req: any;
       try {
         req = electronNet.request({ url, redirect: 'follow' });
       } catch (err) {
@@ -216,11 +262,11 @@ function getResponse(url, { headers = {}, timeoutMs = 20000, redirects = 0 } = {
       const timer = setTimeout(() => {
         try { req.destroy(new Error('请求超时')); } catch { /* already destroyed */ }
       }, timeoutMs);
-      req.on('response', (res) => {
+      req.on('response', (res: any) => {
         clearTimeout(timer);
         resolve({ status: res.statusCode, headers: res.headers, stream: res });
       });
-      req.on('error', (err) => {
+      req.on('error', (err: unknown) => {
         clearTimeout(timer);
         reject(err instanceof Error ? err : new Error(String(err)));
       });
@@ -229,30 +275,31 @@ function getResponse(url, { headers = {}, timeoutMs = 20000, redirects = 0 } = {
   }
   return new Promise((resolve, reject) => {
     // 自定义镜像（DSH_DESKTOP_RELEASE_API）与单测允许 http:// 端点
-    const lib = url.startsWith('http:') ? http : https;
+    const lib = (url.startsWith('http:') ? http : https) as unknown as typeof http;
     const req = lib.get(url, { headers: { 'User-Agent': 'DSH-Desktop', ...headers } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+      const sc = res.statusCode;
+      if (sc !== undefined && sc >= 300 && sc < 400 && res.headers.location) {
         res.resume();
         getResponse(new URL(res.headers.location, url).toString(), { headers, timeoutMs, redirects: redirects + 1 }).then(resolve, reject);
         return;
       }
-      resolve({ status: res.statusCode, headers: res.headers, stream: res });
+      resolve({ status: sc, headers: res.headers, stream: res });
     });
     req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
     req.on('error', reject);
   });
 }
 
-async function httpGetJson(url, headers = {}, timeoutMs = 20000) {
+async function httpGetJson(url: string, headers: Record<string, unknown> = {}, timeoutMs = 20000): Promise<any> {
   const { status, stream } = await getResponse(url, { headers, timeoutMs });
   if (status !== 200) {
     stream.resume();
     throw new Error('HTTP ' + status);
   }
   let body = '';
-  await new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     stream.setEncoding('utf8');
-    stream.on('data', (c) => {
+    stream.on('data', (c: Buffer) => {
       body += c;
       if (body.length > 4 * 1024 * 1024) stream.destroy(new Error('响应过大'));
     });
@@ -265,13 +312,13 @@ async function httpGetJson(url, headers = {}, timeoutMs = 20000) {
 
 // --- release 规范化 -------------------------------------------------------
 
-function normalizeRelease(source, data) {
+function normalizeRelease(source: string, data: any): ReleaseInfo {
   const tag = String(data.tag_name || data.tag || data.name || '').trim();
   const version = tag.replace(/^v/i, '');
-  const assets = Array.isArray(data.assets)
+  const assets: ReleaseAsset[] = Array.isArray(data.assets)
     ? data.assets
-        .map((a) => {
-          const item = {
+        .map((a: any): ReleaseAsset => {
+          const item: ReleaseAsset = {
             name: String(a.name || ''),
             url: String(a.browser_download_url || a.url || ''),
             size: Number(a.size || 0),
@@ -284,7 +331,7 @@ function normalizeRelease(source, data) {
           if (/^sha256:[0-9a-f]{64}$/i.test(digest)) item.sha256 = digest.slice(7).toLowerCase();
           return item;
         })
-        .filter((a) => a.name && a.url)
+        .filter((a: ReleaseAsset) => a.name && a.url)
     : [];
   return {
     source,
@@ -296,8 +343,8 @@ function normalizeRelease(source, data) {
   };
 }
 
-async function checkLatest(ctx, currentVersion) {
-  const errors = [];
+async function checkLatest(ctx: UpdateCtx, currentVersion: string): Promise<ReleaseInfo> {
+  const errors: string[] = [];
   for (const ep of apiEndpoints()) {
     try {
       const data = await httpGetJson(ep.url, ep.headers || {});
@@ -306,17 +353,17 @@ async function checkLatest(ctx, currentVersion) {
       // 与 /latest 同语义：过滤 draft / prerelease；再按版本号降序稳定排序
       // （API 默认按创建时间，releases 被编辑/补传资产时版本序更可靠）。
       const releases = rawList
-        .filter((r) => r && !r.draft && !r.prerelease)
-        .map((r) => normalizeRelease(ep.name, r))
-        .filter((r) => r.version)
-        .sort((a, b) => compareVersions(b.version, a.version));
+        .filter((r: any) => r && !r.draft && !r.prerelease)
+        .map((r: any) => normalizeRelease(ep.name, r))
+        .filter((r: ReleaseInfo) => r.version)
+        .sort((a: ReleaseInfo, b: ReleaseInfo) => compareVersions(b.version, a.version));
       if (!releases.length) throw new Error('上游没有可见的 release');
       // 自新向旧找「第一个含本平台（Windows）资产的 release」。只有
       // Linux 资产（.AppImage/.deb/.zip 等）的版本对 selectAsset 不可选，
       // 记录后跳过 —— Windows 用户接不到 Linux-only 更新，也不会漏掉
       // 更早的 Windows 版本（回退语义）。
-      const skippedNoAsset = [];
-      let picked = null;
+      const skippedNoAsset: string[] = [];
+      let picked: ReleaseInfo | null = null;
       for (const rel of releases) {
         try {
           selectAsset(rel);
@@ -334,8 +381,8 @@ async function checkLatest(ctx, currentVersion) {
         (skippedNoAsset.length ? `；跳过无 Windows 资产的版本: ${skippedNoAsset.join(', ')}` : ''));
       return picked;
     } catch (err) {
-      errors.push(`${ep.name}: ${err.message}`);
-      ctx.log('client-update', `[${ep.name}] 查询失败: ${err.message}`);
+      errors.push(`${ep.name}: ${(err as Error).message}`);
+      ctx.log('client-update', `[${ep.name}] 查询失败: ${(err as Error).message}`);
     }
   }
   throw new Error('无法连接上游发布源（' + errors.join('；') + '）');
@@ -343,7 +390,7 @@ async function checkLatest(ctx, currentVersion) {
 
 // --- 资产选择 / 下载 -------------------------------------------------------
 
-function selectAsset(release) {
+function selectAsset(release: ReleaseInfo): SelectedAsset {
   // 资产命名：Deepseek-Harness-EAC-<version>-Setup-x64.exe / …-Portable-x64.exe。
   // 旧正则 /-setup-.*-x64\.exe$/ 要求 -setup- 之后还有第二个 "-x64"，
   // 对 "…-v2.0.1-Setup-x64.exe"（-Setup- 直接连 x64.exe）永远匹配失败，
@@ -353,7 +400,7 @@ function selectAsset(release) {
   // 防止误拿；x64 正则本身已排除 arm64，这里再显式拒绝）。
   // Tauri 便携：选 -portable.zip（树交换更新）；Electron 便携/安装版正则不变。
   const wanted = isTauriPortable() ? /portable\.zip$/i : isPortable() ? /portable.*x64\.exe$/i : /setup.*x64\.exe$/i;
-  const platformOk = (name) => !/linux|arm64|aarch64|appimage|\.deb$|\.rpm$|\.snap$/i.test(name);
+  const platformOk = (name: string) => !/linux|arm64|aarch64|appimage|\.deb$|\.rpm$|\.snap$/i.test(name);
   const direct = release.assets.find((a) => wanted.test(a.name) && platformOk(a.name));
   if (direct) return { parts: [direct], name: direct.name, totalSize: direct.size };
 
@@ -368,12 +415,12 @@ function selectAsset(release) {
     `Deepseek-Harness-EAC-${kind}-v${release.version}-x64.exe`,
   ];
   let base = '';
-  let parts = [];
+  let parts: ReleaseAsset[] = [];
   for (const b of bases) {
     parts = release.assets
       .filter((a) => a.name.startsWith(b + '.part'))
       .sort((a, b2) => {
-        const n = (s) => parseInt(s.split('part').pop(), 10) || 0;
+        const n = (s: string) => parseInt(s.split('part').pop()!, 10) || 0;
         return n(a.name) - n(b2.name);
       });
     if (parts.length) { base = b; break; }
@@ -386,22 +433,22 @@ function selectAsset(release) {
 
 /** 单次下载尝试。resumeFrom > 0 时发 Range 续传请求并以追加模式写入；
  *  失败时保留 .part 供下一次断点续传（不删）。 */
-function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
+function downloadFileOnce(url: string, dest: string, { onProgress, resumeFrom = 0 }: { onProgress?: ((received: number, total: number) => void) | undefined; resumeFrom?: number } = {}): Promise<DownloadResult> {
   return new Promise((resolve, reject) => {
     const tmp = dest + '.part';
     let received = resumeFrom;
     let settled = false;
-    let idleTimer = null;
-    const finish = (fn, value) => { if (!settled) { settled = true; if (idleTimer) clearTimeout(idleTimer); fn(value); } };
+    let idleTimer: NodeJS.Timeout | null = null;
+    const finish = (fn: (v: any) => void, value: any) => { if (!settled) { settled = true; if (idleTimer) clearTimeout(idleTimer); fn(value); } };
     // 空闲超时：60 秒没有任何数据到达才判死（167MB 的安装包在慢链路上
     // 要传十几分钟，不能设整体超时）。每个数据块重置计时。
-    const bumpIdle = (stream) => {
+    const bumpIdle = (stream: any) => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         try { stream.destroy(new Error('下载超时')); } catch { /* already destroyed */ }
       }, 60000);
     };
-    const reqHeaders = resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : {};
+    const reqHeaders: Record<string, unknown> = resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : {};
     getResponse(url, { timeoutMs: 60000, headers: reqHeaders }).then(({ status, headers, stream }) => {
       if (settled) { stream.resume(); return; }
       if (status === 416) {
@@ -418,7 +465,7 @@ function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
       if (partial) {
         const cr = String(headerValue(headers, 'content-range') || '');
         const m = /^bytes (\d+)-/i.exec(cr);
-        if (m && Number(m[1]) !== resumeFrom) {
+        if (m && Number(m[1]!) !== resumeFrom) {
           stream.resume();
           return finish(reject, new Error('RESUME_INVALID'));
         }
@@ -427,7 +474,7 @@ function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
       const append = partial && resumeFrom > 0;
       if (!append) received = 0;
       const file = fs.createWriteStream(tmp, { flags: append ? 'a' : 'w' });
-      const fail = (err) => {
+      const fail = (err: Error) => {
         file.close(() => {});
         // 保留 .part：下一次重试从已落盘字节续传
         finish(reject, err);
@@ -435,7 +482,7 @@ function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
       const declared = Number(headerValue(headers, 'content-length') || 0);
       const total = append ? (declared ? resumeFrom + declared : 0) : declared;
       bumpIdle(stream);
-      stream.on('data', (c) => {
+      stream.on('data', (c: Buffer) => {
         received += c.length;
         bumpIdle(stream);
         if (onProgress) { try { onProgress(received, total); } catch {} }
@@ -454,23 +501,23 @@ function downloadFileOnce(url, dest, { onProgress, resumeFrom = 0 } = {}) {
 }
 
 /** 判断是否“磁盘空间不足”类错误：重试不会好转，必须立即停下并提示用户。 */
-function isNoSpaceError(err) {
+function isNoSpaceError(err: any): boolean {
   if (!err) return false;
   if (err.code === 'ENOSPC') return true;
   return /no space left on device/i.test(String(err.message || ''));
 }
 
-function noSpaceError(msg) {
+function noSpaceError(msg: string): Error {
   const e = new Error(msg);
-  e.code = 'ENOSPC';
+  (e as Error & { code: string }).code = 'ENOSPC';
   return e;
 }
 
 /** 带断点续传 + 指数退避重试的下载。慢链路上 167MB 直连常被 RST
  *  （net::ERR_CONNECTION_RESET），一锤子流下载必然偶发失败；每次重试
  *  从已落盘的 .part 断点继续，而不是整包重来。 */
-async function downloadFile(url, dest, { onProgress, ctx = null, maxAttempts = 10 } = {}) {
-  let lastErr;
+async function downloadFile(url: string, dest: string, { onProgress, ctx = null, maxAttempts = 10 }: { onProgress?: ((received: number, total: number) => void) | undefined; ctx?: UpdateCtx | null; maxAttempts?: number } = {}): Promise<DownloadResult> {
+  let lastErr: any;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let resumeFrom = 0;
     try { resumeFrom = fs.statSync(dest + '.part').size; } catch { /* 无残留，全新下载 */ }
@@ -482,10 +529,10 @@ async function downloadFile(url, dest, { onProgress, ctx = null, maxAttempts = 1
     } catch (err) {
       lastErr = err;
       if (isNoSpaceError(err)) break; // 磁盘满：重试只会继续写失败，直接终止并提示
-      if (err.message === 'RESUME_INVALID') continue; // .part 已作废，立即全新重试
+      if ((err as Error).message === 'RESUME_INVALID') continue; // .part 已作废，立即全新重试
       if (attempt < maxAttempts) {
         const delay = Math.min(3000 * 2 ** (attempt - 1), 30000);
-        ctx?.log?.('client-update', `下载中断（${err.message}），${Math.round(delay / 1000)}s 后从断点重试`);
+        ctx?.log?.('client-update', `下载中断（${(err as Error).message}），${Math.round(delay / 1000)}s 后从断点重试`);
         await new Promise((r) => setTimeout(r, delay));
       }
     }
@@ -498,8 +545,8 @@ async function downloadFile(url, dest, { onProgress, ctx = null, maxAttempts = 1
 
 // 同源多次失败后自动切换镜像源（GitHub ↔ Gitee 等）：切换时丢弃旧 .part
 //（不同来源的文件可能不一致，断点续传不安全），整包重新下载。
-async function downloadWithSourceSwitch(urls, dest, { onProgress, ctx = null, onSourceChange = null } = {}) {
-  let lastErr;
+async function downloadWithSourceSwitch(urls: string[], dest: string, { onProgress, ctx = null, onSourceChange = null }: { onProgress?: (received: number, total: number) => void; ctx?: UpdateCtx | null; onSourceChange?: ((i: number) => void) | null } = {}): Promise<DownloadResult> {
+  let lastErr: any;
   for (let i = 0; i < urls.length; i++) {
     if (i > 0) {
       try { fs.rmSync(dest + '.part', { force: true }); } catch {}
@@ -508,7 +555,7 @@ async function downloadWithSourceSwitch(urls, dest, { onProgress, ctx = null, on
       if (onSourceChange) { try { onSourceChange(i); } catch {} }
     }
     try {
-      return await downloadFile(urls[i], dest, { onProgress, ctx, maxAttempts: i === 0 ? 4 : 6 });
+      return await downloadFile(urls[i]!, dest, { onProgress, ctx, maxAttempts: i === 0 ? 4 : 6 });
     } catch (err) {
       lastErr = err;
       if (isNoSpaceError(err)) throw err; // 磁盘满：换源也不会好转
@@ -518,10 +565,10 @@ async function downloadWithSourceSwitch(urls, dest, { onProgress, ctx = null, on
   throw lastErr || new Error('下载失败');
 }
 
-async function concatFiles(sources, dest) {
+async function concatFiles(sources: string[], dest: string): Promise<void> {
   const out = fs.createWriteStream(dest);
   for (const s of sources) {
-    await new Promise((res, rej) => {
+    await new Promise<void>((res, rej) => {
       const rs = fs.createReadStream(s);
       rs.on('error', rej);
       rs.on('end', res);
@@ -529,7 +576,7 @@ async function concatFiles(sources, dest) {
     });
     fs.rmSync(s, { force: true });
   }
-  await new Promise((res, rej) => {
+  await new Promise<void>((res, rej) => {
     out.on('error', rej);
     out.end(res);
   });
@@ -546,7 +593,7 @@ async function concatFiles(sources, dest) {
 //   3. 都没有（老 release / 自定义镜像）：记录告警后放行，保持向后兼容。
 
 /** 流式计算文件 SHA-256（hex 小写）。 */
-function computeSha256(file) {
+function computeSha256(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const h = crypto.createHash('sha256');
     const rs = fs.createReadStream(file);
@@ -557,38 +604,38 @@ function computeSha256(file) {
 }
 
 /** 找到 release 里的 SHA256SUMS.txt 资产并解析成 Map（文件名小写 → hex）。 */
-async function fetchSumsMap(ctx, release) {
+async function fetchSumsMap(ctx: UpdateCtx, release: ReleaseInfo): Promise<Map<string, string> | null> {
   const sumsAsset = release.assets.find((a) => /^sha-?256-?sums?\.txt$/i.test(a.name));
   if (!sumsAsset) return null;
   try {
     const { status, stream } = await getResponse(sumsAsset.url, { timeoutMs: 20000 });
     if (status !== 200) { stream.resume(); return null; }
     let text = '';
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       stream.setEncoding('utf8');
-      stream.on('data', (c) => {
+      stream.on('data', (c: Buffer) => {
         text += c;
         if (text.length > 65536) stream.destroy(new Error('sums 过大'));
       });
       stream.on('end', resolve);
       stream.on('error', reject);
     });
-    const map = new Map();
+    const map = new Map<string, string>();
     for (const line of text.split(/\r?\n/)) {
       const m = /^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$/.exec(line);
-      if (m) map.set(m[2].toLowerCase(), m[1].toLowerCase());
+      if (m) map.set(m[2]!.toLowerCase(), m[1]!.toLowerCase());
     }
     return map;
   } catch (err) {
-    ctx.log('client-update', `SHA256SUMS 获取失败（跳过该来源）: ${err.message}`);
+    ctx.log('client-update', `SHA256SUMS 获取失败（跳过该来源）: ${(err as Error).message}`);
     return null;
   }
 }
 
 /** 组装“期望哈希”：digest 字段优先，其次 SHA256SUMS 条目。 */
-async function expectedSha256(ctx, release, sel) {
+async function expectedSha256(ctx: UpdateCtx, release: ReleaseInfo, sel: SelectedAsset): Promise<string | null> {
   // 单资产（无分片）：digest 直接可用。
-  if (sel.parts.length === 1 && sel.parts[0].sha256) return sel.parts[0].sha256;
+  if (sel.parts.length === 1 && sel.parts[0]!.sha256) return sel.parts[0]!.sha256;
   // 分片合并 / 无 digest：查 SHA256SUMS（按最终文件名）。
   const sums = await fetchSumsMap(ctx, release);
   if (sums) {
@@ -600,43 +647,49 @@ async function expectedSha256(ctx, release, sel) {
 
 // 尽力补齐同一版本在其余发布源（GitHub ↔ Gitee）的 release 对象，供下载
 // 中途切换源使用。任一源失败/无该版本都静默跳过（仅记日志）。
-async function releaseFallbacks(ctx, release, { apiEndpointsList = null } = {}) {
+async function releaseFallbacks(ctx: UpdateCtx, release: ReleaseInfo, { apiEndpointsList = null }: { apiEndpointsList?: EndpointSpec[] | null } = {}): Promise<ReleaseInfo[]> {
   const eps = apiEndpointsList || apiEndpoints();
-  const fallbacks = [];
+  const fallbacks: ReleaseInfo[] = [];
   for (const ep of eps) {
     if (ep.name === release.source) continue;
     try {
       const data = await httpGetJson(ep.url, ep.headers || {});
       const rawList = Array.isArray(data) ? data : [data];
       const same = rawList
-        .filter((r) => r && !r.draft && !r.prerelease)
-        .map((r) => normalizeRelease(ep.name, r))
-        .find((r) => r.version === release.version);
+        .filter((r: any) => r && !r.draft && !r.prerelease)
+        .map((r: any) => normalizeRelease(ep.name, r))
+        .find((r: ReleaseInfo) => r.version === release.version);
       if (!same) { ctx.log('client-update', `[${ep.name}] 无 ${release.version} 的 release（跳过备用源）`); continue; }
       try { selectAsset(same); } catch { continue; } // 该源没有可用资产，跳过
       fallbacks.push(same);
       ctx.log('client-update', `[${ep.name}] 已就绪为 ${release.version} 的备用下载源`);
     } catch (err) {
-      ctx.log('client-update', `[${ep.name}] 备用源探测失败: ${err.message}`);
+      ctx.log('client-update', `[${ep.name}] 备用源探测失败: ${(err as Error).message}`);
     }
   }
   return fallbacks;
 }
 
-async function downloadRelease(ctx, release, { onProgress, onSourceChange, fallbacks = [] } = {}) {
+interface DownloadReleaseOpts {
+  onProgress?: (received: number, total: number) => void;
+  onSourceChange?: (source: string, idx: number, urls: string[]) => void;
+  fallbacks?: ReleaseInfo[];
+}
+
+async function downloadRelease(ctx: UpdateCtx, release: ReleaseInfo, { onProgress, onSourceChange, fallbacks = [] }: DownloadReleaseOpts = {}): Promise<{ filePath: string; size: number; sha256Verified: boolean }> {
   const dir = path.join(ctx.userDataDir, 'updates');
   fs.mkdirSync(dir, { recursive: true });
   const sel = selectAsset(release);
   const split = sel.parts.length > 1;
   const finalPath = path.join(dir, sel.name);
-  const partPaths = [];
+  const partPaths: string[] = [];
   let merged = 0;
   // 备用源按相同的分片名对齐（命名规则一致时索引即对应；对不上就跳过）。
-  const fbSelections = [];
+  const fbSelections: SelectedAsset[] = [];
   for (const fb of fallbacks) {
     try {
       const fbSel = selectAsset(fb);
-      if (fbSel.parts.length === sel.parts.length && fbSel.parts.every((p, i) => p.name === sel.parts[i].name)) fbSelections.push(fbSel);
+      if (fbSel.parts.length === sel.parts.length && fbSel.parts.every((p, i) => p.name === sel.parts[i]!.name)) fbSelections.push(fbSel);
     } catch {}
   }
   // 下载前先求一次期望哈希：既作为代理 URL 的缓存破坏参数（sha256=…，
@@ -644,12 +697,12 @@ async function downloadRelease(ctx, release, { onProgress, onSourceChange, fallb
   // 做内容校验（单一来源，不在每个分片/校验时重复请求 SHA256SUMS）。
   const expected = await expectedSha256(ctx, release, sel);
   for (let i = 0; i < sel.parts.length; i++) {
-    const p = sel.parts[i];
+    const p = sel.parts[i]!;
     ctx.log('client-update', `下载 ${p.name}（${Math.round(p.size / 1048576)} MB）`);
     const dest = split ? finalPath + '.part' + (i + 1) : finalPath;
     const urls = downloadUrls(
       p.url,
-      fbSelections.map((f) => (f.parts[i] && f.parts[i].url) || ''),
+      fbSelections.map((f) => (f.parts[i] && f.parts[i]!.url) || ''),
       { version: release.version, sha256: expected || '' },
     );
     const res = await downloadWithSourceSwitch(urls, dest, {
@@ -711,7 +764,7 @@ async function downloadRelease(ctx, release, { onProgress, onSourceChange, fallb
  * ping/find 也可能暴露控制台窗口。新实现只等待/结束调用方传入的主进程
  * PID，进程退出后才进入备份与 Setup 流程。
  */
-function buildInstalledApplyScript() {
+function buildInstalledApplyScript(): string[] {
   return [
     'param(',
     '  [Parameter(Mandatory = $true)][string]$ActionScriptPath,',
@@ -777,13 +830,26 @@ function buildInstalledApplyScript() {
   ];
 }
 
+interface ApplyScriptOpts {
+  newExe: string;
+  oldExe: string;
+  portable: boolean;
+  userDataDir?: string;
+  dshHome?: string;
+  installDir?: string;
+  profileDir?: string;
+  currentVersion?: string;
+  newVersion?: string;
+  nodeExe?: string;
+}
+
 /**
  * 生成 apply-update.cmd：便携版负责原地替换，安装版负责备份/回滚/Setup。
  *
  * 安装版 CMD 由 PowerShell 在旧主进程退出后调用，不再自行等待或结束进程；
  * 便携版保留原地替换与回滚语义。脚本保持纯 ASCII，路径通过参数传递。
  */
-function buildApplyScript({ newExe, oldExe, portable, userDataDir, dshHome, installDir, profileDir, currentVersion, newVersion, nodeExe }) {
+function buildApplyScript({ portable, nodeExe }: ApplyScriptOpts): string[] {
   const lines = ['@echo off'];
   if (portable) {
     lines.push(
@@ -1020,11 +1086,26 @@ function buildApplyScript({ newExe, oldExe, portable, userDataDir, dshHome, inst
  * 里的 %~1/%~2 因此拿到完整路径。中文路径经 Unicode 命令行传递不受影响
  * （实测 if exist 判定通过）。
  */
-function buildSpawnCommandLine(script, args) {
+function buildSpawnCommandLine(script: string, args: string[]): string {
   return '"' + [script, ...args].map((a) => `"${a}"`).join(' ') + '"';
 }
 
-function buildInstalledPowerShellArgs(script, {
+interface InstalledPowerShellArgsOpts {
+  actionScript: string;
+  newExe: string;
+  oldExe: string;
+  userDataDir?: string;
+  dshHome?: string;
+  installDir?: string;
+  profileDir?: string;
+  currentVersion?: string;
+  newVersion?: string;
+  appPid: number;
+  logPath: string;
+  waitTimeoutSeconds?: number;
+}
+
+function buildInstalledPowerShellArgs(script: string, {
   actionScript,
   newExe,
   oldExe,
@@ -1037,7 +1118,7 @@ function buildInstalledPowerShellArgs(script, {
   appPid,
   logPath,
   waitTimeoutSeconds = 20,
-}) {
+}: InstalledPowerShellArgsOpts): string[] {
   if (!Number.isInteger(appPid) || appPid <= 0) throw new Error('安装版更新 PID 无效');
   return [
     '-NoLogo',
@@ -1061,7 +1142,22 @@ function buildInstalledPowerShellArgs(script, {
   ];
 }
 
-function applyUpdate(ctx, pending, opts) {
+interface ApplyUpdateOpts {
+  userDataDir?: string;
+  dshHome?: string;
+  installDir?: string;
+  profileDir?: string;
+  currentVersion?: string;
+  newVersion?: string;
+  nodeExe?: string;
+}
+
+interface PendingUpdate {
+  path: string;
+  version?: string;
+}
+
+function applyUpdate(ctx: UpdateCtx, pending: PendingUpdate, opts?: ApplyUpdateOpts): string {
   const newExe = pending.path;
   const portable = isPortable();
   const oldExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
@@ -1074,8 +1170,8 @@ function applyUpdate(ctx, pending, opts) {
   const currentVersion = (opts && opts.currentVersion) || '';
   const newVersion = (opts && opts.newVersion) || (pending && pending.version) || '';
   const nodeExe = (opts && opts.nodeExe) || '';
-  let script;
-  let child;
+  let script: string;
+  let child: cp.ChildProcess;
   if (isTauriPortable()) {
     // Tauri 便携：exe + sidecar + dsh-desktop 目录树整体交换（P4/R6）。
     // 等待对象是壳进程 PID（Rust spawn sidecar 时经 DSH_SHELL_PID 注入）。
@@ -1088,7 +1184,7 @@ function applyUpdate(ctx, pending, opts) {
     if (!fs.existsSync(powershell2)) throw new Error('找不到 Windows PowerShell: ' + powershell2);
     const tauriInstallDir = process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : installDir;
     const shellPid = parseInt(process.env.DSH_SHELL_PID || '', 10) || 0;
-    child = spawn(powershell2, [
+    child = cp.spawn(powershell2, [
       '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script,
       '-ZipPath', newExe, '-InstallDir', tauriInstallDir, '-AppPid', String(shellPid),
     ], {
@@ -1100,7 +1196,7 @@ function applyUpdate(ctx, pending, opts) {
     script = path.join(updateDir, 'apply-update.cmd');
     fs.writeFileSync(script, buildApplyScript({ newExe, oldExe, portable: true }).join('\r\n') + '\r\n');
     const args = [newExe, oldExe];
-    child = spawn('cmd.exe', ['/d', '/s', '/c', buildSpawnCommandLine(script, args)], {
+    child = cp.spawn('cmd.exe', ['/d', '/s', '/c', buildSpawnCommandLine(script, args)], {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -1133,7 +1229,7 @@ function applyUpdate(ctx, pending, opts) {
       appPid: process.pid,
       logPath,
     });
-    child = spawn(powershell, args, {
+    child = cp.spawn(powershell, args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
@@ -1145,4 +1241,4 @@ function applyUpdate(ctx, pending, opts) {
   return script;
 }
 
-module.exports = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isPortable, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls, DEFAULT_REPOS };
+export = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isPortable, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls, DEFAULT_REPOS };

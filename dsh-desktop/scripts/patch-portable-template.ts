@@ -15,10 +15,10 @@
 //   - never delete the cache after the app exits.
 // A version bump therefore automatically invalidates the cache.
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 
-function patch() {
+function patch(): void {
   const libPackage = require.resolve('app-builder-lib/package.json');
   const template = path.join(path.dirname(libPackage), 'templates', 'nsis', 'portable.nsi');
   let text = fs.readFileSync(template, 'utf8');

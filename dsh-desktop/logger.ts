@@ -4,14 +4,15 @@
 //  - Phase 3 (next): IPC for diagnostics:export + buildDiagnosticsZip via archiver
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
-const util = require('node:util');
-const { Transform, Writable, finished } = require('node:stream');
-let pino = null;
+import fs = require('node:fs');
+import path = require('node:path');
+import os = require('node:os');
+import util = require('node:util');
+import stream = require('node:stream');
+const { Transform, Writable } = stream;
+let pino: any = null;
 try { pino = require('pino'); } catch (e) { /* deps not installed yet in RED */ }
-let nanoidFn = null;
+let nanoidFn: (() => string) | null = null;
 try { nanoidFn = require('nanoid').nanoid || (() => (Math.random().toString(36).slice(2, 12))); }
 catch (e) { nanoidFn = () => Math.random().toString(36).slice(2, 14) + Date.now().toString(36); }
 
@@ -40,13 +41,13 @@ const PII_KEYS_BLACKLIST_RAW = [
   'deepseekKey','dshToken','sign',
 ];
 const PII_KEYS_BLACKLIST = new Set(PII_KEYS_BLACKLIST_RAW.map(normalizeKey));
-function normalizeKey(k) {
+function normalizeKey(k: unknown): string {
   let s = String(k).toLowerCase();
   // Strip leading "x-"
   if (s.startsWith('x-')) s = s.slice(2);
   return s.replace(/[-_]/g, '');
 }
-function isBlackKey(k) {
+function isBlackKey(k: unknown): boolean {
   if (typeof k !== 'string') return false;
   return PII_KEYS_BLACKLIST.has(normalizeKey(k));
 }
@@ -55,7 +56,12 @@ function isBlackKey(k) {
 // Rules are applied longest-first. Tokens matched by earlier (longer) rules are
 // replaced with a placeholder so shorter rules can never clobber them (e.g. "sk-"
 // won't re-match a token already masked by "sk-ant-").
-const PII_PREFIXES_RULES_UNSORTED = [
+interface PrefixRule {
+  prefix: string;
+  head: number;
+  tail: number;
+}
+const PII_PREFIXES_RULES_UNSORTED: PrefixRule[] = [
   { prefix: 'AKIA', head: 4, tail: 4 }, // AWS Access Key ID: "AKIA" is the fixed 4-char prefix
   { prefix: 'ASIA', head: 4, tail: 4 }, // AWS STS
   { prefix: 'sk-ant-', head: 5, tail: 4 }, // Anthropic (tests expected head=5: "sk-an")
@@ -81,14 +87,18 @@ const PII_PREFIXES_RULES_UNSORTED = [
   { prefix: 'Bearer ', head: 7, tail: 4 }, // HTTP Bearer
   { prefix: 'Basic ',  head: 6, tail: 4 },  // HTTP Basic
 ];
-const PII_PREFIXES_RULES = [...PII_PREFIXES_RULES_UNSORTED]
+const PII_PREFIXES_RULES: PrefixRule[] = [...PII_PREFIXES_RULES_UNSORTED]
   .sort((a, b) => b.prefix.length - a.prefix.length);
 
+interface ValuePattern {
+  re: RegExp;
+  repl: (...args: any[]) => string;
+}
 // Value regex patterns (masked with a replacer function).
-const PII_VALUE_PATTERNS = buildValuePatterns();
+const PII_VALUE_PATTERNS: ValuePattern[] = buildValuePatterns();
 
-function buildValuePatterns() {
-  const pats = [];
+function buildValuePatterns(): ValuePattern[] {
+  const pats: ValuePattern[] = [];
   // JWT: header.payload.sig (3 segments, each >=10 base64url)
   pats.push({
     re: /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
@@ -107,7 +117,8 @@ function buildValuePatterns() {
     re: new RegExp('\\b(' + IPV4_RE_SOURCE + ')\\b', 'g'),
     repl: (m) => {
       const parts = m.split('.').map(Number);
-      const [a, b] = parts;
+      const a = parts[0]!;
+      const b = parts[1]!;
       if (a === 127 && m === '127.0.0.1') return m;
       if (m === '0.0.0.0') return m;
       if (a === 10) return m;
@@ -161,10 +172,16 @@ function buildValuePatterns() {
 }
 
 // --- Helpers ----------------------------------------------------------------
+interface PrefixRegex {
+  re: RegExp;
+  head: number;
+  tail: number;
+  prefix: string;
+}
 // Convert prefix rule to regex.
 const { prefixRegexes } = buildPrefixRegexes();
-function buildPrefixRegexes() {
-  const regexes = [];
+function buildPrefixRegexes(): { prefixRegexes: PrefixRegex[] } {
+  const regexes: PrefixRegex[] = [];
   for (const r of PII_PREFIXES_RULES) {
     const escaped = r.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(escaped + '[A-Za-z0-9_.\\-]{0,512}', 'g');
@@ -179,13 +196,13 @@ function buildPrefixRegexes() {
 const PREFIX_MASK_SEP = '\x01';
 const PREFIX_MASK_TOKEN = '\x02';
 
-function _maskPrefixesInString(s) {
+function _maskPrefixesInString(s: string): string {
   if (typeof s !== 'string') return s;
   if (s.length === 0) return s;
 
   // Phase 1: consume tokens using longest→shortest rules.
   // Use placeholder tokens so subsequent (shorter) rules cannot double-mask.
-  const replacements = []; // [maskedString] indexed by placeholder id.
+  const replacements: string[] = []; // [maskedString] indexed by placeholder id.
   let placeholderId = 0;
 
   let cur = s;
@@ -211,13 +228,13 @@ function _maskPrefixesInString(s) {
   for (let i = 0; i < replacements.length; i++) {
     const needle = PREFIX_MASK_TOKEN + i + PREFIX_MASK_SEP;
     if (out.includes(needle)) {
-      out = out.split(needle).join(replacements[i]);
+      out = out.split(needle).join(replacements[i]!);
     }
   }
   return out;
 }
 
-function _valueMasked(s) {
+function _valueMasked(s: string): string {
   if (typeof s !== 'string') return s;
   let out = s;
   out = _maskPrefixesInString(out);
@@ -230,17 +247,20 @@ function _valueMasked(s) {
 }
 
 // --- Deep redactor ----------------------------------------------------------
-function deepRedact(o, opts) {
-  return _deepRedactInternal(o, new WeakMap(), opts || {});
+interface DeepRedactCtx {
+  onError?: (e: unknown) => void;
+}
+function deepRedact(o: unknown, opts?: DeepRedactCtx): unknown {
+  return _deepRedactInternal(o, new WeakMap<object, unknown>(), opts || {});
 }
 
-function _deepRedactInternal(o, seen, ctx = {}) {
-  const onError = ctx.onError || function(e) { try { console.error('pii-redact warn:', e.message); } catch {} };
+function _deepRedactInternal(o: unknown, seen: WeakMap<object, unknown>, ctx: DeepRedactCtx = {}): unknown {
+  const onError = ctx.onError || function(e: unknown) { try { console.error('pii-redact warn:', (e as Error).message); } catch {} };
   try {
     if (o == null) return o;
     // Primitives: string, number, boolean, bigint, symbol, function, undefined
     const t = typeof o;
-    if (t === 'string') return _valueMasked(o);
+    if (t === 'string') return _valueMasked(o as string);
     if (t !== 'object') return o;
     // Protect against cycles — use WeakMap (original → clone) so that cycles point to the NEW clone, not the original.
     const existing = seen.get(o);
@@ -257,7 +277,7 @@ function _deepRedactInternal(o, seen, ctx = {}) {
     if (ArrayBuffer.isView(o) || o instanceof Uint8Array) {
       const arr = new Uint8Array(o.buffer, o.byteOffset, Math.min(o.byteLength, 2048));
       let s = '';
-      for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+      for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]!);
       const masked = _valueMasked(s);
       seen.set(o, masked);
       return masked;
@@ -274,7 +294,7 @@ function _deepRedactInternal(o, seen, ctx = {}) {
 
     // Array
     if (Array.isArray(o)) {
-      const out = new Array(o.length);
+      const out: unknown[] = new Array(o.length);
       seen.set(o, out); // register early so cycle → out, not original
       for (let i = 0; i < o.length; i++) {
         try { out[i] = _deepRedactInternal(o[i], seen, ctx); }
@@ -290,15 +310,16 @@ function _deepRedactInternal(o, seen, ctx = {}) {
     }
 
     // Plain object (or class instances) — walk own enumerable keys.
-    const keys = Object.keys(o);
-    const out = {};
+    const obj = o as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    const out: Record<string, unknown> = {};
     seen.set(o, out); // register EARLY (before walking props), so any cycle points to NEW clone.
     for (const k of keys) {
-      let v;
-      try { v = o[k]; } // access getter may throw
+      let v: unknown;
+      try { v = obj[k]; } // access getter may throw
       catch (e) {
         onError(e);
-        out[k] = o[k] !== undefined ? o[k] : undefined; // keep original (even if we can't read, don't erase shape)
+        out[k] = obj[k] !== undefined ? obj[k] : undefined; // keep original (even if we can't read, don't erase shape)
         continue;
       }
       if (isBlackKey(k)) {
@@ -318,20 +339,28 @@ function _deepRedactInternal(o, seen, ctx = {}) {
 // --- RedactTransform (NDJSON stream pipeline) ------------------------------
 // Input: NDJSON lines produced by pino. Output: same lines, each value-masked.
 // Any error (parse/json exception) => pass the line through verbatim + log warn.
+interface RedactTransformOpts {
+  warnHandler?: (msg: unknown) => void;
+  redactLevel?: 'deep' | 'shallow';
+}
 class RedactTransform extends Transform {
-  constructor(opts = {}) {
+  _buf: string;
+  _warnHandler: (msg: unknown) => void;
+  _redactLevel: 'deep' | 'shallow';
+
+  constructor(opts: RedactTransformOpts = {}) {
     super({ writableObjectMode: false, readableObjectMode: false, ...opts });
     this._buf = '';
-    this._warnHandler = opts.warnHandler || function (msg) { try { process.stderr.write('[pii-redact] ' + String(msg && msg.message || msg) + '\n'); } catch {} };
+    this._warnHandler = opts.warnHandler || function (msg: unknown) { try { process.stderr.write('[pii-redact] ' + String((msg as Error) && ((msg as Error).message || msg)) + '\n'); } catch {} };
     this._redactLevel = opts.redactLevel || 'deep'; // 'deep' | 'shallow'
   }
-  setRedactLevel(l) { this._redactLevel = l; }
+  setRedactLevel(l: 'deep' | 'shallow'): void { this._redactLevel = l; }
 
-  _transform(chunk, enc, cb) {
+  override _transform(chunk: any, _enc: BufferEncoding, cb: (error?: Error | null) => void): void {
     if (!chunk) return cb();
     const s = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
     this._buf += s;
-    let idx;
+    let idx: number;
     while ((idx = this._buf.indexOf('\n')) !== -1) {
       const line = this._buf.slice(0, idx);
       this._buf = this._buf.slice(idx + 1);
@@ -355,7 +384,7 @@ class RedactTransform extends Transform {
     cb();
   }
 
-  _flush(cb) {
+  override _flush(cb: (error?: Error | null) => void): void {
     if (this._buf) {
       try { this.push(this._redactLevel === 'shallow' ? _valueMasked(this._buf) : this._buf); }
       catch (e) { this._warnHandler(e); this.push(this._buf); }
@@ -375,10 +404,22 @@ class RedactTransform extends Transform {
 //   - We buffer nothing; pass-through directly to fs.createWriteStream.
 const DEFAULT_MAX_BYTES = 20 * 1024 * 1024; // 20MB
 const DEFAULT_MAX_FILES = 10;
-function _idxName(i) { return 'main.' + String(i).padStart(2, '0'); }
+function _idxName(i: number): string { return 'main.' + String(i).padStart(2, '0'); }
 
+interface RotateOpts {
+  maxBytes?: number | undefined;
+  maxFiles?: number | undefined;
+}
 class RotateWriteStream extends Writable {
-  constructor(logsDir, opts = {}) {
+  logsDir: string;
+  maxBytes: number;
+  maxFiles: number;
+  _fd: number | null;
+  _path: string;
+  _size: number;
+  _closed: boolean;
+
+  constructor(logsDir: string, opts: RotateOpts = {}) {
     super({ ...opts, decodeStrings: false });
     this.logsDir = logsDir;
     this.maxBytes = opts.maxBytes || DEFAULT_MAX_BYTES;
@@ -391,7 +432,7 @@ class RotateWriteStream extends Writable {
     this._openNew();
   }
 
-  _openNew() {
+  _openNew(): void {
     if (this._fd !== null) { try { fs.closeSync(this._fd); } catch {} this._fd = null; }
     // Truncate / create main.00
     this._fd = fs.openSync(this._path, 'w', 0o644);
@@ -399,24 +440,24 @@ class RotateWriteStream extends Writable {
     this._closed = false;
   }
 
-  _rollIfNeeded(extraBytes) {
+  _rollIfNeeded(extraBytes: number): void {
     if (this._size + extraBytes <= this.maxBytes) return;
     // Do roll
     // 1. Delete the oldest file if exists (index maxFiles-1)
     const lastIdx = this.maxFiles - 1;
     const lastPath = path.join(this.logsDir, _idxName(lastIdx));
-    try { fs.unlinkSync(lastPath); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    try { fs.unlinkSync(lastPath); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     // 2. Rename higher-numbered → +1 (from lastIdx-1 down to 0)
     for (let i = lastIdx - 1; i >= 0; i--) {
       const src = path.join(this.logsDir, _idxName(i));
       const dst = path.join(this.logsDir, _idxName(i + 1));
-      try { fs.renameSync(src, dst); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      try { fs.renameSync(src, dst); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
     }
     // 3. Open new main.00
     this._openNew();
   }
 
-  _write(chunk, enc, cb) {
+  override _write(chunk: any, enc: BufferEncoding, cb: (error?: Error | null) => void): void {
     if (this._closed) {
       // Re-open if flushed then reused.
       this._openNew();
@@ -424,17 +465,17 @@ class RotateWriteStream extends Writable {
     const buf = typeof chunk === 'string' ? Buffer.from(chunk, enc || 'utf8') : chunk;
     try {
       this._rollIfNeeded(buf.length);
-      fs.writeSync(this._fd, buf, 0, buf.length, null);
+      fs.writeSync(this._fd!, buf, 0, buf.length, null);
       this._size += buf.length;
       cb(null);
-    } catch (e) { cb(e); }
+    } catch (e) { cb(e as Error); }
   }
 
-  _final(cb) {
-    try { this.closeSync(); cb(null); } catch (e) { cb(e); }
+  override _final(cb: (error?: Error | null) => void): void {
+    try { this.closeSync(); cb(null); } catch (e) { cb(e as Error); }
   }
 
-  closeSync() {
+  closeSync(): void {
     if (this._fd !== null) {
       try { fs.closeSync(this._fd); } catch {}
       this._fd = null;
@@ -442,7 +483,7 @@ class RotateWriteStream extends Writable {
     this._closed = true;
   }
 
-  flushSync() {
+  flushSync(): void {
     if (this._fd !== null) {
       try { fs.fsyncSync(this._fd); } catch {}
     }
@@ -450,7 +491,19 @@ class RotateWriteStream extends Writable {
 }
 
 // --- Logger instance & state -----------------------------------------------
-const _state = {
+interface LoggerState {
+  initialized: boolean;
+  rotateStream: RotateWriteStream | null;
+  redactStream: RedactTransform | null;
+  pino: any;          // actual pino logger
+  bootTraceId: string | null;
+  logsDir: string | null;
+  level: string;
+  appVersion: string;
+  env: string;
+  onError(err: unknown): void;
+}
+const _state: LoggerState = {
   initialized: false,
   rotateStream: null,
   redactStream: null,
@@ -460,17 +513,84 @@ const _state = {
   level: 'info',
   appVersion: '0.0.0',
   env: 'production',
-  onError(err) { try { process.stderr.write('[logger] ' + (err && err.stack || String(err)) + '\n'); } catch {} },
+  onError(err: unknown) { try { process.stderr.write('[logger] ' + ((err as Error) && ((err as Error).stack || String(err))) + '\n'); } catch {} },
 };
 
-function _safePinoChild(bindings) {
+function _safePinoChild(bindings?: Record<string, unknown>) {
   if (!_state.pino) return null;
   try { return _state.pino.child(bindings || {}); } catch (e) { _state.onError(e); return null; }
 }
 
+type LogFn = (...args: unknown[]) => unknown;
+
+interface LoggerShell {
+  trace: LogFn;
+  debug: LogFn;
+  info: LogFn;
+  warn: LogFn;
+  error: LogFn;
+  fatal: LogFn;
+  tag(...tags: string[]): LoggerShell;
+  withTrace(kind: string, extraBindings?: Record<string, unknown>): LoggerShell;
+  child(bindings?: Record<string, unknown>): LoggerShell;
+}
+
+interface LoggerInitOpts {
+  logsDir?: string;
+  level?: string;
+  appVersion?: string;
+  env?: string;
+  maxBytes?: number;
+  maxFiles?: number;
+}
+
+interface DiagOpts {
+  logsDir?: string;
+  userDataDir?: string;
+  dshHome?: string;
+  outDir?: string;
+}
+
+interface ActionTrace {
+  bootId: string;
+  actionId: string;
+  kind: string;
+}
+
+interface TestExports {
+  PII_KEYS_BLACKLIST: Set<string>;
+  PII_PREFIXES_RULES: PrefixRule[];
+  PII_VALUE_PATTERNS: ValuePattern[];
+  normalizeKey(k: unknown): string;
+  isBlackKey(k: unknown): boolean;
+  maskStringByPrefix(s: string): string; // backward compat alias
+  _maskPrefixesInString(s: string): string;
+  _valueMasked(s: string): string;
+  deepRedact(o: unknown, opts?: DeepRedactCtx): unknown;
+  _deepRedactInternal(o: unknown, seen: WeakMap<object, unknown>, ctx?: DeepRedactCtx): unknown;
+  RedactTransform: typeof RedactTransform;
+  RotateWriteStream: typeof RotateWriteStream;
+  DEFAULT_MAX_BYTES: number;
+  DEFAULT_MAX_FILES: number;
+  _idxName(i: number): string;
+}
+
+interface LoggerApiObject extends LoggerShell {
+  getBootTraceId(): string | null;
+  makeActionTrace(kind: string): ActionTrace;
+  logCompat(ctxLevelMsgObj: Record<string, unknown> | null | undefined): void;
+  wrapChild(kind: string, ctx: any, extraBindings?: Record<string, unknown>): void;
+  init(opts?: LoggerInitOpts): boolean;
+  flush(): boolean;
+  close(): void;
+  buildDiagnosticsZip(opts: DiagOpts): Promise<string>;
+  _internalState: LoggerState;
+  _testExports?: TestExports;
+}
+
 // Logger API object: wraps pino logger with helpers; if init() not yet called,
 // all log methods are no-op to avoid crash (backward compatible with noopLogger).
-const loggerAPI = {
+const loggerAPI: LoggerApiObject = {
   // --- Level methods (proxy to pino if available)
   trace(...args) { if (_state.pino) { try { _state.pino.trace(...args); } catch (e) { _state.onError(e); } } return loggerAPI; },
   debug(...args) { if (_state.pino) { try { _state.pino.debug(...args); } catch (e) { _state.onError(e); } } return loggerAPI; },
@@ -482,7 +602,7 @@ const loggerAPI = {
   // --- Trace helpers
   getBootTraceId() { return _state.bootTraceId || null; },
 
-  makeActionTrace(kind) {
+  makeActionTrace(kind: string) {
     const bootId = _state.bootTraceId || '';
     const actionId = typeof nanoidFn === 'function' ? nanoidFn() : (Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
     return { bootId, actionId, kind: kind || '' };
@@ -492,14 +612,14 @@ const loggerAPI = {
     const pChild = _safePinoChild(bindings || {});
     // Return an API shell whose level methods proxy to this child.
     // Shell has same helpers; if child is null (pino not inited) it falls back gracefully.
-    const shell = {
+    const shell: LoggerShell = {
       trace(...a) { if (pChild) try { pChild.trace(...a); } catch (e){_state.onError(e);} return shell; },
       debug(...a) { if (pChild) try { pChild.debug(...a); } catch (e){_state.onError(e);} return shell; },
       info(...a)  { if (pChild) try { pChild.info(...a);  } catch (e){_state.onError(e);} return shell; },
       warn(...a)  { if (pChild) try { pChild.warn(...a);  } catch (e){_state.onError(e);} return shell; },
       error(...a) { if (pChild) try { pChild.error(...a); } catch (e){_state.onError(e);} return shell; },
       fatal(...a) { if (pChild) try { pChild.fatal(...a); } catch (e){_state.onError(e);} return shell; },
-      tag(...tags) { return shell.child({ tags: (bindings && bindings.tags || []).concat(tags) }); },
+      tag(...tags) { return shell.child({ tags: ((bindings && (bindings.tags as unknown[] | undefined)) || []).concat(tags) }); },
       withTrace(k, extra) { return shell.child(Object.assign({ action_trace: loggerAPI.makeActionTrace(k) }, extra || {})); },
       child(b2) { return loggerAPI.child(Object.assign({}, bindings || {}, b2 || {})); },
     };
@@ -522,7 +642,7 @@ const loggerAPI = {
     const msg = ctxLevelMsgObj.message || '';
     const rest = Object.assign({}, ctxLevelMsgObj);
     delete rest.level; delete rest.message;
-    const fn = loggerAPI[lvl] || loggerAPI.info;
+    const fn = (loggerAPI as unknown as Record<string, LogFn | undefined>)[lvl] || loggerAPI.info;
     if (Object.keys(rest).length === 0) fn(msg); else fn(rest, msg);
   },
 
@@ -602,7 +722,7 @@ const loggerAPI = {
         };
         // dest = redactStream (pino will NDJSON write into it).
         _state.pino = pino(pinoOpts, _state.redactStream);
-        _state.pino.on('error', (e) => _state.onError(e));
+        _state.pino.on('error', (e: unknown) => _state.onError(e));
       } catch (e) {
         _state.onError(e);
         _state.pino = null;
@@ -676,33 +796,23 @@ const loggerAPI = {
     const zipPath = path.join(outDir, zipName);
     const output = fs.createWriteStream(zipPath);
 
-    let archiver;
-    try { archiver = require('archiver'); } catch (e) { throw new Error('archiver dep missing: ' + e.message); }
-    const archive = archiver('zip', { zlib: { level: 9 } });
-    archive.on('error', (e) => { throw e; });
+    let archiverFn: any;
+    try { archiverFn = require('archiver'); } catch (e) { throw new Error('archiver dep missing: ' + (e as Error).message); }
+    const archive = archiverFn('zip', { zlib: { level: 9 } });
+    archive.on('error', (e: unknown) => { throw e; });
     archive.pipe(output);
 
-    const manifestEntries = []; // { name, size, mtime }
+    const manifestEntries: { name: string; size: number; mtime: string }[] = [];
     let totalSize = 0;
 
-    const isArchiveExt = (name) => /\.(zip|7z|tar|gz|tgz|rar|bz2|xz)$/i.test(name);
-
     // Add helper: buffer → archive entry, with manifest record.
-    function addBuffer(name, buf, { mtime } = {}) {
+    function addBuffer(name: string, buf: Buffer | string, opts: { mtime?: Date } = {}) {
+      const { mtime } = opts;
       if (!Buffer.isBuffer(buf)) buf = Buffer.from(buf, 'utf8');
       archive.append(buf, { name, date: mtime || new Date() });
       const sz = buf.length;
       totalSize += sz;
       manifestEntries.push({ name, size: sz, mtime: (mtime || new Date()).toISOString() });
-    }
-
-    function addFileAsIs(srcPath, archiveName) {
-      if (!fs.existsSync(srcPath)) return;
-      const st = fs.statSync(srcPath);
-      if (st.isDirectory()) return;
-      if (isArchiveExt(srcPath)) return;
-      const buf = fs.readFileSync(srcPath);
-      addBuffer(archiveName, buf, { mtime: st.mtime });
     }
 
     // (1) Logs: logsDir/main.NN
@@ -713,7 +823,7 @@ const loggerAPI = {
       for (const f of logFiles) {
         const src = path.join(logsDir, f);
         // Already PII-masked, but run value-masker once more on each line (defense-in-depth).
-        let text;
+        let text: string;
         try { text = fs.readFileSync(src, 'utf8'); }
         catch (e) { _state.onError(e); continue; }
         // Run line-by-line value masker (shallow redact) to be safe.
@@ -800,7 +910,7 @@ const loggerAPI = {
       const backupRoot = path.join(dshHome, 'updater', 'backup');
       if (fs.existsSync(backupRoot)) {
         // Iterate sub-folders, pick the one with newest mtime.
-        let newestDir = null; let newestMtime = -1;
+        let newestDir: string | null = null; let newestMtime = -1;
         for (const entry of fs.readdirSync(backupRoot, { withFileTypes: true })) {
           if (!entry.isDirectory()) continue;
           const p = path.join(backupRoot, entry.name);
@@ -828,7 +938,19 @@ const loggerAPI = {
     // (5) Build diagnostics.json first so we know totalSize? Chicken-egg.
     // We'll compute totalSize (current manifest entries bytes) + add estimated overhead.
     // diagnostics.json itself is added with final totalSize.
-    const diagnostics = {
+    const diagnostics: {
+      bootTraceId: string;
+      appVersion: string;
+      env: string;
+      exportedAt: string;
+      platform: NodeJS.Platform;
+      arch: string;
+      pid: number;
+      nodeVersion: string;
+      host: string;
+      entriesCount: number;
+      totalSize: number;
+    } = {
       bootTraceId: _state.bootTraceId || loggerAPI.makeActionTrace('diag').actionId,
       appVersion: _state.appVersion || '0.0.0',
       env: _state.env || 'unknown',
@@ -872,7 +994,7 @@ const loggerAPI = {
     archive.append(maniBuf, { name: 'manifest.json', date: new Date() });
 
     // Finalize archive & ensure output file handle fully closed (no sharing violation).
-    const finished = new Promise((res, rej) => {
+    const finished = new Promise<void>((res, rej) => {
       output.once('close', res);
       output.once('error', rej);
       // Guard: if already closed, fire on next tick.
@@ -889,10 +1011,8 @@ const loggerAPI = {
 };
 
 // Expose state on module-level so we can still require('./logger') then build zip from another module.
-module.exports = loggerAPI;
-
 // --- Test-only exports ------------------------------------------------------
-module.exports._testExports = {
+loggerAPI._testExports = {
   PII_KEYS_BLACKLIST,
   PII_PREFIXES_RULES,
   PII_VALUE_PATTERNS,
@@ -909,3 +1029,5 @@ module.exports._testExports = {
   DEFAULT_MAX_FILES,
   _idxName,
 };
+
+export = loggerAPI;

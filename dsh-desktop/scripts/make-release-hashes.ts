@@ -9,13 +9,13 @@
 //
 // 用法：node scripts/make-release-hashes.js [distDir]
 
-const fs = require('node:fs');
-const path = require('node:path');
-const crypto = require('node:crypto');
+import fs = require('node:fs');
+import path = require('node:path');
+import crypto = require('node:crypto');
 
 const distDir = path.resolve(process.argv[2] || path.join(__dirname, '..', 'dist'));
 
-function sha256(file) {
+function sha256(file: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const h = crypto.createHash('sha256');
     const rs = fs.createReadStream(file);
@@ -37,7 +37,7 @@ function sha256(file) {
     console.error('[release-hashes] dist 目录里没有 .exe/.blockmap 产物');
     process.exit(1);
   }
-  const lines = [];
+  const lines: string[] = [];
   for (const name of targets) {
     const hex = await sha256(path.join(distDir, name));
     lines.push(`${hex}  ${name}`);

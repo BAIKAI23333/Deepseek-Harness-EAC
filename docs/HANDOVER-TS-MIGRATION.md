@@ -164,6 +164,9 @@
 - 官方内核 `@deepseek-ai/*`（上游已是 TS，npm 包为产物）
 - 第三方社区插件包本体（assets/plugins 中非自研部分）——只补类型，不改实现
 - 纯静态资源（皮肤 CSS/HTML、桌宠素材、加载页）
+- **`main.js`（冻结的 Electron 回退链，2026-08-24 vnext-absorb 决策登记豁免）**：R8 红线已冻结、
+  不再进入 Tauri 发布产物（stage-resources ROOT_FILES 已剔除），转换是纯风险无发布收益；
+  `electron .` 开发回退继续跑手写 main.js。豁免条件：任何触碰 main.js 的改动需另行评审。
 
 ---
 

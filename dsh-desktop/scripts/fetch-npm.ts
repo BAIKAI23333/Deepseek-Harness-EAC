@@ -9,8 +9,8 @@
 // Usage (must run under system Node):
 //   npm run fetch-npm
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 
 const src = path.join(path.dirname(process.execPath), 'node_modules', 'npm');
 const dest = path.resolve(__dirname, '..', 'vendor', 'npm');
@@ -22,7 +22,7 @@ if (!fs.existsSync(path.join(src, 'bin', 'npm-cli.js'))) {
 
 fs.rmSync(dest, { recursive: true, force: true });
 fs.cpSync(src, dest, { recursive: true });
-const version = require(path.join(dest, 'package.json')).version;
+const { version } = require(path.join(dest, 'package.json')) as { version: string };
 console.log(`已复制 npm@${version}`);
 console.log(`    ${src}`);
 console.log(` -> ${dest}`);

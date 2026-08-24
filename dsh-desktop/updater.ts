@@ -19,72 +19,85 @@
 // NSIS install AND the portable build (whose unpacked resources are
 // re-created from the exe on every launch).
 
-const { spawn } = require('node:child_process');
-const path = require('node:path');
-const fs = require('node:fs');
-const os = require('node:os');
+import cp = require('node:child_process');
+import path = require('node:path');
+import fs = require('node:fs');
+import os = require('node:os');
 
 const PKG = '@deepseek-ai/dsh';
 const IS_WIN = process.platform === 'win32';
 
 // 镜像源链：默认源（用户 .npmrc / NPM_CONFIG_REGISTRY）卡住或失败时依次
 // 自动切换。切换与结果都会经 onProgress 上报给更新弹窗提示。
-const NPM_MIRRORS = ['https://registry.npmmirror.com', 'https://registry.npmjs.org'];
+const NPM_MIRRORS: string[] = ['https://registry.npmmirror.com', 'https://registry.npmjs.org'];
 // 单个 npm 命令「无任何输出」的停滞上限：超过即判死并切换镜像源
 //（npm 解析依赖时可能长时间静默，阈值取 300 秒）。
 const NPM_STALL_MS = 300 * 1000;
 
-let activeProc = null;
+let activeProc: cp.ChildProcess | null = null;
 
 // --- settings -------------------------------------------------------------
 
-function settingsPath(ctx) { return path.join(ctx.userDataDir, 'settings.json'); }
+interface UpdaterCtx {
+  userDataDir: string;
+  log(section: string, message: string): void;
+  nodeExe(): string;
+  npmCli(): string;
+}
 
-function loadSettings(ctx) {
+function settingsPath(ctx: UpdaterCtx): string { return path.join(ctx.userDataDir, 'settings.json'); }
+
+function loadSettings(ctx: UpdaterCtx): Record<string, any> {
   try { return JSON.parse(fs.readFileSync(settingsPath(ctx), 'utf8')); }
   catch { return {}; }
 }
 
-function saveSettings(ctx, s) {
+function saveSettings(ctx: UpdaterCtx, s: Record<string, any>): void {
   try { fs.writeFileSync(settingsPath(ctx), JSON.stringify(s, null, 2) + '\n'); }
-  catch (err) { ctx.log('update', '保存 settings 失败: ' + err.message); }
+  catch (err) { ctx.log('update', '保存 settings 失败: ' + (err as Error).message); }
 }
 
 // --- overlay paths --------------------------------------------------------
 
-function overlayDir(ctx) { return path.join(ctx.userDataDir, 'agent'); }
-function stagingDir(ctx) { return path.join(ctx.userDataDir, 'agent-staging'); }
+function overlayDir(ctx: UpdaterCtx): string { return path.join(ctx.userDataDir, 'agent'); }
+function stagingDir(ctx: UpdaterCtx): string { return path.join(ctx.userDataDir, 'agent-staging'); }
 
-function overlayBinPath(ctx) {
+function overlayBinPath(ctx: UpdaterCtx): string {
   return path.join(overlayDir(ctx), 'node_modules', PKG, 'lib', 'bin.js');
 }
 
-function overlayVersion(ctx) {
+function overlayVersion(ctx: UpdaterCtx): string | null {
   try { return require(path.join(overlayDir(ctx), 'node_modules', PKG, 'package.json')).version; }
   catch { return null; }
 }
 
-function bundledVersion() {
+function bundledVersion(): string | null {
   try { return require(PKG + '/package.json').version; }
   catch { return null; }
 }
 
-function activeVersion(ctx) { return overlayVersion(ctx) || bundledVersion(); }
+function activeVersion(ctx: UpdaterCtx): string | null { return overlayVersion(ctx) || bundledVersion(); }
 
 // --- semver-ish compare (handles 0.1.0-rc.N style prereleases) -------------
 
-function compareVersions(a, b) {
-  const parse = (v) => {
-    const [rawCore, pre = ''] = String(v).trim().replace(/^v/i, '').split('-');
+interface ParsedVersion {
+  nums: number[];
+  pre: string;
+  preNum: number;
+  hasPre: boolean;
+}
+function compareVersions(a: string, b: string): number {
+  const parse = (v: string): ParsedVersion => {
+    const [rawCore = '', pre = ''] = String(v).trim().replace(/^v/i, '').split('-');
     const coreParts = rawCore.split('.');
     // 补齐缺省段，保证 4.4 与 4.4.0 的比较结果为相等而不是 NaN。
-    const nums = Array.from({ length: 3 }, (_, i) => parseInt(coreParts[i], 10) || 0);
-    const preNum = parseInt((pre.match(/\d+/) || [''])[0], 10);
+    const nums = Array.from({ length: 3 }, (_, i) => parseInt(coreParts[i]!, 10) || 0);
+    const preNum = parseInt((pre.match(/\d+/) || [''])[0]!, 10);
     return { nums, pre, preNum: Number.isNaN(preNum) ? -1 : preNum, hasPre: !!pre };
   };
   const A = parse(a), B = parse(b);
   for (let i = 0; i < 3; i++) {
-    if (A.nums[i] !== B.nums[i]) return A.nums[i] - B.nums[i];
+    if (A.nums[i] !== B.nums[i]) return A.nums[i]! - B.nums[i]!;
   }
   if (A.hasPre !== B.hasPre) return A.hasPre ? -1 : 1; // prerelease < release
   if (A.hasPre && A.pre !== B.pre) {
@@ -96,7 +109,7 @@ function compareVersions(a, b) {
 
 // --- npm runner -----------------------------------------------------------
 
-function killProc(proc) {
+function killProc(proc: cp.ChildProcess | null): Promise<void> {
   if (!proc || !proc.pid) return Promise.resolve();
   return new Promise((resolve) => {
     let settled = false;
@@ -105,7 +118,7 @@ function killProc(proc) {
     try {
       proc.once('close', () => { clearTimeout(fallback); done(); });
       if (IS_WIN) {
-        const killer = spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
+        const killer = cp.spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
           windowsHide: true, stdio: 'ignore',
         });
         killer.once('close', () => {
@@ -121,9 +134,15 @@ function killProc(proc) {
   });
 }
 
-function abort() { killProc(activeProc); activeProc = null; }
+function abort(): void { killProc(activeProc); activeProc = null; }
 
-function runNpm(ctx, args, { timeoutMs = 30 * 60 * 1000, logStream = null, onOutput = null, stallMs = 0 } = {}) {
+interface RunNpmOpts {
+  timeoutMs?: number;
+  logStream?: fs.WriteStream | null;
+  onOutput?: ((chunk: Buffer) => void) | null;
+  stallMs?: number;
+}
+function runNpm(ctx: UpdaterCtx, args: string[], { timeoutMs = 30 * 60 * 1000, logStream = null, onOutput = null, stallMs = 0 }: RunNpmOpts = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const nodeBin = ctx.nodeExe();
     const cli = ctx.npmCli();
@@ -132,7 +151,7 @@ function runNpm(ctx, args, { timeoutMs = 30 * 60 * 1000, logStream = null, onOut
     }
     ctx.log('update', 'npm ' + args.join(' '));
     try { fs.mkdirSync(ctx.userDataDir, { recursive: true }); } catch {}
-    const proc = spawn(nodeBin, [cli, ...args], {
+    const proc = cp.spawn(nodeBin, [cli, ...args], {
       cwd: ctx.userDataDir,
       env: {
         ...process.env,
@@ -146,15 +165,15 @@ function runNpm(ctx, args, { timeoutMs = 30 * 60 * 1000, logStream = null, onOut
     activeProc = proc;
     let settled = false;
     let stdoutBuf = '';
-    const finish = (fn, value) => { if (!settled) { settled = true; clearTimeout(timer); clearTimeout(stallTimer); activeProc = null; fn(value); } };
-    const finishAfterKill = async (error) => {
+    const finish = (fn: (value: any) => void, value: any) => { if (!settled) { settled = true; clearTimeout(timer); if (stallTimer) clearTimeout(stallTimer); activeProc = null; fn(value); } };
+    const finishAfterKill = async (error: Error) => {
       if (settled) return;
       // Lock the result before taskkill: on Windows the child can emit
       // `exit` while taskkill is still completing, which must not replace a
       // timeout/stall error with a generic npm exit-code error.
       settled = true;
       clearTimeout(timer);
-      clearTimeout(stallTimer);
+      if (stallTimer) clearTimeout(stallTimer);
       activeProc = null;
       await killProc(proc);
       reject(error);
@@ -164,7 +183,7 @@ function runNpm(ctx, args, { timeoutMs = 30 * 60 * 1000, logStream = null, onOut
     }, timeoutMs);
     // 停滞检测：stallMs > 0 时，超过阈值没有产生任何输出即判死（触发
     // 调用方切换镜像源），避免「卡住但没到整体超时」的长时间空转。
-    let stallTimer = null;
+    let stallTimer: NodeJS.Timeout | null = null;
     const armStall = () => {
       if (!stallMs) return;
       if (stallTimer) clearTimeout(stallTimer);
@@ -172,7 +191,7 @@ function runNpm(ctx, args, { timeoutMs = 30 * 60 * 1000, logStream = null, onOut
         await finishAfterKill(new Error('下载停滞（' + Math.round(stallMs / 1000) + ' 秒无进展），将切换镜像源重试'));
       }, stallMs);
     };
-    const onChunk = (c) => {
+    const onChunk = (c: Buffer) => {
       armStall();
       if (logStream) logStream.write(c);
       if (onOutput) { try { onOutput(c); } catch {} }
@@ -193,7 +212,7 @@ function runNpm(ctx, args, { timeoutMs = 30 * 60 * 1000, logStream = null, onOut
 }
 
 // 当前生效的 registry（.npmrc / NPM_CONFIG_REGISTRY），供镜像源链去重与提示。
-async function currentRegistry(ctx) {
+async function currentRegistry(ctx: UpdaterCtx): Promise<string | null> {
   try {
     const out = await runNpm(ctx, ['config', 'get', 'registry'], { timeoutMs: 30000 });
     const v = String(out || '').trim().replace(/\/+$/, '');
@@ -202,10 +221,10 @@ async function currentRegistry(ctx) {
 }
 
 // 拼接镜像源尝试链：默认源（尊重用户配置）优先，失败/停滞时依次切镜像。
-function registryChain(current) {
-  const seen = new Set();
-  const chain = [];
-  const push = (r) => {
+function registryChain(current: string | null): string[] {
+  const seen = new Set<string>();
+  const chain: string[] = [];
+  const push = (r: string | null | undefined) => {
     if (!r) return;
     const norm = r.replace(/\/+$/, '');
     const key = norm.toLowerCase();
@@ -218,31 +237,31 @@ function registryChain(current) {
 
 // --- public API -----------------------------------------------------------
 
-async function checkLatest(ctx) {
+async function checkLatest(ctx: UpdaterCtx): Promise<string> {
   // 主源查不到/超时后自动试镜像源（更新弹窗外静默执行，失败不打扰用户）。
   const chain = registryChain(await currentRegistry(ctx));
-  const errors = [];
+  const errors: string[] = [];
   for (const registry of chain) {
     const args = ['view', PKG, 'version'];
     if (registry) args.push('--registry=' + registry);
     try {
       const out = await runNpm(ctx, args, { timeoutMs: 90000 });
       const lines = out.trim().split(/\r?\n/).filter(Boolean);
-      const v = lines[lines.length - 1].trim();
+      const v = lines[lines.length - 1]!.trim();
       if (!/^\d+\.\d+\.\d+/.test(v)) throw new Error('无法解析官方版本号: ' + JSON.stringify(v));
       if (registry) ctx.log('update', '版本检查成功（镜像源 ' + registry + '）');
       return v;
     } catch (err) {
-      errors.push((registry || '默认源') + ': ' + err.message);
+      errors.push((registry || '默认源') + ': ' + (err as Error).message);
     }
   }
   throw new Error('无法获取官方版本号（' + errors.join('；') + '）');
 }
 
-function previousAgentDir(ctx) { return path.join(ctx.userDataDir, 'agent-previous'); }
+function previousAgentDir(ctx: UpdaterCtx): string { return path.join(ctx.userDataDir, 'agent-previous'); }
 
 // 上一版本备份是否可用（供启动失败对话框选择「回退到上一版本」）。
-function previousAgentInfo(ctx) {
+function previousAgentInfo(ctx: UpdaterCtx): Record<string, any> | null {
   const settings = loadSettings(ctx);
   if (!settings.previousAgent || !settings.previousAgent.version) return null;
   if (!fs.existsSync(previousAgentDir(ctx))) return null;
@@ -255,7 +274,13 @@ function previousAgentInfo(ctx) {
 //   { stage: 'install', registry }                  —— 进入解包安装阶段
 //   { stage: 'done' }                               —— npm 安装成功，即将切换版本
 //   { stage: 'mirror', registry }                   —— 源停滞/失败，已切换镜像源
-async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STALL_MS } = {}) {
+interface UpdateProgress {
+  stage: 'fetch' | 'install' | 'done' | 'mirror';
+  count?: number;
+  elapsed?: string;
+  registry?: string | null;
+}
+async function applyUpdate(ctx: UpdaterCtx, version: string, { onProgress = null, stallMs = NPM_STALL_MS }: { onProgress?: ((p: UpdateProgress) => void) | null; stallMs?: number } = {}): Promise<{ version: string; logPath: string }> {
   const staging = stagingDir(ctx);
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
@@ -264,18 +289,18 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
   const logStream = fs.createWriteStream(logPath, { flags: 'a' });
 
   const chain = registryChain(await currentRegistry(ctx));
-  const errors = [];
-  let installErr = null;
+  const errors: string[] = [];
+  let installErr: Error | null = null;
   const started = Date.now();
-  const fmt = (ms) => {
+  const fmt = (ms: number) => {
     const s = Math.max(0, Math.round(ms / 1000));
     return Math.floor(s / 60) + ' 分 ' + (s % 60) + ' 秒';
   };
   for (let i = 0; i < chain.length; i++) {
-    const registry = chain[i];
+    const registry = chain[i]!;
     if (i > 0 && onProgress) {
       try { onProgress({ stage: 'mirror', registry }); } catch {}
-      ctx.log('update', '下载源 ' + registry + ' 不可用，自动切换镜像源 ' + (chain[i] || '默认源'));
+      ctx.log('update', '下载源 ' + registry + ' 不可用，自动切换镜像源 ' + (chain[i]! || '默认源'));
     }
     // npm 安装进度解析：--loglevel=info 会输出 "npm http fetch GET 200 …" 行
     //（每个包/元数据一次）与 reify 阶段行；按此上报实时进度与阶段。
@@ -283,7 +308,7 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
     let sawReify = false;
     let sawAdded = false;
     let lastPush = 0;
-    const push = (force) => {
+    const push = (force: boolean) => {
       const now = Date.now();
       if (!force && now - lastPush < 500) return;
       lastPush = now;
@@ -294,7 +319,7 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
           : { stage: sawReify ? 'install' : 'fetch', count: fetchCount, elapsed: fmt(now - started), registry });
       } catch {}
     };
-    const onOutput = (chunk) => {
+    const onOutput = (chunk: Buffer) => {
       const text = String(chunk);
       if (text.includes('http fetch GET 200') || /fetch\s+GET\s+200/i.test(text)) fetchCount++;
       if (/reify:/i.test(text)) sawReify = true;
@@ -302,7 +327,7 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
       push(false);
     };
     try {
-      const args = [
+      const args: string[] = [
         'install', '--prefix', staging, PKG + '@' + version,
         '--save-exact', '--omit=dev', '--no-audit', '--no-fund', '--no-update-notifier',
         '--loglevel=info',
@@ -313,9 +338,9 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
       installErr = null;
       break;
     } catch (err) {
-      installErr = err;
-      errors.push((registry || '默认源') + ': ' + err.message);
-      ctx.log('update', '下载失败（' + (registry || '默认源') + '）: ' + err.message);
+      installErr = err as Error;
+      errors.push((registry || '默认源') + ': ' + (err as Error).message);
+      ctx.log('update', '下载失败（' + (registry || '默认源') + '）: ' + (err as Error).message);
       if (i === chain.length - 1 && onProgress) {
         try { onProgress({ stage: 'mirror', registry: null }); } catch {}
       }
@@ -369,7 +394,7 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
     }
     ctx.log('update', `配置快照写入 ${cfgDir}`);
   } catch (snapErr) {
-    ctx.log('update', '配置快照写入失败（不影响更新主体）: ' + String(snapErr && snapErr.message));
+    ctx.log('update', '配置快照写入失败（不影响更新主体）: ' + String(snapErr && (snapErr as Error).message));
     // 快照是「锦上添花」：失败不阻塞 swap 主流程。
   }
   try {
@@ -379,10 +404,10 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
     try {
       if (!fs.existsSync(overlay) && fs.existsSync(backup)) fs.renameSync(backup, overlay);
     } catch (rollbackErr) {
-      ctx.log('update', '回滚 overlay 失败: ' + String(rollbackErr && rollbackErr.message));
+      ctx.log('update', '回滚 overlay 失败: ' + String(rollbackErr && (rollbackErr as Error).message));
     }
     fs.rmSync(staging, { recursive: true, force: true });
-    throw new Error('切换新版本失败: ' + (err && err.message) + '（staging 已清理）');
+    throw new Error('切换新版本失败: ' + (err && (err as Error).message) + '（staging 已清理）');
   }
   // 上一份残留备份（上次更新后既未确认健康也未回退）已过时，直接清除，
   // 新备份以固定名保留。
@@ -390,7 +415,7 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
   if (fs.existsSync(prevDir)) fs.rmSync(prevDir, { recursive: true, force: true });
   if (fs.existsSync(backup)) {
     try { fs.renameSync(backup, prevDir); } catch (err) {
-      ctx.log('update', '保留上一版本备份失败: ' + (err && err.message));
+      ctx.log('update', '保留上一版本备份失败: ' + (err as Error).message);
       fs.rmSync(backup, { recursive: true, force: true });
     }
   }
@@ -404,7 +429,7 @@ async function applyUpdate(ctx, version, { onProgress = null, stallMs = NPM_STAL
 }
 
 // 下次启动确认新版健康后调用：清理 agent-previous 备份。
-function confirmPreviousAgentHealthy(ctx) {
+function confirmPreviousAgentHealthy(ctx: UpdaterCtx): boolean {
   const settings = loadSettings(ctx);
   if (!settings.previousAgent) return false;
   const prevDir = previousAgentDir(ctx);
@@ -415,14 +440,14 @@ function confirmPreviousAgentHealthy(ctx) {
     ctx.log('update', '新版启动确认健康，已清理上一版本备份');
     return true;
   } catch (err) {
-    ctx.log('update', '清理上一版本备份失败: ' + (err && err.message));
+    ctx.log('update', '清理上一版本备份失败: ' + (err as Error).message);
     return false;
   }
 }
 
 // 启动失败时手动回退到上一版本：当前 overlay 移为 agent-broken-*，
 // agent-previous 还原为 overlay。
-function rollbackToPrevious(ctx) {
+function rollbackToPrevious(ctx: UpdaterCtx): string | null {
   const settings = loadSettings(ctx);
   const prevDir = previousAgentDir(ctx);
   const overlay = overlayDir(ctx);
@@ -438,12 +463,12 @@ function rollbackToPrevious(ctx) {
     ctx.log('update', '已回退到上一版本 ' + prev.version + '（坏副本保留在 agent-broken-*）');
     return prev.version;
   } catch (err) {
-    ctx.log('update', '回退到上一版本失败: ' + (err && err.message));
+    ctx.log('update', '回退到上一版本失败: ' + (err as Error).message);
     return null;
   }
 }
 
-function rollback(ctx) {
+function rollback(ctx: UpdaterCtx): string | null {
   const overlay = overlayDir(ctx);
   if (!fs.existsSync(overlay)) return null;
   const broken = path.join(ctx.userDataDir, 'agent-broken-' + Date.now());
@@ -452,7 +477,7 @@ function rollback(ctx) {
   return broken;
 }
 
-module.exports = {
+export = {
   PKG,
   NPM_MIRRORS,
   settingsPath,

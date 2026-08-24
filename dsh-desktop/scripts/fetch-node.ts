@@ -12,8 +12,8 @@
 // Usage (must run under system Node, not Electron):
 //   npm run fetch-node
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
 
 const src = process.execPath;
 const dest = path.resolve(__dirname, '..', 'vendor', 'node', 'node.exe');

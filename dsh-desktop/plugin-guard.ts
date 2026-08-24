@@ -20,17 +20,31 @@
 //（cordis.patch.yml / package.json / node_modules 里的遮蔽拷贝），
 // 绝不修改 harness 内核或用户会话数据。
 
-const fs = require('node:fs');
-const path = require('node:path');
+import fs = require('node:fs');
+import path = require('node:path');
+import os = require('node:os');
+
+const { healProfileModuleShadowing } = require('./profile-module-heal') as {
+  healProfileModuleShadowing(home: string, profile?: string, log?: (m: string) => void): string[];
+};
+const { healSoulMdPatchRow, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal') as {
+  healSoulMdPatchRow(patch: string, config?: Record<string, unknown>): { patch: string; healed: string[] };
+  removeBundledRowDuplicates(patch: string, rowIds: Record<string, unknown>, bundleNames: unknown[], bundleEntryIds: Set<string>): { patch: string; removed: string[] };
+  collectBundleEntryIds(bundleNames: unknown[], profileNodeModules: string): Set<string>;
+};
 
 // 快照覆盖的 profile 配置面：插件树的全部「声明性」状态。
-const GUARD_FILES = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'cordis.patch.yml'];
+const GUARD_FILES: string[] = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'cordis.patch.yml'];
 const MAX_SNAPSHOTS = 10;
 
 // ── 静态高危扫描（healthcheck 的 C8 思路）────────────────────────────────
 // 只做 readFileSync + 正则，绝不 require/执行插件代码；命中即报告（高危级），
 // 不自动删除。模式面向「装完即失控」的常见木马形态，刻意保守以压低误报。
-const TROJAN_PATTERNS = [
+interface TrojanPattern {
+  code: string;
+  re: RegExp;
+}
+const TROJAN_PATTERNS: TrojanPattern[] = [
   { code: 'TROJAN_REMOTE_EXEC', re: /(?:child_process|execSync|spawnSync|exec|spawn)\s*\(\s*['"`](?:curl|wget|powershell|cmd|bash|sh)\b[^'"`]*['"`][\s\S]{0,200}(?:\|\s*(?:sh|bash|iex|Invoke-Expression)|-enc\b)/i },
   { code: 'TROJAN_DOWNLOAD_EXEC', re: /(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr)\b[\s\S]{0,160}?(?:\|\s*(?:sh|bash|iex|Invoke-Expression)\b|Out-File[\s\S]{0,80}\.(?:ps1|bat|cmd|vbs))/i },
   { code: 'TROJAN_BASE64_EVAL', re: /(?:eval|Function)\s*\(\s*(?:atob|Buffer\.from\([^)]*,\s*['"]base64['"]\)|window\.atob)\s*\(/i },
@@ -41,7 +55,59 @@ const SCAN_MAX_FILE_BYTES = 2 * 1024 * 1024;   // 单文件扫描上限 2MB
 const SCAN_MAX_TOTAL_BYTES = 32 * 1024 * 1024; // 单包总扫描上限 32MB
 const SCAN_EXTS = /\.(c?js|mjs|cjs|json|yml|yaml|sh|ps1|bat|cmd)$/i;
 
-function createGuard(opts) {
+interface GuardOpts {
+  getHome: () => string;    // () => string  有效的 DSH_HOME
+  getProfile: () => string; // () => string  桌面端使用的 profile 名
+  dshBin: () => string;     // () => string  当前生效的 dsh bin（内置或 overlay）
+  log?: (section: string, message: string) => void;
+}
+
+interface SnapshotMeta {
+  id: string;
+  reason: string;
+  at: string;
+  files: string[];
+  pluginRows: string[];
+}
+
+interface Finding {
+  code: string;
+  severity: 'high' | 'medium' | 'low';
+  message: string;
+  fixable: boolean;
+}
+
+interface GuardState {
+  lastGood?: string | null;
+  lastGoodAt?: string;
+}
+
+interface BootAttribution {
+  name: string;
+  kind: 'patchRow' | 'bundle' | 'dependency';
+  rowId: string | null;
+}
+
+interface GuardApi {
+  snapshot(reason: string): SnapshotMeta | null;
+  listSnapshots(): SnapshotMeta[];
+  restore(id: string): { ok: boolean; restored?: string[]; error?: string };
+  markGood(id: string): void;
+  lastGoodSnapshot(): SnapshotMeta | null;
+  healthCheck(): { at: string; profile: string; findings: Finding[] };
+  repair(findings?: Finding[]): { applied: string[] };
+  repairJunctions(): { repaired: string[]; unknown: string[] };
+  junctionFindings(): Finding[];
+  reportIncident(title: string, detail: string): { ok: boolean; file?: string; error?: string };
+  listIncidents(): { id: string; title: string }[];
+  readIncident(id: string): { ok: boolean; content?: string; error?: string };
+  resolveIncident(id: string): { ok: boolean; error?: string };
+  guardedBoot(startOnce: () => Promise<string>, describeFailure?: () => string, opts?: { preRetry?: (errText: string) => Promise<unknown> }): Promise<string>;
+  setRollbackLift(fn: () => Promise<string>): void;
+  attributeBootFailure(errText: string): BootAttribution | null;
+}
+
+function createGuard(opts: GuardOpts): GuardApi {
   const {
     getHome,          // () => string  有效的 DSH_HOME
     getProfile,       // () => string  桌面端使用的 profile 名
@@ -49,18 +115,18 @@ function createGuard(opts) {
     log = () => {},
   } = opts;
 
-  const home = () => getHome() || path.join(require('node:os').homedir(), '.dsh');
+  const home = () => getHome() || path.join(os.homedir(), '.dsh');
   const profileDir = () => path.join(home(), 'profiles', getProfile());
   const guardDir = () => path.join(home(), 'guard');
   const rollbacksDir = () => path.join(home(), 'rollbacks', getProfile());
   const stateFile = () => path.join(guardDir(), 'state.json');
   const incidentsDir = () => path.join(guardDir(), 'incidents');
 
-  function readJson(file, fallback) {
+  function readJson(file: string, fallback?: any): any {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
   }
 
-  function writeJson(file, value) {
+  function writeJson(file: string, value: unknown): void {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = file + '.tmp-' + Date.now();
     fs.writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n');
@@ -73,15 +139,15 @@ function createGuard(opts) {
   // ── 快照 / 回滚（plugin-guard 的核心）────────────────────────────────
   // 只备份声明性配置（四个小文件），秒级完成；node_modules 实体不备份 ——
   // 回滚配置后，残留的包目录只是「不再被引用」，不影响加载。
-  function snapshot(reason) {
+  function snapshot(reason: string): SnapshotMeta | null {
     try {
       const dir = profileDir();
       if (!fs.existsSync(dir)) return null;
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace(/Z$/, '');
       const dest = path.join(rollbacksDir(), stamp);
       fs.mkdirSync(dest, { recursive: true });
-      const files = [];
-      const rows = [];
+      const files: string[] = [];
+      const rows: string[] = [];
       for (const name of GUARD_FILES) {
         const src = path.join(dir, name);
         if (!fs.existsSync(src)) continue;
@@ -91,7 +157,7 @@ function createGuard(opts) {
           for (const id of patchRowIds(fs.readFileSync(src, 'utf8'))) rows.push(id);
         }
       }
-      const meta = {
+      const meta: SnapshotMeta = {
         id: stamp, reason: String(reason || 'manual'), at: new Date().toISOString(),
         files, pluginRows: rows,
       };
@@ -100,19 +166,19 @@ function createGuard(opts) {
       log('guard', `已创建快照 ${stamp}（${reason}，${files.length} 个文件，${rows.length} 个插件行）`);
       return meta;
     } catch (err) {
-      log('guard', '创建快照失败: ' + err.message);
+      log('guard', '创建快照失败: ' + (err as Error).message);
       return null;
     }
   }
 
-  function listSnapshots() {
+  function listSnapshots(): SnapshotMeta[] {
     try {
       const root = rollbacksDir();
       if (!fs.existsSync(root)) return [];
-      const out = [];
+      const out: SnapshotMeta[] = [];
       for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
-        const meta = readJson(path.join(root, entry.name, 'meta.json'));
+        const meta = readJson(path.join(root, entry.name, 'meta.json'), null);
         if (!meta || !Array.isArray(meta.files) || meta.files.length === 0) continue;
         out.push(meta);
       }
@@ -123,16 +189,16 @@ function createGuard(opts) {
     }
   }
 
-  function pruneSnapshots() {
+  function pruneSnapshots(): void {
     try {
       const list = listSnapshots();
       for (let i = MAX_SNAPSHOTS; i < list.length; i += 1) {
-        fs.rmSync(path.join(rollbacksDir(), list[i].id), { recursive: true, force: true, maxRetries: 2 });
+        fs.rmSync(path.join(rollbacksDir(), list[i]!.id), { recursive: true, force: true, maxRetries: 2 });
       }
     } catch { /* 清理失败不影响主流程 */ }
   }
 
-  function restore(id) {
+  function restore(id: string): { ok: boolean; restored?: string[]; error?: string } {
     try {
       if (!/^[\w.-]+$/.test(String(id || ''))) return { ok: false, error: 'bad snapshot id' };
       const snapDir = path.join(rollbacksDir(), String(id));
@@ -141,7 +207,7 @@ function createGuard(opts) {
       fs.mkdirSync(dir, { recursive: true });
       // 回滚前给当前状态留一份「回滚前」快照，反悔有路。
       snapshot('pre-restore:' + id);
-      const restored = [];
+      const restored: string[] = [];
       for (const name of GUARD_FILES) {
         const src = path.join(snapDir, name);
         if (!fs.existsSync(src)) continue;
@@ -151,15 +217,15 @@ function createGuard(opts) {
       log('guard', `已回滚 profile 到快照 ${id}（${restored.join(', ')}）`);
       return { ok: true, restored };
     } catch (err) {
-      return { ok: false, error: String((err && err.message) || err) };
+      return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
     }
   }
 
-  function state() {
+  function state(): GuardState {
     return readJson(stateFile(), {});
   }
 
-  function markGood(id) {
+  function markGood(id: string): void {
     try {
       const s = state();
       s.lastGood = id || null;
@@ -168,7 +234,7 @@ function createGuard(opts) {
     } catch { /* 标记失败无碍 */ }
   }
 
-  function lastGoodSnapshot() {
+  function lastGoodSnapshot(): SnapshotMeta | null {
     const s = state();
     if (!s.lastGood) return null;
     return listSnapshots().find((m) => m.id === s.lastGood) || null;
@@ -176,8 +242,8 @@ function createGuard(opts) {
 
   // ── 静态体检（healthcheck 的 L0/L1 思路）─────────────────────────────
   // 发现项：{ code, severity: 'high'|'medium'|'low', message, fixable }
-  function healthCheck() {
-    const findings = [];
+  function healthCheck(): { at: string; profile: string; findings: Finding[] } {
+    const findings: Finding[] = [];
     const dir = profileDir();
 
     // C3：profile node_modules 里遮蔽安装闭包 junction 的拷贝（真实目录或
@@ -198,8 +264,8 @@ function createGuard(opts) {
   }
 
   // 供 main.js 周期性轻量检查（不打扰用户，只返回是否有异动）。
-  function junctionFindings() {
-    const out = [];
+  function junctionFindings(): Finding[] {
+    const out: Finding[] = [];
     try {
       const fallbackDir = path.join(home(), 'profiles', 'node_modules');
       const expected = expectedClosureRoot();
@@ -213,7 +279,7 @@ function createGuard(opts) {
         if (!target) continue;
         const real = safeRealpath(link) || target;
         const expRoot = safeRealpath(expected) || expected;
-        const norm = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+        const norm = (p: string) => String(p).replace(/\//g, '\\').toLowerCase();
         if (!norm(real).startsWith(norm(expRoot))) {
           out.push({
             code: 'JUNCTION_FOREIGN',
@@ -234,8 +300,8 @@ function createGuard(opts) {
     return out;
   }
 
-  function listFallbackNames(fallbackDir) {
-    const names = [];
+  function listFallbackNames(fallbackDir: string): string[] {
+    const names: string[] = [];
     let entries;
     try { entries = fs.readdirSync(fallbackDir, { withFileTypes: true }); } catch { return names; }
     for (const entry of entries) {
@@ -254,7 +320,7 @@ function createGuard(opts) {
   }
 
   // dshBin() 形如 <closure>/@deepseek-ai/dsh/lib/bin.js → 安装闭包根。
-  function expectedClosureRoot() {
+  function expectedClosureRoot(): string | null {
     try {
       return path.resolve(dshBin(), '../../../..');
     } catch {
@@ -262,8 +328,8 @@ function createGuard(opts) {
     }
   }
 
-  function shadowFindings(dir) {
-    const out = [];
+  function shadowFindings(dir: string): Finding[] {
+    const out: Finding[] = [];
     try {
       const fallbackDir = path.join(home(), 'profiles', 'node_modules');
       const modulesDir = path.join(dir, 'node_modules');
@@ -276,7 +342,7 @@ function createGuard(opts) {
           out.push({ code: 'SHADOW_COPY', severity: 'high', message: `插件依赖把核心包 ${full} 装成了独立拷贝（模块双实例根源）`, fixable: true });
         } else if (st.isSymbolicLink()) {
           const target = safeReadlink(shadow) || '';
-          const norm = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+          const norm = (p: string) => String(p).replace(/\//g, '\\').toLowerCase();
           if (norm(target).includes(norm(path.join(modulesDir, '.pnpm')))) {
             out.push({ code: 'SHADOW_LINK', severity: 'high', message: `pnpm 把核心包 ${full} 链接进了 profile（模块双实例根源）`, fixable: true });
           }
@@ -286,8 +352,8 @@ function createGuard(opts) {
     return out;
   }
 
-  function fallbackPackages(fallbackDir) {
-    const names = [];
+  function fallbackPackages(fallbackDir: string): { full: string; rel: string }[] {
+    const names: { full: string; rel: string }[] = [];
     let entries;
     try { entries = fs.readdirSync(fallbackDir, { withFileTypes: true }); } catch { return names; }
     for (const entry of entries) {
@@ -305,16 +371,16 @@ function createGuard(opts) {
     return names;
   }
 
-  function patchRowIds(patch) {
-    const ids = [];
+  function patchRowIds(patch: string | null | undefined): string[] {
+    const ids: string[] = [];
     const re = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
-    let m;
-    while ((m = re.exec(String(patch || ''))) !== null) ids.push(m[1]);
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(String(patch || ''))) !== null) ids.push(m[1]!);
     return ids;
   }
 
-  function patchFindings(dir) {
-    const out = [];
+  function patchFindings(dir: string): Finding[] {
+    const out: Finding[] = [];
     try {
       const file = path.join(dir, 'cordis.patch.yml');
       if (!fs.existsSync(file)) return out;
@@ -334,14 +400,14 @@ function createGuard(opts) {
     return out;
   }
 
-  function trojanFindings(dir) {
-    const out = [];
+  function trojanFindings(dir: string): Finding[] {
+    const out: Finding[] = [];
     try {
       const builtin = new Set(readJson(path.join(dir, '.dsh-builtin-plugins.json'), { names: [] }).names || []);
       const modulesDir = path.join(dir, 'node_modules');
       if (!fs.existsSync(modulesDir)) return out;
       let total = 0;
-      const walk = (d, depth) => {
+      const walk = (d: string, depth: number): void => {
         if (depth > 4 || total > SCAN_MAX_TOTAL_BYTES || out.length >= 20) return;
         let entries;
         try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
@@ -379,31 +445,29 @@ function createGuard(opts) {
   }
 
   // ── 修复执行器（只动插件/配置层）────────────────────────────────────
-  function repair(findings) {
-    const applied = [];
+  function repair(findings?: Finding[]): { applied: string[] } {
+    const applied: string[] = [];
     const list = Array.isArray(findings) ? findings : (healthCheck().findings);
     const dir = profileDir();
 
     if (list.some((f) => f.code === 'SHADOW_COPY' || f.code === 'SHADOW_LINK')) {
       try {
-        const { healProfileModuleShadowing } = require('./profile-module-heal');
         const removed = healProfileModuleShadowing(home(), getProfile(), (m) => log('guard', m));
         if (removed.length) applied.push('清理模块遮蔽: ' + removed.join(', '));
       } catch (err) {
-        log('guard', '清理模块遮蔽失败: ' + err.message);
+        log('guard', '清理模块遮蔽失败: ' + (err as Error).message);
       }
     }
 
     if (list.some((f) => f.code === 'PATCH_DUP_ID' || f.code === 'PATCH_SOUL_CONFIG')) {
       try {
-        const { healSoulMdPatchRow, removeBundledRowDuplicates, collectBundleEntryIds } = require('./patch-row-heal');
         const file = path.join(dir, 'cordis.patch.yml');
         let patch = fs.readFileSync(file, 'utf8');
         const healed = healSoulMdPatchRow(patch);
         if (healed.healed.length) { patch = healed.patch; applied.push('补写 soul-md 行 config.path'); }
-        const ids = {};
+        const ids: Record<string, unknown> = {};
         for (const id of patchRowIds(patch)) ids[id] = ids[id] || null;
-        let bundled = [];
+        let bundled: unknown[] = [];
         try { bundled = readJson(path.join(dir, 'package.json'))?.dsh?.profile?.bundles || []; } catch { bundled = []; }
         const declaredBundleIds = collectBundleEntryIds(bundled, path.join(dir, 'node_modules'));
         const { patch: deduped, removed } = removeBundledRowDuplicates(patch, ids, bundled, declaredBundleIds);
@@ -413,7 +477,7 @@ function createGuard(opts) {
         }
         if (healed.healed.length || removed.length) fs.writeFileSync(file, patch);
       } catch (err) {
-        log('guard', '修复 patch 行失败: ' + err.message);
+        log('guard', '修复 patch 行失败: ' + (err as Error).message);
       }
     }
 
@@ -431,16 +495,16 @@ function createGuard(opts) {
   // 一跑，桌面的模块解析就被换血（版本错位 / npx 缓存被清后悬空）。
   // 这里以 dshBin() 推导闭包根，逐个纠正指向；闭包里不存在的名字（原生
   // 新版才有的包）保留原样并报告。
-  function repairJunctions() {
-    const repaired = [];
-    const unknown = [];
+  function repairJunctions(): { repaired: string[]; unknown: string[] } {
+    const repaired: string[] = [];
+    const unknown: string[] = [];
     try {
       const fallbackDir = path.join(home(), 'profiles', 'node_modules');
       const expected = expectedClosureRoot();
       if (!expected || !fs.existsSync(fallbackDir)) return { repaired, unknown };
       fs.mkdirSync(fallbackDir, { recursive: true });
       const expRoot = safeRealpath(expected) || expected;
-      const norm = (p) => String(p).replace(/\//g, '\\').toLowerCase();
+      const norm = (p: string) => String(p).replace(/\//g, '\\').toLowerCase();
       for (const { full, rel } of fallbackPackages(fallbackDir)) {
         const link = path.join(fallbackDir, rel);
         let st;
@@ -462,7 +526,7 @@ function createGuard(opts) {
           fs.symlinkSync(want, link, 'junction');
           repaired.push(full);
         } catch (err) {
-          log('guard', `恢复 junction ${full} 失败: ` + err.message);
+          log('guard', `恢复 junction ${full} 失败: ` + (err as Error).message);
         }
       }
       if (repaired.length) {
@@ -472,13 +536,13 @@ function createGuard(opts) {
         log('guard', '闭包中不存在的共享模块（保留原指向）: ' + unknown.slice(0, 10).join(', '));
       }
     } catch (err) {
-      log('guard', 'junction 归属修复失败: ' + err.message);
+      log('guard', 'junction 归属修复失败: ' + (err as Error).message);
     }
     return { repaired, unknown };
   }
 
   // ── 事故报告（plugin-guard 的 incident）──────────────────────────────
-  function reportIncident(title, detail) {
+  function reportIncident(title: string, detail: string): { ok: boolean; file?: string; error?: string } {
     try {
       fs.mkdirSync(incidentsDir(), { recursive: true });
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -501,11 +565,11 @@ function createGuard(opts) {
       fs.writeFileSync(file, body);
       return { ok: true, file };
     } catch (err) {
-      return { ok: false, error: String((err && err.message) || err) };
+      return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
     }
   }
 
-  function listIncidents() {
+  function listIncidents(): { id: string; title: string }[] {
     try {
       const dir = incidentsDir();
       if (!fs.existsSync(dir)) return [];
@@ -519,18 +583,18 @@ function createGuard(opts) {
     }
   }
 
-  function readIncident(id) {
+  function readIncident(id: string): { ok: boolean; content?: string; error?: string } {
     try {
       if (!/^[\w.-]+\.md$/.test(String(id || ''))) return { ok: false, error: 'bad id' };
       const file = path.join(incidentsDir(), id);
       if (!fs.existsSync(file)) return { ok: false, error: 'not found' };
       return { ok: true, content: fs.readFileSync(file, 'utf8').slice(0, 30000) };
     } catch (err) {
-      return { ok: false, error: String((err && err.message) || err) };
+      return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
     }
   }
 
-  function resolveIncident(id) {
+  function resolveIncident(id: string): { ok: boolean; error?: string } {
     try {
       if (!/^[\w.-]+\.md$/.test(String(id || ''))) return { ok: false, error: 'bad id' };
       const file = path.join(incidentsDir(), id);
@@ -538,7 +602,7 @@ function createGuard(opts) {
       fs.renameSync(file, file + '.resolved.md');
       return { ok: true };
     } catch (err) {
-      return { ok: false, error: String((err && err.message) || err) };
+      return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
     }
   }
 
@@ -549,7 +613,7 @@ function createGuard(opts) {
   // V4.2：opts.preRetry(errText) 是配置级修复钩子（pnpm allowBuilds 等），
   // 返回 { applied: [...] }（或真值）即视为「已修复」，与 repair() 结果合并
   // 后一起重试一次；返回 false 则走原链路。钩子只调用一次。
-  async function guardedBoot(startOnce, describeFailure, opts = {}) {
+  async function guardedBoot(startOnce: () => Promise<string>, describeFailure?: () => string, opts: { preRetry?: (errText: string) => Promise<unknown> } = {}): Promise<string> {
     const snap = snapshot('boot');
     try {
       const url = await startOnce();
@@ -562,14 +626,14 @@ function createGuard(opts) {
       for (const f of findings) log('guard', `[体检] ${f.code}(${f.severity}): ${f.message}`);
 
       // V4.2：allowBuilds 等配置级修复钩子（只调用一次，返回 false 不打扰）。
-      let preApplied = [];
+      let preApplied: string[] = [];
       if (opts.preRetry) {
         try {
-          const r = await opts.preRetry(String((firstErr && firstErr.message) || firstErr));
+          const r: any = await opts.preRetry(String(((firstErr as Error) && (firstErr as Error).message) || firstErr));
           if (r && Array.isArray(r.applied) && r.applied.length) preApplied = r.applied;
           else if (r) preApplied = ['配置级修复钩子已应用'];
         } catch (err) {
-          log('guard', 'preRetry 钩子失败: ' + String((err && err.message) || err));
+          log('guard', 'preRetry 钩子失败: ' + String(((err as Error) && (err as Error).message) || err));
         }
       }
 
@@ -581,7 +645,7 @@ function createGuard(opts) {
           try {
             const url = await startOnce();
             if (snap) markGood(snap.id);
-            reportIncident('boot-recovered', '首次启动失败，自动修复后恢复。\n修复项：\n- ' + all.join('\n- ') + '\n\n原始错误：\n' + String((firstErr && firstErr.message) || firstErr));
+            reportIncident('boot-recovered', '首次启动失败，自动修复后恢复。\n修复项：\n- ' + all.join('\n- ') + '\n\n原始错误：\n' + String(((firstErr as Error) && (firstErr as Error).message) || firstErr));
             return url;
           } catch (secondErr) {
             log('guard', '修复后重试仍失败，进入回滚流程');
@@ -593,7 +657,7 @@ function createGuard(opts) {
     }
   }
 
-  async function rollbackPath(err, bootSnap, describeFailure) {
+  async function rollbackPath(err: unknown, bootSnap: SnapshotMeta | null, describeFailure?: () => string): Promise<string> {
     const good = lastGoodSnapshot();
     if (good && (!bootSnap || good.id !== bootSnap.id)) {
       log('guard', `回滚到最后良好快照 ${good.id}（${good.reason}）`);
@@ -604,19 +668,19 @@ function createGuard(opts) {
           const url = await guardedBootRetryOnce();
           return url;
         } catch (finalErr) {
-          reportIncident('rollback-failed', '回滚到快照 ' + good.id + ' 后仍无法启动。\n\n最终错误：\n' + String((finalErr && finalErr.message) || finalErr));
+          reportIncident('rollback-failed', '回滚到快照 ' + good.id + ' 后仍无法启动。\n\n最终错误：\n' + String(((finalErr as Error) && (finalErr as Error).message) || finalErr));
           throw finalErr;
         }
       }
     }
-    reportIncident('boot-failed', '启动失败且无可回滚快照。\n\n错误：\n' + String((err && err.message) || err) + (describeFailure ? '\n\n' + describeFailure() : ''));
+    reportIncident('boot-failed', '启动失败且无可回滚快照。\n\n错误：\n' + String(((err as Error) && (err as Error).message) || err) + (describeFailure ? '\n\n' + describeFailure() : ''));
     throw err;
   }
 
   // 回滚后的拉起也要留「最后良好」标记 —— 交给调用方包一层。
-  let rollbackLift = null;
-  function setRollbackLift(fn) { rollbackLift = fn; }
-  async function guardedBootRetryOnce() {
+  let rollbackLift: (() => Promise<string>) | null = null;
+  function setRollbackLift(fn: () => Promise<string>): void { rollbackLift = fn; }
+  async function guardedBootRetryOnce(): Promise<string> {
     if (rollbackLift) return rollbackLift();
     throw new Error('rollback lift not configured');
   }
@@ -627,17 +691,17 @@ function createGuard(opts) {
   //   · 命中 bundles / dependencies 键 → 返回 { name, kind, rowId: null }
   // 归因失败（报错不含可识别包名）返回 null —— 调用方退回通用按钮。
   // 只读 profile 配置面，绝不执行插件代码。
-  function attributeBootFailure(errText) {
+  function attributeBootFailure(errText: string): BootAttribution | null {
     try {
       const text = String(errText || '');
       if (!text) return null;
       const dir = profileDir();
-      const candidates = [];
-      const push = (raw) => {
+      const candidates: string[] = [];
+      const push = (raw: string | null | undefined) => {
         const k = String(raw || '').replace(/['",.;:]+$/g, '');
         if (k && /^@?[A-Za-z0-9][A-Za-z0-9._@/+-]*$/.test(k) && !candidates.includes(k)) candidates.push(k);
       };
-      const patterns = [
+      const patterns: RegExp[] = [
         /duplicate (?:loader )?entry[^\n]*?['"]?(@?[A-Za-z0-9][\w.@/-]*)['"]?/gi,
         /already registered[^\n]*?['"]?(@?[A-Za-z0-9][\w.@/-]*)['"]?/gi,
         /cannot find module\s+['"]([^'"]+)['"]/gi,
@@ -645,7 +709,7 @@ function createGuard(opts) {
         /(?:plugin|entry|bundle)\s+['"]?(@?[A-Za-z0-9][\w.@/-]*)['"]?\s+(?:failed|not found|unavailable|rejected)/gi,
       ];
       for (const re of patterns) {
-        let m;
+        let m: RegExpExecArray | null;
         while ((m = re.exec(text)) !== null) push(m[1]);
       }
       if (candidates.length === 0) return null;
@@ -656,20 +720,20 @@ function createGuard(opts) {
       // patch 行（顶层 + insert 内层）→ { id, name }
       let patchText = '';
       try { patchText = fs.readFileSync(path.join(dir, 'cordis.patch.yml'), 'utf8'); } catch {}
-      const rows = [];
+      const rows: { id: string; name: string | null }[] = [];
       if (patchText) {
         const lines = patchText.split(/\r?\n/);
-        let pendingId = null;
+        let pendingId: string | null = null;
         for (const line of lines) {
           const idm = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(line);
           if (idm !== null) {
             if (pendingId !== null) rows.push({ id: pendingId, name: null });
-            pendingId = idm[1];
+            pendingId = idm[1]!;
             continue;
           }
           const nm = /^\s+name:\s*['"]?([^'"\s]+)['"]?\s*$/.exec(line);
           if (nm !== null && pendingId !== null) {
-            rows.push({ id: pendingId, name: nm[1] });
+            rows.push({ id: pendingId, name: nm[1]! });
             pendingId = null;
             continue;
           }
@@ -693,18 +757,18 @@ function createGuard(opts) {
     }
   }
 
-  function safeReadlink(p) {
+  function safeReadlink(p: string): string | null {
     try { return fs.readlinkSync(p); } catch { return null; }
   }
 
   // Windows 上 rmSync(force) 对 junction 会抛 ERR_FS_EISDIR —— 删链接必须
   // 走 unlink（只摘链接本身，绝不递归目标）。
-  function removeLink(p) {
+  function removeLink(p: string): void {
     try { fs.unlinkSync(p); return; } catch { /* fall through */ }
     fs.rmSync(p, { force: true, recursive: true, maxRetries: 3, retryDelay: 150 });
   }
 
-  function safeRealpath(p) {
+  function safeRealpath(p: string): string | null {
     try { return fs.realpathSync(p); } catch { return null; }
   }
 
@@ -716,4 +780,4 @@ function createGuard(opts) {
   };
 }
 
-module.exports = { createGuard, GUARD_FILES };
+export = { createGuard, GUARD_FILES };

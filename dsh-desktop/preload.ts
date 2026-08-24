@@ -3,6 +3,8 @@
 // ⚠️ FROZEN (v5.0, 2026-08)：随 Electron 主链路冻结维护。
 // Tauri 壳的对应实现是 tauri-shell/sidecar/bridge.ts（键集契约由
 // bridge-preload-parity.test.mjs 双侧锁定，改任一侧必须同步另一侧）。
+// 本文件为 TS 转写（tsc 就地产出 preload.js），对外键集/行为零变更；
+// parity 契约测试继续读取编译产物 preload.js。
 
 // DSH Desktop — frameless window chrome + IPC bridge (sandbox-safe preload).
 //
@@ -14,6 +16,14 @@
 //      余额刷新），并把主进程推送的余额数据转发成 window 上的
 //      "dsh-balance-changed" 事件，供 dsh-balance 插件消费。
 //   3. 把 Web UI 内容下移 36px（body padding-top），保证自绘栏不遮挡界面。
+
+// preload 运行于 Electron renderer 沙箱（DOM 环境）；本 tsconfig lib 无 DOM，
+// 补最小 any 声明（仅本文件作用域，不影响其它模块）。文件以 export {} 收尾
+// 使其成为模块，声明随之模块化（避免 script 全局声明与 tsgo 冲突）。
+declare const window: any;
+declare const document: any;
+declare const localStorage: any;
+declare const CustomEvent: any;
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
@@ -30,103 +40,103 @@ const FLOAT_BAR_HEIGHT = 24;
 const dshDesktop = {
   appVersion: '', // 由 chrome:init 回填；旧字段保持存在
   windowControls: {
-    minimize: () => ipcRenderer.invoke('chrome:window', { action: 'minimize' }),
-    toggleMaximize: () => ipcRenderer.invoke('chrome:window', { action: 'toggle-maximize' }),
-    close: () => ipcRenderer.invoke('chrome:window', { action: 'close' }),
-    isMaximized: () => ipcRenderer.invoke('chrome:window', { action: 'is-maximized' }),
-    onMaximizeChange: (cb) => {
-      const listener = (_e, isMax) => { try { cb(isMax); } catch {} };
+    minimize: (): Promise<unknown> => ipcRenderer.invoke('chrome:window', { action: 'minimize' }),
+    toggleMaximize: (): Promise<unknown> => ipcRenderer.invoke('chrome:window', { action: 'toggle-maximize' }),
+    close: (): Promise<unknown> => ipcRenderer.invoke('chrome:window', { action: 'close' }),
+    isMaximized: (): Promise<unknown> => ipcRenderer.invoke('chrome:window', { action: 'is-maximized' }),
+    onMaximizeChange: (cb: (isMax: boolean) => void): (() => void) => {
+      const listener = (_e: unknown, isMax: boolean) => { try { cb(isMax); } catch {} };
       ipcRenderer.on('chrome:maximized', listener);
       return () => ipcRenderer.removeListener('chrome:maximized', listener);
     },
   },
   menu: {
-    action: (action, payload) => ipcRenderer.invoke('chrome:menu', { action, ...payload }),
+    action: (action: string, payload: Record<string, unknown> = {}) => ipcRenderer.invoke('chrome:menu', { action, ...payload }),
   },
-  getInfo: () => ipcRenderer.invoke('chrome:init'),
-  refreshBalance: () => ipcRenderer.invoke('dsh:balance-refresh'),
+  getInfo: (): Promise<unknown> => ipcRenderer.invoke('chrome:init'),
+  refreshBalance: (): Promise<unknown> => ipcRenderer.invoke('dsh:balance-refresh'),
   // 插件市场：请求主进程原地重启 dsh web 服务（安装/卸载插件后生效）。
-  restartService: () => ipcRenderer.invoke('chrome:restart-service', { intent: 'restart-service' }),
+  restartService: (): Promise<unknown> => ipcRenderer.invoke('chrome:restart-service', { intent: 'restart-service' }),
   // 会话浮窗（V4 多窗口）：主窗请求把某个会话弹出到独立窗口；浮窗关闭自身。
   floatWindow: {
-    open: (sessionId) => ipcRenderer.invoke('chrome:float-window', { action: 'open', sessionId }),
-    close: () => ipcRenderer.send('float:close'),
+    open: (sessionId: string): Promise<unknown> => ipcRenderer.invoke('chrome:float-window', { action: 'open', sessionId }),
+    close: (): void => ipcRenderer.send('float:close'),
   },
   // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
   // 设置页「插件保护」分区（dsh-plugin-shield 插件）从这里驱动主进程引擎。
   guard: {
-    action: (action, value) => ipcRenderer.invoke('guard:action', { action, value }),
+    action: (action: string, value: unknown): Promise<unknown> => ipcRenderer.invoke('guard:action', { action, value }),
   },
   // 内置插件选择向导：设置页「插件 → 选择向导」（dsh-plugin-wizard 插件）
   // 从这里二次打开向导窗口，按需启用/停用内置插件。
   pluginWizard: {
-    open: () => ipcRenderer.invoke('onboard:open'),
+    open: (): Promise<unknown> => ipcRenderer.invoke('onboard:open'),
   },
   // 插件管理（dsh-plugin-manager 插件「管理」标签）：列出配套/用户/核心插件
   // 及启用状态，写入/移除 profile cordis.patch.yml 的 disabled 条目
   // （完全退出并重启应用后生效，返回 { ok, restartRequired }）。
   pluginManager: {
-    list: () => ipcRenderer.invoke('dsh:plugin-list'),
-    setEnabled: (id, enabled) => ipcRenderer.invoke('dsh:plugin-set-enabled', { id, enabled }),
+    list: (): Promise<unknown> => ipcRenderer.invoke('dsh:plugin-list'),
+    setEnabled: (id: string, enabled: boolean): Promise<unknown> => ipcRenderer.invoke('dsh:plugin-set-enabled', { id, enabled }),
     // V4.2：移除（卸载语义）/恢复内置插件，返回 { ok, restartRequired }。
-    setRemoved: (id, removed) => ipcRenderer.invoke('dsh:plugin-set-removed', { id, removed }),
+    setRemoved: (id: string, removed: boolean): Promise<unknown> => ipcRenderer.invoke('dsh:plugin-set-removed', { id, removed }),
   },
   // 插件更新（dsh-unified-market 统一市场「更新」）：内置插件上游更新
   // —— 清单 / 手动更新单个 / 自动更新开关（默认关，仅提示）。
   pluginUpdates: {
-    list: (force = false) => ipcRenderer.invoke('dsh:plugin-updates', { force }),
-    update: (id) => ipcRenderer.invoke('dsh:plugin-update', { id }),
-    setAutoUpdate: (enabled) => ipcRenderer.invoke('dsh:plugin-auto-update', { enabled }),
+    list: (force = false): Promise<unknown> => ipcRenderer.invoke('dsh:plugin-updates', { force }),
+    update: (id: string): Promise<unknown> => ipcRenderer.invoke('dsh:plugin-update', { id }),
+    setAutoUpdate: (enabled: boolean): Promise<unknown> => ipcRenderer.invoke('dsh:plugin-auto-update', { enabled }),
   },
   // 图片粘贴（V4.2，dsh-image-paste 插件）：把剪贴板图片存到临时目录
   // （%TEMP%/dsh-paste/），返回 { ok, path, size } 供 agent 读取。
   imagePaste: {
-    save: (payload) => ipcRenderer.invoke('dsh:image-paste-save', payload),
+    save: (payload: unknown): Promise<unknown> => ipcRenderer.invoke('dsh:image-paste-save', payload),
   },
   // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读取默认档/
   // 当前覆盖、保存自定义价格（¥/百万 token）、恢复默认。
   balancePrices: {
-    get: (model) => ipcRenderer.invoke('dsh:balance-prices-get', { model }),
-    set: (model, prices) => ipcRenderer.invoke('dsh:balance-prices-set', { model, prices }),
-    reset: (model) => ipcRenderer.invoke('dsh:balance-prices-reset', { model }),
+    get: (model: string): Promise<unknown> => ipcRenderer.invoke('dsh:balance-prices-get', { model }),
+    set: (model: string, prices: unknown): Promise<unknown> => ipcRenderer.invoke('dsh:balance-prices-set', { model, prices }),
+    reset: (model: string): Promise<unknown> => ipcRenderer.invoke('dsh:balance-prices-reset', { model }),
   },
   // 获取所有可用模型列表（用于余额插件的价格设置页）
   balanceModels: {
-    list: () => ipcRenderer.invoke('dsh:balance-models'),
+    list: (): Promise<unknown> => ipcRenderer.invoke('dsh:balance-models'),
   },
   // 「文件」视图的还原请求：changes = [{path, op, oldText, newText}]（逆序）。
-  revertFiles: (changes) => ipcRenderer.invoke('dsh:file-revert', { changes }),
+  revertFiles: (changes: unknown): Promise<unknown> => ipcRenderer.invoke('dsh:file-revert', { changes }),
   // 「全部文件」视图：用系统默认程序打开项目文件。
-  openPath: (path) => ipcRenderer.invoke('dsh:file-open', { path }),
+  openPath: (path: string): Promise<unknown> => ipcRenderer.invoke('dsh:file-open', { path }),
   // 预览面板：用系统浏览器打开 URL（端口预览等）。
-  openExternal: (url) => ipcRenderer.invoke('dsh:open-external', { url }),
+  openExternal: (url: string): Promise<unknown> => ipcRenderer.invoke('dsh:open-external', { url }),
   // 复制文本到剪贴板（更新源地址等）。
-  copyText: (text) => ipcRenderer.invoke('dsh:copy-text', { text }),
+  copyText: (text: string): Promise<unknown> => ipcRenderer.invoke('dsh:copy-text', { text }),
   // 拖入文件（dsh-file-drop）：取浏览器 File 对象的完整磁盘路径
   // （webUtils.getPathForFile，仅 Electron 环境；浏览器打开 WebUI 时
   // 返回空字符串，插件自动降级为可读提示）。
-  getPathForFile: (file) => {
+  getPathForFile: (file: unknown): string => {
     try { return webUtils.getPathForFile(file) || ''; } catch { return ''; }
   },
   // 恢复页面（assets/recovery.html）使用的动作与状态读取。
   recovery: {
-    getState: () => ipcRenderer.invoke('chrome:recovery-state'),
-    reload: () => ipcRenderer.invoke('chrome:recovery-reload'),
-    restart: () => ipcRenderer.invoke('chrome:recovery-restart'),
-    exportLogs: () => ipcRenderer.invoke('chrome:export-logs'),
+    getState: (): Promise<unknown> => ipcRenderer.invoke('chrome:recovery-state'),
+    reload: (): Promise<unknown> => ipcRenderer.invoke('chrome:recovery-reload'),
+    restart: (): Promise<unknown> => ipcRenderer.invoke('chrome:recovery-restart'),
+    exportLogs: (): Promise<unknown> => ipcRenderer.invoke('chrome:export-logs'),
   },
   // 崩溃救援（rescue-agent.js）：服务器死后仍可用的轻量 agent。
   // 救援页从这里取状态、确认发送清单、发起 AI 诊断、逐项批准执行
   // 白名单动作（restore/disable/remove/repair/safe-mode/retry）、开关
   // 壳层安全模式、重启服务。
   rescue: {
-    getState: () => ipcRenderer.invoke('rescue:state'),
-    confirm: () => ipcRenderer.invoke('rescue:confirm'),
-    diagnose: (selections, userNote) => ipcRenderer.invoke('rescue:diagnose', { selections, userNote }),
-    apply: (suggestion) => ipcRenderer.invoke('rescue:apply', { suggestion }),
-    setSafeMode: (on) => ipcRenderer.invoke('safe-mode:set', { on }),
-    retry: () => ipcRenderer.invoke('rescue:retry'),
-    autoRepair: () => ipcRenderer.invoke('rescue:auto-repair'),
+    getState: (): Promise<unknown> => ipcRenderer.invoke('rescue:state'),
+    confirm: (): Promise<unknown> => ipcRenderer.invoke('rescue:confirm'),
+    diagnose: (selections: unknown, userNote: string): Promise<unknown> => ipcRenderer.invoke('rescue:diagnose', { selections, userNote }),
+    apply: (suggestion: unknown): Promise<unknown> => ipcRenderer.invoke('rescue:apply', { suggestion }),
+    setSafeMode: (on: boolean): Promise<unknown> => ipcRenderer.invoke('safe-mode:set', { on }),
+    retry: (): Promise<unknown> => ipcRenderer.invoke('rescue:retry'),
+    autoRepair: (): Promise<unknown> => ipcRenderer.invoke('rescue:auto-repair'),
   },
 };
 
@@ -156,15 +166,15 @@ if (FLOAT_MODE) {
 }
 
 // 页面异常 → 主进程日志（desktop.log），便于排查插件空白视图。
-window.addEventListener('error', (e) => {
+window.addEventListener('error', (e: any) => {
   try { ipcRenderer.send('dsh:page-error', 'window.onerror: ' + ((e && (e.message || e.error)) || 'unknown')); } catch {}
 });
-window.addEventListener('unhandledrejection', (e) => {
+window.addEventListener('unhandledrejection', (e: any) => {
   try { ipcRenderer.send('dsh:page-error', 'unhandledrejection: ' + String((e && e.reason && (e.reason.message || e.reason)) || e)); } catch {}
 });
 
 // 余额推送 → window 事件（dsh-balance 插件订阅）。
-ipcRenderer.on('dsh:balance', (_e, data) => {
+ipcRenderer.on('dsh:balance', (_e: unknown, data: unknown) => {
   try { window.dispatchEvent(new CustomEvent('dsh-balance-changed', { detail: data })); } catch {}
 });
 
@@ -235,7 +245,7 @@ const CHROME_CSS = `
   color:var(--dsw-alias-label-primary,#e6ecff)}
 `;
 
-const GLYPHS = {
+const GLYPHS: Record<string, string> = {
   menu: '<svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><circle cx="2.4" cy="6" r="1.15"/><circle cx="6" cy="6" r="1.15"/><circle cx="9.6" cy="6" r="1.15"/></svg>',
   min: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><path d="M2.5 6h7"/></svg>',
   max: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.1"><rect x="2.6" y="2.6" width="6.8" height="6.8" rx="1.4"/></svg>',
@@ -243,20 +253,32 @@ const GLYPHS = {
   close: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><path d="M2.6 2.6l6.8 6.8M9.4 2.6l-6.8 6.8"/></svg>',
 };
 
-let menuOpen = false;
-let menuEl = null;
-let maxBtn = null;
-let state = { appVersion: '', agentVersion: '', agentSource: '', notifyOnTurnEnd: true, closeToTray: true, exitAction: 'ask', shortcutPolicy: 'auto' };
+interface ChromeState {
+  appVersion: string;
+  agentVersion: string;
+  agentSource: string;
+  notifyOnTurnEnd: boolean;
+  closeToTray: boolean;
+  exitAction: string;
+  shortcutPolicy: string;
+  repoUrls?: { github: string; gitee: string };
+  iconDataUri?: string;
+}
 
-const EXIT_ACTIONS = [
+let menuOpen = false;
+let menuEl: any = null;
+let maxBtn: any = null;
+let state: ChromeState = { appVersion: '', agentVersion: '', agentSource: '', notifyOnTurnEnd: true, closeToTray: true, exitAction: 'ask', shortcutPolicy: 'auto' };
+
+const EXIT_ACTIONS: { value: string; label: string }[] = [
   { value: 'ask', label: '每次询问' },
   { value: 'minimize', label: '后台运行（最小化到托盘）' },
   { value: 'quit', label: '直接退出' },
 ];
 
-function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function esc(s: unknown): string { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!)); }
 
-function renderMenu() {
+function renderMenu(): void {
   if (!menuEl) return;
   menuEl.innerHTML = `
     <div class="dch-mh">
@@ -294,7 +316,7 @@ function renderMenu() {
     <div class="dch-sep"></div>
     <button class="dch-item" data-act="about">关于 Deepseek Harness EAC</button>
     <button class="dch-item" data-danger="1" data-act="quit">退出</button>`;
-  menuEl.querySelectorAll('.dch-item').forEach((item) => {
+  menuEl.querySelectorAll('.dch-item').forEach((item: any) => {
     item.addEventListener('click', async () => {
       const act = item.dataset.act;
       if (act === 'toggle-notify') {
@@ -320,13 +342,13 @@ function renderMenu() {
     });
   });
   // 更新源复制按钮
-  menuEl.querySelectorAll('.dch-copy').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
+  menuEl.querySelectorAll('.dch-copy').forEach((btn: any) => {
+    btn.addEventListener('click', async (e: any) => {
       e.stopPropagation();
       const kind = btn.dataset.copy;
       const url = state.repoUrls && (kind === 'github' ? state.repoUrls.github : state.repoUrls.gitee);
       if (!url) return;
-      const r = await dshDesktop.copyText(url);
+      const r: any = await dshDesktop.copyText(url);
       if (r && r.ok) {
         const prev = btn.textContent;
         btn.textContent = '已复制 ✓';
@@ -336,14 +358,14 @@ function renderMenu() {
   });
 }
 
-function closeMenu() {
+function closeMenu(): void {
   menuOpen = false;
   if (menuEl) menuEl.hidden = true;
 }
 
-function openMenu() {
+function openMenu(): void {
   if (!menuEl) return;
-  dshDesktop.getInfo().then((info) => {
+  dshDesktop.getInfo().then((info: any) => {
     if (info) state = { ...state, ...info };
     renderMenu();
     menuOpen = true;
@@ -355,7 +377,7 @@ function openMenu() {
   });
 }
 
-function setMaximized(isMax) {
+function setMaximized(isMax: boolean): void {
   if (!maxBtn) return;
   maxBtn.innerHTML = isMax ? GLYPHS.restore : GLYPHS.max;
   maxBtn.title = isMax ? '还原' : '最大化';
@@ -363,7 +385,7 @@ function setMaximized(isMax) {
 }
 
 // 浮窗的细拖拽条（纯拖拽 + 关闭按钮，跳过完整自绘标题栏）。
-function injectFloatBar() {
+function injectFloatBar(): void {
   if (document.getElementById(FLOAT_BAR_ID)) return;
   const style = document.createElement('style');
   style.textContent = `
@@ -392,7 +414,7 @@ function injectFloatBar() {
   bar.querySelector('.df-close').addEventListener('click', () => dshDesktop.floatWindow.close());
 }
 
-function injectChrome() {
+function injectChrome(): void {
   if (FLOAT_MODE) { injectFloatBar(); return; }
   if (document.getElementById(BAR_ID)) return;
   const style = document.createElement('style');
@@ -435,18 +457,18 @@ function injectChrome() {
   bar.querySelector('[data-act="min"]').addEventListener('click', () => dshDesktop.windowControls.minimize());
   bar.querySelector('[data-act="max"]').addEventListener('click', () => dshDesktop.windowControls.toggleMaximize());
   bar.querySelector('.dch-close').addEventListener('click', () => dshDesktop.windowControls.close());
-  bar.querySelector('[data-act="menu"]').addEventListener('click', (e) => {
+  bar.querySelector('[data-act="menu"]').addEventListener('click', (e: any) => {
     e.stopPropagation();
     if (menuOpen) closeMenu(); else openMenu();
   });
 
-  document.addEventListener('click', (e) => {
+  document.addEventListener('click', (e: any) => {
     if (menuOpen && !bar.contains(e.target)) closeMenu();
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+  document.addEventListener('keydown', (e: any) => { if (e.key === 'Escape') closeMenu(); });
 
   // 初始化状态
-  dshDesktop.getInfo().then((info) => {
+  dshDesktop.getInfo().then((info: any) => {
     if (!info) return;
     state = { ...state, ...info };
     if (info.appVersion) badge.textContent = 'v' + info.appVersion;
@@ -454,7 +476,7 @@ function injectChrome() {
     if (info.agentVersion) { badge.hidden = false; }
     if (info.iconDataUri) icon.src = info.iconDataUri;
   }).catch(() => {});
-  dshDesktop.windowControls.isMaximized().then(setMaximized).catch(() => {});
+  dshDesktop.windowControls.isMaximized().then((v: unknown) => setMaximized(!!v)).catch(() => {});
   dshDesktop.windowControls.onMaximizeChange(setMaximized);
 }
 
@@ -470,7 +492,7 @@ if (document.readyState === 'loading') {
 // 节流，主进程只对可见窗口做判定；重新可见时立即补报一次心跳）。
 // ---------------------------------------------------------------------------
 {
-  const beat = () => {
+  const beat = (): void => {
     try { ipcRenderer.send('dsh:renderer-heartbeat'); } catch {}
   };
   beat();
@@ -479,3 +501,5 @@ if (document.readyState === 'loading') {
     if (document.visibilityState === 'visible') beat();
   });
 }
+
+export {};
