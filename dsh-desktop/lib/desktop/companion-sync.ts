@@ -98,6 +98,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // 读屏 + 鼠标键盘自动化（Codex-style computer use，配 picturereader；纯本地）。
   { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
+  // 语音识别（仅 STT）：本地 sherpa-onnx SenseVoice + 自定义唤醒词 + 多轮交互，
+  // 识别文本回填输入框草稿。模型首次启动下载到 ~/.dsh/models/dsh-stt/。
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
   // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
   // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
