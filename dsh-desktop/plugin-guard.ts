@@ -400,6 +400,12 @@ function createGuard(opts: GuardOpts): GuardApi {
     return out;
   }
 
+  // 静态扫描结论缓存（vnext-absorb Phase 3）：键 = 文件绝对路径，命中条件 =
+  // (mtimeMs, size) 与上次扫描一致 —— 重复 healthCheck() 免 readFileSync +
+  // 正则（最多 32MB 插件文本）。容量上限防长期驻留内存膨胀。
+  const SCAN_VERDICT_CACHE_MAX = 20000;
+  const verdictCache = new Map<string, { mtimeMs: number; size: number; finding: Finding | null }>();
+
   function trojanFindings(dir: string): Finding[] {
     const out: Finding[] = [];
     try {
@@ -423,19 +429,29 @@ function createGuard(opts: GuardOpts): GuardApi {
             try { st = fs.statSync(p); } catch { continue; }
             if (st.size > SCAN_MAX_FILE_BYTES || total + st.size > SCAN_MAX_TOTAL_BYTES) continue;
             total += st.size;
+            // 结论缓存命中：内容身份 (mtimeMs, size) 未变 → 免读免正则。
+            const cached = verdictCache.get(p);
+            if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
+              if (cached.finding) out.push(cached.finding);
+              continue;
+            }
+            let finding: Finding | null = null;
             let text;
             try { text = fs.readFileSync(p, 'utf8'); } catch { continue; }
             for (const { code, re } of TROJAN_PATTERNS) {
               if (re.test(text)) {
-                out.push({
+                finding = {
                   code,
                   severity: 'high',
                   message: `静态扫描命中高危模式（${code}）：${path.relative(modulesDir, p)}`,
                   fixable: false,
-                });
+                };
                 break; // 每文件只报首个模式
               }
             }
+            if (verdictCache.size >= SCAN_VERDICT_CACHE_MAX) verdictCache.clear();
+            verdictCache.set(p, { mtimeMs: st.mtimeMs, size: st.size, finding });
+            if (finding) out.push(finding);
           }
         }
       };

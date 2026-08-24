@@ -27,7 +27,7 @@ const ROOT_FILES = [
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
   'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
-  'wsl-backend.js',
+  'wsl-backend.js', 'host-bootstrap.js',
 ];
 const LIB_DESKTOP = [
   'file-roots.js', 'proc.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',
@@ -39,6 +39,18 @@ const SCRIPTS = [
   'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
   'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
 ];
+
+// vnext 隔离体系（vnext-absorb Phase 2）：sidecar require 的 lib/{state,log,
+// supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
+const LIB_VNEXT = [
+  'state.js', 'log.js',
+  'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
+  'supervisor/permissions.js', 'supervisor/incidents.js',
+  'extension-host/manager.js', 'extension-host/bridge-server.js',
+  'extension-host/job-fence.js', 'extension-host/rpc.js', 'extension-host/sdk/index.js',
+  'recovery-center/register.js',
+];
+const NATIVE_MODULES = ['supervisor/index.node', 'snapshot/index.node'];
 
 function requireFile(file, label) {
   if (!existsSync(file) || !statSync(file).isFile()) {
@@ -109,6 +121,14 @@ for (const f of ROOT_FILES) {
 mkdirSync(path.join(staged, 'dsh-desktop', 'lib', 'desktop'), { recursive: true });
 for (const f of LIB_DESKTOP) {
   copyRequired(path.join(dd, 'lib', 'desktop', f), path.join(staged, 'dsh-desktop', 'lib', 'desktop', f), '桌面库');
+}
+console.log('[stage] vnext 隔离体系（lib 模块 + 原生 .node）');
+for (const f of LIB_VNEXT) {
+  copyRequired(path.join(dd, 'lib', f), path.join(staged, 'dsh-desktop', 'lib', f), 'vnext 库');
+}
+mkdirSync(path.join(staged, 'dsh-desktop', 'native'), { recursive: true });
+for (const f of NATIVE_MODULES) {
+  copyRequired(path.join(dd, 'native', f), path.join(staged, 'dsh-desktop', 'native', f), '原生模块');
 }
 mkdirSync(path.join(staged, 'dsh-desktop', 'scripts'), { recursive: true });
 for (const f of SCRIPTS) {

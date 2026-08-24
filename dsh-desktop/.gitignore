@@ -88,3 +88,4 @@ build/*
 /shortcut-maintenance.js
 /wsl-backend.js
 /shared/protocol.js
+/lib/plugin-copy.js

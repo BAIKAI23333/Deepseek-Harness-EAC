@@ -10,8 +10,8 @@
   "scripts": {
     "start": "electron .",
     "fetch-node": "npm run build && node scripts/fetch-node.js",
-    "predist": "npm run build && node scripts/check-syntax.js",
-    "prepack": "npm run build && node scripts/check-syntax.js",
+    "predist": "npm run build && node scripts/check-syntax.js && node scripts/build-native.js copy && node scripts/build-native.js copy snapshot",
+    "prepack": "npm run build && node scripts/check-syntax.js && node scripts/build-native.js copy && node scripts/build-native.js copy snapshot",
     "pack": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --dir",
     "dist": "node scripts/patch-portable-template.js && node scripts/patch-deps.js && electron-builder --win && node scripts/make-release-hashes.js",
     "postinstall": "npm run build && node scripts/patch-deps.js || exit 0",
@@ -20,6 +20,9 @@
     "electron:fetch": "node node_modules/electron/install.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
+    "build:native": "node scripts/build-native.js build",
+    "test:native": "node scripts/build-native.js test",
+    "clippy:native": "node scripts/build-native.js clippy",
     "pretest": "npm run build",
     "test": "node scripts/test-runner.js"
   },
