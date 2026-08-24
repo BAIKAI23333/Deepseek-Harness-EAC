@@ -4,9 +4,8 @@
 // 移植自 refactor/vnext-ts-isolation（vnext-absorb Phase 0）。差异：
 // 1) 阈值放宽到 Node >= 24 —— Node 24 的原生 type-stripping 已稳定
 //    （.test.ts 直跑无旗标；项目 tsconfig 未开 erasableSyntaxOnly，
-//    测试文件由 .mjs 迁移而来、本就是可擦除 ESM 语法）；
-// 2) 默认 glob 同时覆盖 test/*.test.mjs 与 test/*.test.ts（Phase 2 起
-//    移植的 vnext 测试为 .ts，靠 Node 24 直跑）。
+//    测试文件本就是可擦除 ESM 语法）；
+// 2) 默认 glob 为 test/*.test.ts（Phase 4 起全部测试为 .ts，Node 直跑）。
 // 系统 node 版本不可控（开发机常见 22.x），这里优先用随包分发的
 // vendor/node（fetch-node 后存在、版本固定），否则回退当前 node 并在
 // 版本不足时给出可操作的错误信息。
@@ -46,6 +45,6 @@ if (rt.major < 24) {
   process.exit(2);
 }
 
-const args = ['--test', ...(process.argv.length > 2 ? process.argv.slice(2) : ['test/*.test.mjs', 'test/*.test.ts'])];
+const args = ['--test', ...(process.argv.length > 2 ? process.argv.slice(2) : ['test/*.test.ts'])];
 const r = cp.spawnSync(rt.exe, args, { stdio: 'inherit', windowsHide: true, cwd: path.join(__dirname, '..') });
 process.exit(r.status === null ? 1 : r.status);

@@ -47,7 +47,7 @@ jobs:
       - name: 安装 Node.js（含 npm 缓存）
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: dsh-desktop/package-lock.json
 
@@ -67,11 +67,38 @@ jobs:
           restore-keys: |
             dsh-electron-builder-win-x64-
 
+      - name: 安装 Rust 工具链（stable）
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 cargo 注册表与原生模块构建产物
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            dsh-desktop/native/supervisor/target
+            dsh-desktop/native/snapshot/target
+          key: dsh-cargo-win-x64-${{ hashFiles('dsh-desktop/native/*/Cargo.lock') }}
+          restore-keys: |
+            dsh-cargo-win-x64-
+
       - name: 安装依赖
         run: npm ci
 
       - name: 获取内置运行时（node.exe + npm CLI）
         run: npm run fetch-runtime
+
+      - name: 类型检查（tsc --noEmit 零错误）
+        run: npm run typecheck
+
+      - name: Rust clippy（-D warnings 零告警）
+        run: npm run clippy:native
+
+      - name: Rust 原生模块测试（cargo test --release）
+        run: npm run test:native
+
+      - name: 构建 Rust 原生模块（supervisor + snapshot）
+        run: npm run build:native && npm run build:native -- snapshot
 
       - name: 运行测试
         run: npm test
