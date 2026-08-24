@@ -120,7 +120,7 @@ function readApiKey(dshHome: string): string {
     const text = fs.readFileSync(path.join(dshHome, '.credentials.yaml'), 'utf8');
     for (const line of text.split(/\r?\n/)) {
       const m = line.match(/^\s*DEEPSEEK_API_KEY\s*:\s*["']?([^"'\s#]+)/);
-      if (m) return m[1];
+      if (m) return m[1]!;
     }
   } catch {}
   return '';
@@ -150,7 +150,7 @@ function readActiveModel(dshHome: string): string {
     }
     // 在 agent-default-model 块内匹配 model 行
     const m = blockContent.match(/^\s*model\s*:\s*(\S+)/m);
-    if (m) return m[1];
+    if (m) return m[1]!;
   } catch {}
   return '';
 }
@@ -197,7 +197,7 @@ function tierPrices(base: unknown, override: unknown, tier: string): Record<stri
   const b = (base || {}) as Record<string, unknown>;
   const fallback = FALLBACK_PRICES as Record<string, Record<string, number>>;
   return {
-    ...(fallback[tier] || FALLBACK_PRICES),
+    ...((fallback[tier] || FALLBACK_PRICES) as Record<string, number>),
     ...((b[tier] ? b[tier] : b) as Record<string, number>),
     ...(src || {}),
   };

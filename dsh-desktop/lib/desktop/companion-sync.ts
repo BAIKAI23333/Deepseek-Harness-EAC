@@ -780,8 +780,8 @@ function ensurePluginHostDeps(profileDirP: string): void {
       const cleaned = lines.filter((line, idx) => {
         if (!/^[ \t]*- insert:\s*$/.test(line)) return true;
         let k = idx + 1;
-        while (k < lines.length && lines[k].trim() === '') k += 1;
-        return k < lines.length && /^[ \t]+- /.test(lines[k]);
+        while (k < lines.length && lines[k]!.trim() === '') k += 1;
+        return k < lines.length && /^[ \t]+- /.test(lines[k]!);
       }).join('\n');
       if (cleaned !== patch) {
         patch = cleaned;

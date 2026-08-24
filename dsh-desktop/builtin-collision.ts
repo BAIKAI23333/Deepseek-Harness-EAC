@@ -19,12 +19,12 @@ import path = require('node:path');
 // 解析一行块内的 name（跟随 id 行的缩进行里找 name:）。
 function rowNameOf(lines: string[], startIdx: number): string | null {
   for (let j = startIdx + 1; j < lines.length; j++) {
-    const l = lines[j];
+    const l = lines[j]!;
     if (/^\s*-/.test(l)) break;               // 下一个行项
     if (l.trim() === '') break;               // 空行
     if (!/^\s+/.test(l)) break;               // 顶层非缩进行（注释等）
     const m = /name:\s*['"]?([^'"\s]+)['"]?\s*/.exec(l);
-    if (m) return m[1];
+    if (m) return m[1]!;
   }
   return null;
 }
@@ -33,7 +33,7 @@ function rowNameOf(lines: string[], startIdx: number): string | null {
 function blockEnd(lines: string[], startIdx: number): number {
   let j = startIdx + 1;
   while (j < lines.length) {
-    const l = lines[j];
+    const l = lines[j]!;
     if (/^\s*-/.test(l)) break;
     if (l.trim() === '') break;
     if (!/^\s+/.test(l)) break;
@@ -52,16 +52,16 @@ function blockEnd(lines: string[], startIdx: number): number {
 // 插件被静默重新启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:`
 // 行堆积。
 function isSelfWrittenRow(lines: string[], i: number): boolean {
-  if (!/^[ \t]*- id:/.test(lines[i])) return false;
+  if (!/^[ \t]*- id:/.test(lines[i]!)) return false;
   // 缩进的 `- id:` = sync 写的 insert 内层条目。
-  if (/^[ \t]+- id:/.test(lines[i])) return true;
+  if (/^[ \t]+- id:/.test(lines[i]!)) return true;
   let k = i - 1;
-  while (k >= 0 && lines[k].trim() === '') k -= 1;
+  while (k >= 0 && lines[k]!.trim() === '') k -= 1;
   if (k < 0) return false;
-  const idM = /^[ \t]*- id:\s*([\w.-]+)/.exec(lines[i]);
+  const idM = /^[ \t]*- id:\s*([\w.-]+)/.exec(lines[i]!);
   if (!idM) return false;
   const esc = String(idM[1]).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp('^#\\s[^\\n]*关闭\\s+' + esc + '(?![A-Za-z0-9_.-])').test(lines[k]);
+  return new RegExp('^#\\s[^\\n]*关闭\\s+' + esc + '(?![A-Za-z0-9_.-])').test(lines[k]!);
 }
 
 // patch 中是否存在「非应用自写」的登记行（id 或 name 命中内置包名）。
@@ -71,7 +71,7 @@ function patchHasForeignRows(patch: string, builtinName: string): boolean {
   const targetId = String(builtinName || '').split('/').pop();
   const lines = String(patch || '').split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const m = /^[ \t]*- id:\s*([\w.-]+)\s*$/.exec(lines[i]);
+    const m = /^[ \t]*- id:\s*([\w.-]+)\s*$/.exec(lines[i]!);
     if (m === null) continue;
     if (m[1] !== targetId && !(builtinName && rowNameOf(lines, i) === builtinName)) continue;
     if (isSelfWrittenRow(lines, i)) continue;
@@ -87,19 +87,19 @@ function stripPatchRows(patch: string, targetName: string, targetId: string): { 
   const out: string[] = [];
   const removed: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    const m = /^(\s*)-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i]);
+    const m = /^(\s*)-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i]!);
     if (m === null) {
-      out.push(lines[i]);
+      out.push(lines[i]!);
       continue;
     }
-    const id = m[2];
+    const id = m[2]!;
     const name = rowNameOf(lines, i);
     if (id === targetId || (targetName && name === targetName)) {
       removed.push(id);
       i = blockEnd(lines, i) - 1;
       continue;
     }
-    out.push(lines[i]);
+    out.push(lines[i]!);
   }
   let text = out.join('\n');
   if (!/^[\s\S]*\n$/.test(text)) text += '\n';

@@ -55,12 +55,12 @@ function normalizeRowConfigIndent(patch: string, id: string): string {
   const lines = patch.split(/\r?\n/);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = rowRe.exec(lines[i]);
+    const m = rowRe.exec(lines[i]!);
     if (!m) continue;
-    const idIndent = m[1].replace(/\t/g, '  ').length;
+    const idIndent = m[1]!.replace(/\t/g, '  ').length;
     const wantConfig = ' '.repeat(idIndent + 2) + 'config:';
     for (let j = i + 1; j < lines.length; j++) {
-      const cur = lines[j];
+      const cur = lines[j]!;
       const t = cur.trim();
       if (t === '' || /^#/.test(t)) continue;
       if (/^[\t ]*- id:/.test(cur) || t === 'insert:') break;
@@ -71,7 +71,7 @@ function normalizeRowConfigIndent(patch: string, id: string): string {
         const diff = curIndent - (idIndent + 2);
         lines[j] = wantConfig;
         for (let k = j + 1; k < lines.length; k++) {
-          const kl = lines[k];
+          const kl = lines[k]!;
           if (kl.trim() === '' || /^#/.test(kl)) continue;
           const ki = (kl.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length;
           if (ki <= idIndent + 2) break;
@@ -134,7 +134,7 @@ function healRowConfig(patch: string, id: string, config: Record<string, unknown
   const lines = patch.split(/\r?\n/);
   let changed = false;
   for (let i = 0; i < lines.length; i++) {
-    const m = idLineRe.exec(lines[i]);
+    const m = idLineRe.exec(lines[i]!);
     if (!m) continue;
     const idIndent = (m[1] || '').replace(/\t/g, '  ').length;
     // 条目块范围：id 行之后缩进更深的所有行（空行/注释/兄弟条目视为块结束）。
@@ -142,7 +142,7 @@ function healRowConfig(patch: string, id: string, config: Record<string, unknown
     let nameLine = -1;
     let hasConfig = false;
     while (blockEnd < lines.length) {
-      const cur = lines[blockEnd];
+      const cur = lines[blockEnd]!;
       const t = cur.trim();
       if (t === '' || /^#/.test(t)) break;
       const curIndent = (cur.match(/^[\t ]*/) || [''])[0].replace(/\t/g, '  ').length;
@@ -185,7 +185,7 @@ function bundlePatchEntryIds(bundleDir: string): Set<string> {
     const patch = fs.readFileSync(path.join(bundleDir, patchRel), 'utf8');
     const idRe = /^\s*-\s*id:\s*([\w.-]+)\s*$/gm;
     let m;
-    while ((m = idRe.exec(patch)) !== null) ids.add(m[1]);
+    while ((m = idRe.exec(patch)) !== null) ids.add(m[1]!);
   } catch { /* 包/补丁缺失或损坏 → 不贡献任何 id */ }
   return ids;
 }
@@ -243,19 +243,19 @@ function removeBundledRowDuplicates(patch: string, rowIds: string[], bundleNames
   const lines = patch.split(/\r?\n/);
   const out = [];
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i]!;
     if (/^-\s*insert:/.test(line)) {
       // Parse id + name from the block body (id must be the immediate next
       // line to stay unambiguous).
       let id: string | null = null;
       const mid = /^\s*-\s*id:\s*([\w.-]+)\s*$/.exec(lines[i + 1] || '');
-      if (mid) id = mid[1];
+      if (mid) id = mid[1]!;
       if (id !== null && isDup(id)) {
         removed.push(id);
         // Skip the block body: indented non-comment lines up to the next
         // top-level key / block / comment / blank line.
         let j = i + 1;
-        while (j < lines.length && !/^-\s*insert:/.test(lines[j]) && /^#/.test(lines[j]) === false && /^\s+\S/.test(lines[j])) j++;
+        while (j < lines.length && !/^-\s*insert:/.test(lines[j]!) && /^#/.test(lines[j]!) === false && /^\s+\S/.test(lines[j]!)) j++;
         i = j - 1;
         continue;
       }

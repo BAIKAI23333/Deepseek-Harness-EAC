@@ -520,8 +520,8 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
             continue;
           }
           const providerMatch = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([a-z][\\w-]*)\\s*:`));
-          if (providerMatch && !inModels && !['models', 'baseurl', 'apikeyenv', 'displayname', 'api'].includes(providerMatch[1].toLowerCase())) {
-            currentProvider = providerMatch[1];
+          if (providerMatch && !inModels && !['models', 'baseurl', 'apikeyenv', 'displayname', 'api'].includes(providerMatch[1]!.toLowerCase())) {
+            currentProvider = providerMatch[1]!;
             continue;
           }
           if (/^\s+models\s*:/i.test(line) && indent > providerIndent) { inModels = true; modelsIndent = indent; continue; }
@@ -530,19 +530,19 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
               inModels = false;
               currentModel = null;
               const reProvider = line.match(new RegExp(`^\\s{${providerIndent + 2},${providerIndent + 6}}([\\w][\\w-]*)\\s*:`));
-              if (reProvider) currentProvider = reProvider[1];
+              if (reProvider) currentProvider = reProvider[1]!;
               continue;
             }
             const modelMatch = line.match(/^\s+-\s+id\s*:\s*(\S+)/);
             if (modelMatch) {
-              const modelId = modelMatch[1].replace(/^["']|["']$/g, '');
+              const modelId = modelMatch[1]!.replace(/^["']|["']$/g, '');
               currentModel = { id: modelId, name: modelId, provider: currentProvider };
               models.push(currentModel);
               continue;
             }
             const nameMatch = line.match(/^\s+name\s*:\s*(.+)/);
             if (nameMatch && currentModel) {
-              currentModel.name = nameMatch[1].trim().replace(/^["']|["']$/g, '');
+              currentModel.name = nameMatch[1]!.trim().replace(/^["']|["']$/g, '');
               continue;
             }
           }
@@ -1010,7 +1010,7 @@ function respond(msg: Record<string, unknown>): void {
 
 function modCall(name: string, fn: string, args: unknown[]): unknown {
   if (!CALLABLE.has(name)) throw new Error('module not callable: ' + name);
-  const f = MODULES_BY_NAME[name][fn];
+  const f = MODULES_BY_NAME[name]![fn];
   if (typeof f !== 'function') throw new Error('no export: ' + name + '.' + fn);
   return (f as (...a: unknown[]) => unknown)(...(Array.isArray(args) ? args : []));
 }

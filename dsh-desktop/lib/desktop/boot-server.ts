@@ -147,7 +147,7 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
       for (const line of text.split(/\r?\n/)) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
         if (!m) continue;
-        const blocked = restrictedPortOf(m[1]);
+        const blocked = restrictedPortOf(m[1]!);
         if (blocked && opts.unsafePortRetries > 0) {
           // 端口命中 Chromium 受限列表：结束该实例重启换端口（有上限）。
           handedOff = true;
@@ -164,14 +164,14 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
         }
         // 稳定端口：若 dsh 最终监听端口与请求的不同（极端兜底），以实际为准并保存。
         try {
-          const actual = Number(new URL(m[1]).port) || 0;
+          const actual = Number(new URL(m[1]!).port) || 0;
           if (actual > 0 && actual !== opts.expectedPort) {
             const settings = ctx.loadSettings();
             settings.webPort = actual;
             ctx.saveSettings(settings);
           }
         } catch { /* URL 解析失败时忽略 */ }
-        finish(null, m[1]);
+        finish(null, m[1]!);
       }
     };
     const onStderrData = (chunk: Buffer) => output.write(chunk);

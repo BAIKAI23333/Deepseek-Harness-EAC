@@ -70,7 +70,7 @@ function runWslSync(cmd: string, timeoutMs = 60000): { ok: boolean; code: number
 /** 异步执行一条 WSL 命令，收集输出；onLine 可选地收到每行 stdout（进度日志）。 */
 interface WslResult { ok: boolean; code: number | null; timedOut?: boolean; stdout: string; stderr: string; error?: string }
 
-function runWsl(cmd: string, { timeoutMs = 20 * 60 * 1000, onLine }: { timeoutMs?: number; onLine?: (line: string) => void } = {}): Promise<WslResult> {
+function runWsl(cmd: string, { timeoutMs = 20 * 60 * 1000, onLine }: { timeoutMs?: number; onLine?: ((line: string) => void) | undefined } = {}): Promise<WslResult> {
   return new Promise((resolve) => {
     const child = spawn(WSL_EXE, ['-d', state.distro, '-e', 'sh', '-lc', cmd], {
       windowsHide: true,

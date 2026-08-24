@@ -164,8 +164,8 @@ class SessionWatcher {
       const { frames } = scanZstdFrames(buf);
       if (frames.length > 0) {
         try {
-          const text = decodeFrame(buf.subarray(frames[0].start, frames[0].end));
-          const firstLine = text.split('\n')[0];
+          const text = decodeFrame(buf.subarray(frames[0]!.start, frames[0]!.end));
+          const firstLine = text.split('\n')[0]!;
           const h = JSON.parse(firstLine) as Record<string, any>;
           if (h && h.type === 'session') rec.header = h;
         } catch { /* keep null; retry next poll */ }

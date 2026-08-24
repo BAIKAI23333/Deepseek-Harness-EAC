@@ -87,7 +87,7 @@ function ensureDefaultAgentPreset(home: string, presetId: string, log: (m: strin
     const lines = text.split(/\r?\n/);
     const blockHeader = /^agent-presets[ \t]*:[ \t]*(?:#.*)?$/;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      const line = lines[i]!;
       if (!/^agent-presets[ \t]*:/.test(line)) continue;
       if (!blockHeader.test(line)) {
         // 内联 flow（agent-presets: {…}）等非块状结构：识别不了，不碰。
@@ -96,9 +96,9 @@ function ensureDefaultAgentPreset(home: string, presetId: string, log: (m: strin
       }
       // section 体：到下一个顶层键（或文件尾）为止。
       let end = i + 1;
-      while (end < lines.length && !/^\S/.test(lines[end])) end++;
+      while (end < lines.length && !/^\S/.test(lines[end]!)) end++;
       for (let k = i + 1; k < end; k++) {
-        if (/^[ \t]+default[ \t]*:/.test(lines[k])) return 'kept';
+        if (/^[ \t]+default[ \t]*:/.test(lines[k]!)) return 'kept';
       }
       lines.splice(i + 1, 0, '  default: ' + presetId);
       fs.writeFileSync(file, (bom ? '\uFEFF' : '') + lines.join(eol));
