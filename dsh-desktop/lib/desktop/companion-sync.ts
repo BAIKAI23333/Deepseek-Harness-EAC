@@ -91,6 +91,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
+  // VNext Core Bridge（受信组件，vnext-absorb Phase 2）：把隔离 SDK 插件的
+  // 工具/上下文经回环端点桥接进 dsh Agent（DSH_EAC_BRIDGE_URL/TOKEN 由
+  // sidecar 在拉起 dsh web 前注入）；必须随包分发并默认启用。
+  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge', dir: 'dsh-eac-core-bridge' },
   // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
   // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，

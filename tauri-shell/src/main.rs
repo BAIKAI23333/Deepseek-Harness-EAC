@@ -451,6 +451,17 @@ async fn handle_shell_method(
             // 整应用重启（= Electron app.relaunch+exit）。
             app.restart();
         }
+        "rc.open" => {
+            // 恢复中心：托盘菜单 / 启动失败链 / DSH_DESKTOP_RECOVERY 共用入口。
+            open_recovery_center_window(app);
+            Ok(Some(reply(serde_json::json!({"ok":true}))))
+        }
+        "shell.relaunch-safe-mode" => {
+            // 安全模式 relaunch（恢复中心 safe-mode 动作 → sidecar 通知）：
+            // 注入环境标记后整壳重启，新进程的 sidecar 继承该 env。
+            std::env::set_var("DSH_DESKTOP_SAFE_MODE", "1");
+            app.restart();
+        }
         _ => Err(()),
     }
 }
@@ -539,6 +550,42 @@ fn open_float_window(app: &tauri::AppHandle, session_id: &str) -> Result<bool, S
         .map_err(|e| e.to_string())?;
     println!("[shell] float window {} created", label);
     Ok(true)
+}
+
+/// 恢复中心窗口（vnext-absorb Phase 2）：独立 WebviewWindow，加载壳层
+/// /recovery-center 页（http_serve 注入 RC preload → window.rc）。与主窗/
+/// 浮窗互不依赖 —— 任意插件树启动失败时用户仍能进入这里治理插件。
+/// 已存在时聚焦；返回 false 表示已存在。
+fn open_recovery_center_window(app: &tauri::AppHandle) -> bool {
+    use tauri::Manager;
+    let label = "recovery-center";
+    if let Some(existing) = app.get_webview_window(label) {
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return false;
+    }
+    let url_str = format!("http://127.0.0.1:{}/recovery-center", WS_PORT);
+    let Ok(url) = tauri::Url::parse(&url_str) else {
+        return false;
+    };
+    // 独立 data_directory：不继承主窗的 WebView2 环境（与浮窗同策略）。
+    let data_dir: std::path::PathBuf = app
+        .path()
+        .app_data_dir()
+        .map(|p| p.join("recovery-center-webview"))
+        .unwrap_or_default();
+    let builder = tauri::webview::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::External(url))
+        .title("恢复中心")
+        .inner_size(980.0, 720.0)
+        .min_inner_size(760.0, 520.0)
+        .data_directory(data_dir)
+        .focused(true);
+    if let Err(e) = builder.build() {
+        eprintln!("[shell] recovery-center window build failed: {}", e);
+        return false;
+    }
+    println!("[shell] recovery-center window created");
+    true
 }
 
 async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandle) -> std::io::Result<()> {
@@ -835,6 +882,28 @@ fn wizard_page() -> String {
     }
 }
 
+/// 恢复中心页：serve 真实 assets/recovery-center.html，注入回环 WS 地址 +
+/// 专用 preload（recovery-center-preload.js 的 IIFE，暴露 window.rc）。
+/// 窗口由 open_recovery_center_window 创建；页面只消费 rc.action/rc.close
+/// （走 sidecar 的 rc.* 方法，与主窗 bridge.js 的 dshDesktop 互不干扰）。
+fn recovery_center_page() -> String {
+    let file = resource_root().join("dsh-desktop").join("assets").join("recovery-center.html");
+    let html = std::fs::read_to_string(&file).unwrap_or_else(|_| {
+        "<!doctype html><meta charset=utf-8><title>恢复中心</title><body style=\"background:#0b1220;color:#dfe6ff;font-family:sans-serif;display:grid;place-items:center;height:100vh\">恢复中心资源缺失（assets/recovery-center.html）</body>".to_string()
+    });
+    let preload = std::fs::read_to_string(resource_root().join("dsh-desktop").join("assets").join("recovery-center-preload.js")).unwrap_or_default();
+    let injection = format!(
+        "<script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\n{}</script>",
+        WS_PORT, preload
+    );
+    let marker = "<meta charset=\"utf-8\" />";
+    if html.contains(marker) {
+        html.replacen(marker, &format!("{}{}", marker, injection), 1)
+    } else {
+        format!("{}{}", injection, html)
+    }
+}
+
 async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     eprintln!("[http] serve {}", path);
     // 真正消费请求头（读到空行）：未读数据残留会让连接以 RST 而非 FIN 收尾，
@@ -859,6 +928,8 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     }
     let (body, ctype) = if path.starts_with("/inject/bridge.js") {
         (BRIDGE_JS.to_string(), "application/javascript")
+    } else if path.starts_with("/recovery-center") {
+        (recovery_center_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/exit") {
@@ -1137,6 +1208,18 @@ fn main() {
                                 }
                             });
 
+                            // 恢复中心直开模式（DSH_DESKTOP_RECOVERY=1）：不建主窗、
+                            // 不拉起 dsh web —— 直开恢复中心窗口，sidecar 的 boot.start
+                            // 检测该 env 后跳过服务启动（保持存活供 rc.* 动作调用）。
+                            if std::env::var("DSH_DESKTOP_RECOVERY").as_deref() == Ok("1") {
+                                let app_rc = app_handle.clone();
+                                let app_rc_inner = app_rc.clone();
+                                let _ = app_rc.run_on_main_thread(move || {
+                                    open_recovery_center_window(&app_rc_inner);
+                                });
+                                return;
+                            }
+
                             // 主窗：先加载壳层 /loading 页（即起即见）。
                             let app_win = app_handle.clone();
                             let app_win_inner = app_win.clone();
@@ -1212,15 +1295,16 @@ fn main() {
                 });
             });
 
-            // 托盘（L1）：对齐 Electron 托盘全项（显示/隐藏、重启服务、反馈、退出）。
+            // 托盘（L1）：对齐 Electron 托盘全项（显示/隐藏、恢复中心、重启服务、反馈、退出）。
             let app_handle = app.handle().clone();
             let show = tauri::menu::MenuItem::with_id(app, "show", "显示 / 隐藏窗口", true, None::<&str>)?;
+            let recovery = tauri::menu::MenuItem::with_id(app, "recovery", "恢复中心…", true, None::<&str>)?;
             let restart = tauri::menu::MenuItem::with_id(app, "restart", "重启 Web 服务", true, None::<&str>)?;
             let feedback = tauri::menu::MenuItem::with_id(app, "feedback", "反馈建议", true, None::<&str>)?;
             let quit = tauri::menu::MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
             let sep2 = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &sep2, &feedback, &quit])?;
+            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &recovery, &restart, &sep2, &feedback, &quit])?;
             let mut tray = tauri::tray::TrayIconBuilder::new()
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu);
@@ -1258,6 +1342,9 @@ fn main() {
                 }
                 "feedback" => {
                     open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues");
+                }
+                "recovery" => {
+                    open_recovery_center_window(app);
                 }
                 "quit" => app_handle.exit(0),
                 _ => {}

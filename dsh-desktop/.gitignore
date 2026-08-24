@@ -40,6 +40,21 @@ build/*
 /scripts/fetch-npm.js
 /scripts/make-release-hashes.js
 /tauri-shell/sidecar/ping.js
+# ---- vnext 隔离体系编译产物（vnext-absorb Phase 2） ----
+/host-bootstrap.js
+/lib/log.js
+/lib/state.js
+/lib/supervisor/registry.js
+/lib/supervisor/state-machine.js
+/lib/supervisor/installer.js
+/lib/supervisor/permissions.js
+/lib/supervisor/incidents.js
+/lib/extension-host/manager.js
+/lib/extension-host/bridge-server.js
+/lib/extension-host/job-fence.js
+/lib/extension-host/rpc.js
+/lib/extension-host/sdk/index.js
+/lib/recovery-center/register.js
 
 /tauri-shell/sidecar/server.js
 /lib/desktop/proc.js
@@ -72,3 +87,4 @@ build/*
 /patch-row-heal.js
 /shortcut-maintenance.js
 /wsl-backend.js
+/shared/protocol.js

@@ -27,5 +27,5 @@
   },
   // 只纳入已转换的 .ts；allowJs 保持关闭——未转换的 .js 是手写事实源，
   // 绝不允许被编译器触碰或覆盖（TS5055 保护 + 打包清单防呆）。
-  "include": ["lib/desktop/**/*.ts", "../tauri-shell/sidecar/**/*.ts", "scripts/**/*.ts", "*.ts"]
+  "include": ["lib/**/*.ts", "shared/**/*.ts", "../tauri-shell/sidecar/**/*.ts", "scripts/**/*.ts", "*.ts"]
 }
