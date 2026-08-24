@@ -89,3 +89,4 @@ build/*
 /wsl-backend.js
 /shared/protocol.js
 /lib/plugin-copy.js
+/scripts/build-native.js
