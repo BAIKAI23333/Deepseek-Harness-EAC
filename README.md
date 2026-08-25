@@ -169,14 +169,14 @@ Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献�
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 2 二维码" width="320" />
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ 交流群 3 二维码" width="320" />
     </td>
     <td align="center" width="50%">
       <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC 微信交流群二维码" width="320" />
     </td>
   </tr>
   <tr>
-    <td align="center"><strong>QQ 交流群 2</strong><br />群号：1021296425</td>
+    <td align="center"><strong>QQ 交流群 3</strong><br />群号：1083832019</td>
     <td align="center"><strong>微信交流群</strong></td>
   </tr>
 </table>
