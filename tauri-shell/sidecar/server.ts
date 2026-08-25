@@ -667,6 +667,14 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
       return { ok: false, error: String(((e as Error).message) || e) };
     }
   },
+  // 拖入文件保存（dsh-file-drop-eac）：任意文件 data URL → 临时目录 → 真实路径。
+  'file-drop.save': (p): Record<string, unknown> => {
+    try {
+      return (pluginOpsMod.fileDropSave as (d: string, n: string) => Record<string, unknown>)(String((p && p.dataUrl) || ''), String((p && p.name) || '拖入文件'));
+    } catch (e) {
+      return { ok: false, error: String(((e as Error).message) || e) };
+    }
+  },
   'files.revert': (p): Record<string, unknown> => {
     const changes = (p && p.changes) as Array<{ path?: string; oldText?: string; newText?: string }>;
     if (!Array.isArray(changes) || changes.length === 0 || changes.length > 300) return { results: [] };

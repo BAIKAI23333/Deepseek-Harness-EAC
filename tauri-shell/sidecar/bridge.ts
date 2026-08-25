@@ -153,6 +153,10 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     imagePaste: {
       save: function (payload: Record<string, unknown>) { return call('image-paste.save', payload || {}); },
     },
+    // 拖入文件（zip/二进制等）：dataUrl → 临时目录 → 真实路径，供 agent 按路径读取。
+    fileDrop: {
+      save: function (payload: Record<string, unknown>) { return call('file-drop.save', payload || {}); },
+    },
     // Token 价格自定义：读取/保存/恢复（¥/百万 token）。
     balancePrices: {
       get: function (model: string) { return call('balance.prices-get', { model: model }); },

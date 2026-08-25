@@ -93,6 +93,11 @@ const dshDesktop = {
   imagePaste: {
     save: (payload: unknown): Promise<unknown> => ipcRenderer.invoke('dsh:image-paste-save', payload),
   },
+  // 拖入文件（zip/二进制等，与 tauri-shell/sidecar/bridge.ts 的 fileDrop 对齐）：
+  // dataUrl → 临时目录 → 真实路径，供 agent 按路径读取。
+  fileDrop: {
+    save: (payload: unknown): Promise<unknown> => ipcRenderer.invoke('dsh:file-drop-save', payload),
+  },
   // Token 价格自定义（V4.2，dsh-balance 插件「价格设置」页）：读取默认档/
   // 当前覆盖、保存自定义价格（¥/百万 token）、恢复默认。
   balancePrices: {
