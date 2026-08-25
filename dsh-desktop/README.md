@@ -270,4 +270,4 @@ dsh-desktop/
 
 ## License
 
-MIT。基于 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（MIT）。
+[MIT](LICENSE)。基于 [@deepseek-ai/dsh](https://www.npmjs.com/package/@deepseek-ai/dsh)（MIT）。
