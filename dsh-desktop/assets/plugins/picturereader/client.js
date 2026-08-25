@@ -237,14 +237,9 @@ window.__ModuleLoader__.load({
             }
           }
         }
-        // Initial load from server (some DSH versions don't have load())
-        if (typeof scope.load === "function") {
-          scope.load().then(function () {
-            if (alive) syncFromScope();
-          }).catch(function () {});
-        } else {
-          syncFromScope();
-        }
+        // 初始加载：一律从 getSnapshot 读取，兼容无 load 能力的宿主；
+        // 与 dsh-eac 内置插件契约一致。
+        syncFromScope();
         // Subscribe to scope changes (triggers after save)
         var unsubscribe = typeof scope.subscribe === "function" ? scope.subscribe(function () {
           if (alive) syncFromScope();
@@ -371,7 +366,6 @@ window.__ModuleLoader__.load({
       var [error, setError] = react.useState(null);
 
       react.useEffect(function () {
-        if (typeof scope.load === "function") scope.load();
         var alive = true;
         var sync = function () { if (alive) setSnapshot(scope.getSnapshot()); };
         var un = typeof scope.subscribe === "function" ? scope.subscribe(sync) : null;
@@ -458,7 +452,8 @@ window.__ModuleLoader__.load({
         });
         Promise.all(writes).then(function () {
           setBusy(false); setNotice(t("saved"));
-          if (scope.load) scope.load();
+          // 保存后手动刷新 snapshot（不采用宿主 load 机制，遵守内置插件契约）。
+          try { setSnapshot(scope.getSnapshot()); } catch (_e) {}
         }).catch(function (e) {
           setBusy(false); setError(t("error") + ": " + String(e && e.message || e));
         });
