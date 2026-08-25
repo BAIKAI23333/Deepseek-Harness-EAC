@@ -86,7 +86,6 @@ build/*
 /session-watcher.js
 /patch-row-heal.js
 /shortcut-maintenance.js
-/wsl-backend.js
 /shared/protocol.js
 /lib/plugin-copy.js
 /scripts/build-native.js

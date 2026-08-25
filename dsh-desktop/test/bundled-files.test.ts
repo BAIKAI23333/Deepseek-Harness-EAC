@@ -71,3 +71,9 @@ test('preload.js 必须在打包清单中（窗口上下文桥）', () => {
   const patterns = bundledFilesPatterns();
   assert.ok(patterns.includes('preload.js'));
 });
+
+test('Tauri 资源装配不再携带 WSL 后端', () => {
+  const stageScript = fs.readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
+  assert.doesNotMatch(stageScript, /wsl-backend/i);
+  assert.ok(!fs.existsSync(join(root, 'wsl-backend.ts')));
+});

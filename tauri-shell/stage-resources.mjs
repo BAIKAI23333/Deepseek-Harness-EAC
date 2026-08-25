@@ -27,7 +27,7 @@ const ROOT_FILES = [
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
   'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
-  'wsl-backend.js', 'host-bootstrap.js',
+  'host-bootstrap.js',
 ];
 const LIB_DESKTOP = [
   'file-roots.js', 'proc.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',

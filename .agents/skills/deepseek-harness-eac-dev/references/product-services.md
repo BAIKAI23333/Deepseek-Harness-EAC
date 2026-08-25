@@ -66,19 +66,6 @@
 - `stream-write-after-end.test.mjs`
 - `koffi-preflight.test.mjs`
 
-## WSL
-
-关键文件：`wsl-backend.ts`。
-
-保持：
-
-- Windows 与 WSL 路径转换有明确边界。
-- `wsl.exe --` 后参数不通过字符串拼接。
-- Agent staging、previous 和 PID 文件位于约定目录。
-- 不让 WSL profile 污染 Windows `web-desktop` profile。
-
-WSL 修改需要专门环境验收；没有 WSL 环境时必须声明未验证。
-
 ## 错误详情与构建完整性
 
 - `error-detail.ts` 对应 `error-detail.test.mjs`。

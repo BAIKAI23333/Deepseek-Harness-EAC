@@ -251,15 +251,6 @@
             Smoke = @()
         },
         @{
-            Name = 'wsl'
-            Domain = 'product-services'
-            Pattern = 'wsl-backend\.(ts|js)$'
-            Reference = 'references/product-services.md'
-            Level = 'runtime'
-            Tests = @()
-            Smoke = @('MANUAL: WSL environment acceptance')
-        },
-        @{
             Name = 'reliability'
             Domain = 'reliability-security'
             Pattern = 'guard|rescue|recovery|watchdog|logger|redact|safe-mode|diagnostics'

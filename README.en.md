@@ -9,12 +9,11 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
-<p>A ready-to-use <strong>Windows and Linux desktop client</strong> built around the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
+<p>A ready-to-use <strong>Windows desktop client</strong> built around the official <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a> (<code>@deepseek-ai/dsh</code>, the everything-is-a-plugin agent harness).
 On top of the official foundation, EAC embraces community creations — skins, plugins, tools, memories, and more — all installable with one click.</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC UI preview"></a></p>
@@ -63,7 +62,6 @@ On top of the official foundation, EAC embraces community creations — skins, p
 ### Requirements
 
 - Windows 10/11 (x64)
-- Linux x86_64 (Arch / Ubuntu / Debian / Fedora, or any distribution that supports AppImage)
 - No pre-installed Node.js or other runtime required
 
 ### Windows
@@ -81,21 +79,6 @@ See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/rel
 > 💡 **Upgrading**: just download and run the newest installer above over your existing install.
 > Plugins, skins, sessions and settings are preserved: data lives in
 > `%APPDATA%\Deepseek Harness EAC\` and `~/.dsh`, untouched by the upgrade.
-
-### Linux (x64)
-
-Linux packaging was contributed by community developer [@Luoye-hb](https://github.com/Luoye-hb) in [PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12). The packages were released with [v4.4.0-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux) and support **Arch / Ubuntu / Debian / Fedora**, plus a universal AppImage:
-
-| Distribution | Package | Install command |
-| --- | --- | --- |
-| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-4.4.0-x64.pacman` |
-| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-4.4.0-amd64.deb` |
-| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-4.4.0.x86_64.rpm` |
-| Universal | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | Run directly after `chmod +x` |
-
-> - Uninstall with `pacman -Rns dsh-desktop`, `apt remove dsh-desktop`, or `dnf remove dsh-desktop`.
-> - Like the Windows build, Linux packages include Node.js and the npm CLI. No pre-installed Node.js is needed, and data continues to use `~/.dsh` (`DSH_HOME`).
-> - Linux updates are managed by the system package manager rather than the in-app updater. To build it yourself, use the source code in the repository's root `linux` branch.
 
 ### First Run
 
