@@ -126,8 +126,7 @@ jobs:
           max_attempts: 3
           retry_wait_seconds: 30
           retry_on: error,timeout
-          working_directory: dsh-desktop
-          command: npm test
+          command: npm --prefix dsh-desktop test
 
       - name: 构建产物（portable + NSIS 安装包）
         run: npm run dist
