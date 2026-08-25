@@ -20,7 +20,8 @@
     ],
     "resources": {
       "staged-resources/sidecar/": "sidecar/",
-      "staged-resources/dsh-desktop/": "dsh-desktop/"
+      "staged-resources/dsh-desktop/": "dsh-desktop/",
+      "staged-resources/WebView2Loader.dll": "./WebView2Loader.dll"
     },
     "windows": {
       "webviewInstallMode": {

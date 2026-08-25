@@ -547,6 +547,9 @@ fn open_float_window(app: &tauri::AppHandle, session_id: &str) -> Result<bool, S
         .min_inner_size(480.0, 360.0)
         .decorations(false)
         .data_directory(data_dir)
+        // 关闭 Tauri 窗口级 drag&drop handler：否则 Windows 上页面收不到
+        // HTML5 拖拽（dragover/drop），图片/文件拖不进输入框。
+        .disable_drag_drop_handler()
         .initialization_script(&init);
     // 独立 data_directory = 独立 WebView2 环境（独立浏览器进程），不继承主窗
     // 的调试参数 —— 显式透传（保持 Tauri 默认禁用项不变；无该环境变量时零差异）。
@@ -592,6 +595,7 @@ fn open_recovery_center_window(app: &tauri::AppHandle) -> bool {
         .inner_size(980.0, 720.0)
         .min_inner_size(760.0, 520.0)
         .data_directory(data_dir)
+        .disable_drag_drop_handler()
         .focused(true);
     if let Err(e) = builder.build() {
         eprintln!("[shell] recovery-center window build failed: {}", e);
@@ -1217,6 +1221,9 @@ fn main() {
                                     .inner_size(1400.0, 900.0)
                                     .min_inner_size(960.0, 640.0)
                                     .decorations(false)
+                                    // 关闭窗口级 drag&drop handler，放行页面 HTML5 拖拽
+                                    //（否则图片/文件拖不进输入框，页面 dragover/drop 收不到）。
+                                    .disable_drag_drop_handler()
                                     .initialization_script(BRIDGE_JS);
                                     if let Err(e) = built.build() {
                                         eprintln!("[shell] main window build failed: {}", e);
