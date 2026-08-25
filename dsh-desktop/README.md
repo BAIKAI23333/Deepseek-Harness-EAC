@@ -32,9 +32,9 @@
 
 ## 快速开始（成品用户）
 
-1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，选其一（链接永久有效，始终指向最新版）：
-   - [Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) —— 免安装便携版，双击运行
-   - [Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest/download/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) —— 安装版，创建桌面/开始菜单快捷方式
+1. 打开 [Releases](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) 页面，下载最新版（v5.1.0，Tauri 重构壳）：
+   - [Deepseek.Harness.EAC_5.1.0_x64-setup.exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_x64-setup.exe) —— 安装版，创建桌面/开始菜单快捷方式
+   - [Deepseek-Harness-EAC-5.1.0-portable.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek-Harness-EAC-5.1.0-portable.zip) —— 免安装便携版，解压后运行 `dsh-eac-shell.exe`
 2. 首次运行会显示启动动画，随后进入 DeepSeek Harness Web UI。
 3. 如尚未配置 API Key，在界面内完成配置即可开始使用（与命令行 dsh 完全一致）。
 
@@ -55,8 +55,8 @@
 ## 客户端自更新（封装层）
 
 - 启动 60 秒后及此后每 12 小时，自动查询上游仓库的最新 release（**GitHub Releases → Gitee Releases 双源回退**；可用环境变量 `DSH_DESKTOP_RELEASE_API` 指向自定义镜像 API），比较当前版本。
-- 发现新版本时弹窗询问：**立即更新 / 跳过此版本 / 稍后**；同意后带进度条下载安装包（便携版选 `*-portable-x64.exe`，安装版选 `Setup-*-x64.exe`；Gitee 因单文件 100MB 限制拆分的 `.part1/.part2` 分片会自动按序下载并合并），下载到 `<数据目录>\updates\`。
-- **SHA-256 内容校验（v4）**：下载完成后强制校验文件哈希 —— 优先用 GitHub Release 资产自带的 digest 字段，其次取 Release 附带的 `SHA256SUMS.txt`（`npm run dist` 自动生成，发布时随资产上传）；不一致 → 删除文件并中止更新，绝不运行被篡改或损坏的安装包。上游未提供哈希时记录告警并放行（老 Release 兼容）。
+- 发现新版本时弹窗询问：**立即更新 / 跳过此版本 / 稍后**；同意后带进度条下载安装包（便携版选 `*-portable.zip` 树交换更新，安装版直接下载运行安装包；Gitee 因单文件 100MB 限制拆分的 `.part1/.part2` 分片会自动按序下载并合并），下载到 `<数据目录>\updates\`。
+- **SHA-256 内容校验（v4）**：下载完成后强制校验文件哈希 —— 优先用 GitHub Release 资产自带的 digest 字段，其次取 Release 附带的 `SHA256SUMS.txt`（`make-portable.mjs` 生成，发布时随资产上传）；不一致 → 删除文件并中止更新，绝不运行被篡改或损坏的安装包。上游未提供哈希时记录告警并放行（老 Release 兼容）。
 - 确认重启后：**便携版**用 detached 脚本等待旧 exe 解锁 → 备份 → 原地替换 → 自动启动新版本（只读目录自动退化为直接启动新 exe）；**安装版**等待进程退出后以向导方式启动新安装包。失败自动保留当前版本，下次启动继续提示待安装更新。
 - **崩溃自回退（v4.1）**：便携版更新后，上一版 exe 备份与 marker 保留到新版首次健康启动；若新版启动失败（上次运行非干净退出），下次启动自动用上一版还原并保留崩溃副本、弹系统通知告知。
 - 菜单入口：chrome 栏 ⋯ 菜单 →「检查客户端更新…」；托盘菜单同样可用。跳过版本记录在 `settings.json`（`skipClientVersion`）。
@@ -175,13 +175,18 @@
 要求：Windows + Node.js（仅构建机需要）+ npm。
 
 ```powershell
-npm install                    # 安装 dsh / electron / electron-builder
-npm run fetch-runtime          # 内置 node.exe + npm CLI（构建与开发都需要）
-npm start                      # 开发模式启动（窗口内跑 Web UI）
-npm run dist                   # 构建 portable + NSIS 安装包，输出到 dist/
+npm install                    # 安装 dsh 内核与桌面层依赖（node_modules）
+npm run build                  # tsc 编译 TypeScript 产物（lib/*.js 等）
+npm run fetch-runtime          # 内置 node.exe + npm CLI（运行树依赖）
+npm test                       # node --test 全量单测（test/*.test.ts）
+
+node tauri-shell/stage-resources.mjs   # 装配打包资源（staged-resources：tsc + 生产 npm ci + patch-deps 重放）
+cd tauri-shell
+npx @tauri-apps/cli@2 build    # 编译 Rust 壳 + NSIS 安装包 → target/release/bundle/nsis/
+node make-portable.mjs         # 便携版 zip → target/release/portable/（含 SHA256SUMS.txt）
 ```
 
-> 网络受限时：Electron 二进制镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`（可 `npm run electron:fetch` 手动补拉）；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
+> 打包工具链（tauri-cli / NSIS / WixTools）由 npx 与 tauri 首次运行时自动下载，缓存于 `%LOCALAPPDATA%\tauri`；`stage-resources.mjs` 可用 `--skip-npm` 复用上次的生产 node_modules（内核未变更时省去重装）。
 >
 > 开发辅助脚本：`node scripts/check-latest.js`（检查/试装更新）、`node scripts/test-watcher.js`（通知检测单测）、`node scripts/inspect-session.js <file>`（会话日志事件词表）。
 
@@ -189,33 +194,32 @@ npm run dist                   # 构建 portable + NSIS 安装包，输出到 di
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Electron 壳 (main.js)                                   │
-│  · 单实例锁 / 窗口 / 菜单 / 生命周期                       │
-│  · 会话完成监听 (session-watcher.js) → 系统通知            │
-│  · 官方更新 (updater.js) → 用户同意后安装 overlay          │
-│  · spawn vendor|resources 里的 node.exe                   │
+│  Tauri 壳 (dsh-eac-shell.exe, Rust)                      │
+│  · 窗口 / 托盘 / 菜单 / 生命周期                           │
+│  · WS 回环桥 127.0.0.1:19873（win.* 壳层本地拦截）        │
+│  · spawn sidecar → boot.start 拉起 dsh web                │
 └──────────────┬───────────────────────────────────────────┘
-               │  dsh web --host 127.0.0.1 --port 0
+               │  stdio JSON-RPC + WS 桥
                ▼
-       内置 node.exe + @deepseek-ai/dsh
-       路径解析：用户目录 overlay > 内置包
-       输出 "dsh web: http://127.0.0.1:<port>"
-               │  解析 URL，轮询 HTTP 200
+       Node sidecar（server.js + bridge.js）
+       · lib/desktop/* 桌面模块族（更新/插件/救援/…）
+       · 拉起 dsh web --host 127.0.0.1 --port 0
+               │  就绪后 webUrl 回传
                ▼
-       原生窗口加载 Web UI（仅本机回环访问）
+       WebView2 加载 Web UI（仅本机回环访问）
 ```
 
 关键决策：
 
 | 决策 | 原因 |
 | --- | --- |
-| `asar: false` | dsh 依赖 sharp / node-pty / koffi 等原生模块，必须以真实文件落盘 |
-| 内置独立 node.exe + npm | 预编译原生模块 ABI 与安装时的 Node 版本绑定；Electron 内嵌 Node ABI 不同。内置同版本 node.exe 零配置保证一致，npm 用于官方更新。注意：electron-builder 复制 extraResources 时会剥掉嵌套 node_modules，npm 自己的依赖由 \`afterPack\` 钩子原样补拷（scripts/after-pack.js） |
-| `npmRebuild: false` | 绝不为 Electron 重编译原生模块，否则内置 node.exe 反而加载不了 |
-| `--port 0` + 解析 stdout | 由 OS 分配空闲端口，避免端口冲突；本机回环绑定不对外暴露 |
-| 退出时 `taskkill /T /F` | dsh 会派生 pwsh 等子进程，按进程树整体回收 |
-| 更新走 overlay + staging 原子切换 | 更新失败零风险；便携版（资源每次从 exe 解压）也能持久更新 |
-| 通知读会话日志而非 UI 协议 | 持久化格式是官方稳定接口；UI 的私有 RPC/SSE 协议随版本变化，容易失效 |
+| 发版壳固定 Tauri v2 + NSIS | Electron 发布通道已停用；NSIS 装出 exe 同级 `sidecar/` + `dsh-desktop/` 兄弟目录（exe 同级直认，兼容 `resources/` 布局回退） |
+| resources 映射 staged-resources | 打包资源统一由 `stage-resources.mjs` 装配：npm ci 重装生产依赖后重放锚点补丁（patch-deps）与 vendored 修复，内置插件/皮肤原样进包 |
+| 内置独立 node.exe + npm | 预编译原生模块 ABI 与安装时的 Node 版本绑定；sidecar 用内置同版本 node 启动 |
+| WS 回环桥（127.0.0.1:19873） | 壳层与页面双向通信：窗口动作壳层本地拦截，其余转发 sidecar（P3 渐进收编） |
+| 稳定端口 + 受限端口重试 | 由 OS 分配空闲端口避免冲突；本机回环绑定不对外暴露 |
+| 更新走 overlay + staging 原子切换 | 更新失败零风险；便携版（zip 树交换）与安装版各自适配 |
+| 退出时进程树回收 | dsh 会派生 pwsh 等子进程，按进程树整体回收，不留孤儿进程 |
 
 ## 日志与排障
 
