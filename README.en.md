@@ -165,14 +165,14 @@ Linux packaging was contributed by community developer [@Luoye-hb](https://githu
 <table>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ Community Group 2 QR code" width="320" />
+      <img src="docs/qq-group-qrcode.jpg" alt="dsh EAC QQ Community Group 3 QR code" width="320" />
     </td>
     <td align="center" width="50%">
       <img src="docs/wechat-group-qrcode.jpg" alt="dsh EAC WeChat community group QR code" width="320" />
     </td>
   </tr>
   <tr>
-    <td align="center"><strong>QQ Community Group 2</strong><br />Group number: 1021296425</td>
+    <td align="center"><strong>QQ Community Group 3</strong><br />Group number: 1083832019</td>
     <td align="center"><strong>WeChat Community Group</strong></td>
   </tr>
 </table>
