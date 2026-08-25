@@ -9,13 +9,12 @@
 <p>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/github/stars/zouyuxuan122/Deepseek-Harness-EAC?style=flat&label=%E2%AD%90&color=08C" alt="GitHub stars"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases"><img src="https://img.shields.io/badge/Windows-10%2F11-4493F8?style=flat" alt="Windows"></a>
-<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux"><img src="https://img.shields.io/badge/Linux-pacman%2Fdeb%2Frpm%2FAppImage-178600?style=flat" alt="Linux"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC"><img src="https://img.shields.io/badge/Desktop-App-47848F?style=flat" alt="Desktop App"></a>
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
-封装为<strong>开箱即用的 Windows / Linux 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
+封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
 <p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
 
@@ -63,7 +62,6 @@
 ### 系统要求
 
 - Windows 10/11（x64）
-- Linux x86_64（Arch / Ubuntu / Debian / Fedora，或任意支持 AppImage 的发行版）
 - 无需预装 Node.js 或任何其他运行时
 
 ### Windows
@@ -82,21 +80,6 @@
 > - 直接下载上方最新安装包覆盖安装即可；
 > - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
 >   与 `~/.dsh`，升级过程不触碰。
-
-### Linux（x64）
-
-Linux 打包由社区开发者 [@Luoye-hb](https://github.com/Luoye-hb) 贡献（[PR #12](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/12)），随 [v4.4.0-linux](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v4.4.0-linux) 发布，支持 **Arch / Ubuntu / Debian / Fedora** 与通用 AppImage：
-
-| 发行版 | 包 | 安装 |
-| --- | --- | --- |
-| Arch Linux | [.pacman](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | `sudo pacman -U ./Deepseek-Harness-EAC-4.4.0-x64.pacman` |
-| Ubuntu / Debian | [.deb](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | `sudo apt install ./Deepseek-Harness-EAC-4.4.0-amd64.deb` |
-| Fedora | [.rpm](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | `sudo dnf install ./Deepseek-Harness-EAC-4.4.0.x86_64.rpm` |
-| 通用 | [.AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | `chmod +x` 后直接运行 |
-
-> - 卸载：`pacman -Rns dsh-desktop` / `apt remove dsh-desktop` / `dnf remove dsh-desktop`
-> - 与 Windows 版一致：内置 Node.js 与 npm CLI，目标机器无需预装 Node.js；数据目录沿用 `~/.dsh`（`DSH_HOME`）
-> - Linux 版由系统包管理器管理升级，不走应用内自更新；安装到仓库根 `linux` 分支源码可自行构建
 
 ### 首次使用
 

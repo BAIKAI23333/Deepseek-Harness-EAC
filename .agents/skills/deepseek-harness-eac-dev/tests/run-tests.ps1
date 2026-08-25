@@ -135,6 +135,17 @@ Assert-Fixture -Name 'documentation-rule' -Condition (
     'documentation' -in @($documentation.data.matchedRules)
 ) -Failure ($documentation.raw)
 
+$typescriptTest = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/test/preset-sync.test.ts"]')
+)
+Assert-Fixture -Name 'typescript-test-path' -Condition (
+    $typescriptTest.exitCode -eq 0 -and
+    $typescriptTest.data.status -eq 'ready' -and
+    'test/preset-sync.test.ts' -in @($typescriptTest.data.suggestedTests) -and
+    @($typescriptTest.data.missingSuggestedTests).Count -eq 0
+) -Failure ($typescriptTest.raw)
+
 $skillReference = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64',
