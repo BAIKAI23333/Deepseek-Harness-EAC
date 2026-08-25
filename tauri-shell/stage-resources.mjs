@@ -191,3 +191,38 @@ if (existsSync(vendoredBashFix)) {
 }
 
 console.log('[stage] 完成：' + staged);
+
+// WebView2Loader.dll：webview2-com-sys 提供的 x64 loader，必须与壳 exe 同级
+// （否则 dsh-eac-shell.exe 启动即 0xC0000135 崩）。从 cargo registry 的
+// webview2-com-sys 包定位（tauri build 不再重新生成该文件）。
+{
+  const loader = (() => {
+    const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+    const roots = [
+      path.join(process.env.CARGO_HOME || path.join(homeDir, '.cargo'), 'registry', 'src'),
+      path.join(homeDir, '.cargo', 'registry', 'src'),
+    ];
+    for (const base of roots) {
+      if (!existsSync(base)) continue;
+      const hits = readdirSync(base).sort().reverse();
+      for (const bucket of hits) {
+        const webview2Dir = path.join(base, bucket);
+        if (!existsSync(webview2Dir)) continue;
+        const subdirs = readdirSync(webview2Dir);
+        for (const dir of subdirs) {
+          if (!dir.startsWith('webview2-com-sys-')) continue;
+          const cand = path.join(webview2Dir, dir, 'x64', 'WebView2Loader.dll');
+          if (existsSync(cand)) return cand;
+        }
+      }
+    }
+    return '';
+  })();
+  const dest = path.join(staged, 'WebView2Loader.dll');
+  if (loader && existsSync(loader)) {
+    cpSync(loader, dest);
+    console.log('[stage] WebView2Loader.dll 已装配: ' + path.relative(root, dest));
+  } else {
+    console.warn('[stage] 未找到 WebView2Loader.dll（webview2-com-sys），安装包可能启动即崩');
+  }
+}
