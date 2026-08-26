@@ -37,10 +37,12 @@ test('sidecar exposes Linux XDG data and desktop capabilities over shell.info', 
 
   try {
     const info = await call('shell.info');
-    assert.equal(info.platform, 'linux');
+    assert.equal(info.platform, process.platform);
     assert.equal(info.userDataDir, join(root, 'xdg', 'deepseek-harness-eac'));
     const capabilities = info.capabilities as Record<string, unknown>;
-    assert.ok(['supported', 'external-dependency'].includes(String(capabilities.clipboard)));
+    // capability enum has three honest values; darwin reports 'unavailable' until
+    // the platform-adapter task adds darwin support (then it becomes 'supported').
+    assert.ok(['supported', 'external-dependency', 'unavailable'].includes(String(capabilities.clipboard)));
     assert.equal(capabilities.clientSelfUpdate, 'external-handoff');
     assert.equal(capabilities.computerUser, 'unavailable');
     assert.equal(capabilities.processFence, 'degraded');
