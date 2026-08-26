@@ -62,6 +62,14 @@ fn resource_root() -> std::path::PathBuf {
             if res.join("sidecar").join("server.js").exists() {
                 return res;
             }
+            // macOS bundle 布局：Contents/MacOS/<bin> → Contents/Resources/。
+            #[cfg(target_os = "macos")]
+            if let Some(contents) = dir.parent() {
+                let mac_res = contents.join("Resources");
+                if mac_res.join("sidecar").join("server.js").exists() {
+                    return mac_res;
+                }
+            }
         }
     }
     // 开发态不把 CARGO_MANIFEST_DIR 编进 release 二进制，避免成品泄露构建机
@@ -82,7 +90,13 @@ fn resource_root() -> std::path::PathBuf {
 }
 
 fn sidecar_script() -> std::path::PathBuf {
-    resource_root().join("sidecar").join("server.js")
+    let root = resource_root();
+    let packaged = root.join("sidecar").join("server.js");
+    if packaged.exists() {
+        return packaged;
+    }
+    // 开发态（仓库根布局）：sidecar 编译产物位于 tauri-shell/sidecar/。
+    root.join("tauri-shell").join("sidecar").join("server.js")
 }
 
 fn dsh_desktop_dir() -> String {
