@@ -69,7 +69,7 @@
         @{
             Name = 'project-scripts'
             Domain = 'updates-packaging'
-            Pattern = '^dsh-desktop/scripts/.*\.(js|cjs|mjs|ps1)$'
+            Pattern = '^dsh-desktop/scripts/.*\.(js|cjs|mjs|ts|ps1)$'
             Reference = 'references/updates-and-packaging.md'
             Level = 'full'
             Tests = @('test/bundled-files.test.ts')
@@ -274,7 +274,7 @@
         @{
             Name = 'packaging'
             Domain = 'updates-packaging'
-            Pattern = 'stage-resources|make-portable|tauri\.conf\.json|installer|electron-builder|bundle-integrity|verify-dist'
+            Pattern = 'stage-resources|stage-platform-cache|audit-linux-bundle|make-portable|tauri(?:\.[^.]+)?\.conf\.json|^tauri-shell/gen/schemas/.*\.json$|installer|electron-builder|bundle-integrity|verify-dist'
             Reference = 'references/updates-and-packaging.md'
             Level = 'package'
             Tests = @(
