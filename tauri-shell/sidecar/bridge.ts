@@ -469,7 +469,14 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     document.documentElement.setAttribute('data-dsh-title-bar-height', String(BAR_HEIGHT));
 
     var layout = document.createElement('style');
-    layout.textContent = 'body{box-sizing:border-box!important;padding-top:' + BAR_HEIGHT + 'px!important}';
+    layout.textContent = 'body{box-sizing:border-box!important;padding-top:' + BAR_HEIGHT + 'px!important}' +
+      // issue #217：壳自绘标题栏 z-index 极高（2147483000），内核模型下拉、
+      // 优化提示词面板等 fixed/absolute 弹层在视口顶部附近会被标题栏或页内
+      // 高 z 容器盖住/糊掉。对常见弹层形态统一把层级提到内容层之上
+      // （5000，仍低于标题栏）。只提层级不动布局 —— 纯叠加修复。
+      'html[data-dsh-title-bar-height] [role="dialog"]:not([aria-hidden="true"]),' +
+      'html[data-dsh-title-bar-height] [data-floating-ui-portal],' +
+      'html[data-dsh-title-bar-height] [data-radix-popper-content-wrapper]{z-index:5000!important}';
     document.head.appendChild(layout);
 
     var bar = document.createElement('div');

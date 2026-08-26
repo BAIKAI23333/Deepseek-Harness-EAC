@@ -124,6 +124,38 @@ function pruneMuslPackages(nodeModules) {
   }
 }
 
+// node-pty 双二进制错配防护（issue #206）：lib/utils.js 的 loadNativeModule
+// 按 ['build/Release','build/Debug','prebuilds/<platform>-<arch>'] 顺序加载，
+// build/Release 里的 pty.node 若是历史残留/编译机产物（旧签名），会先于
+// prebuilds 被 require，终端首个 resize 即崩（Linux 实测，Windows 同构）。
+// 装配后把两份二进制做内容核对：不一致（或 reads 失败）直接删 build 目录，
+// 强制加载逻辑落到随包分发的 prebuilds 预编译产物；prebuilds 也缺失时
+// 保留 build（别无选择）并告警。
+function healNodePtyPlugin(nodeModules, platform, arch) {
+  const ptyDir = path.join(nodeModules, 'node-pty');
+  const buildDir = path.join(ptyDir, 'build');
+  if (!existsSync(buildDir)) return;
+  const buildRelease = path.join(buildDir, 'Release', 'pty.node');
+  const prebuilt = path.join(ptyDir, 'prebuilds', `${platform}-${arch}`, 'pty.node');
+  const hasBuild = existsSync(buildRelease);
+  const hasPre = existsSync(prebuilt);
+  if (!hasBuild) return;
+  if (!hasPre) {
+    console.warn(`[stage] node-pty prebuilds/${platform}-${arch} 缺失，保留 build/Release 兜底（构建机残留风险）`);
+    return;
+  }
+  try {
+    const a = readFileSync(buildRelease);
+    const b = readFileSync(prebuilt);
+    if (a.equals(b)) {
+      console.log('[stage] node-pty build/Release 与 prebuilds 一致，保留');
+      return;
+    }
+  } catch {}
+  console.log('[stage] node-pty build/Release 与 prebuilds 不一致，剔除 build 目录（强制走 prebuilds 预编译产物）');
+  rmSync(buildDir, { recursive: true, force: true });
+}
+
 function pluginEntrypoints(pkg) {
   const result = [];
   const add = (value) => {
@@ -260,6 +292,9 @@ if (targetPlatform === 'linux') {
     { recursive: true, force: true },
   );
 }
+// node-pty 双二进制防护（issue #206）：全平台统一执行（Linux 分支已清除
+// 非 linux prebuilds，win 分支保留原 prebuilds）。
+healNodePtyPlugin(nmDest, targetPlatform, process.arch);
 writeStagedPlatformStamp(platformStamp, targetPlatform);
 
 // dsh-desktop 锚点补丁（patch-deps：可选升级字段 / picker 退出码 / 设置左栏滚动）——

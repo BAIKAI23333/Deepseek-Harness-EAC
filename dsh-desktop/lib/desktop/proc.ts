@@ -5,6 +5,8 @@
 
 import cp = require('node:child_process');
 import type { ChildProcess } from 'node:child_process';
+import fs = require('node:fs');
+import path = require('node:path');
 
 const IS_WIN = process.platform === 'win32';
 
@@ -85,6 +87,28 @@ export async function killTreeAndWait(
 
 // Environment for the dsh child: drop harness/session leftovers so the
 // desktop instance boots clean, keep everything else (proxy, API keys, ...).
+// 「完全访问」用户选择 → 进程级部署默认：UI 把默认权限写进设置文档的
+// permission.defaultPreset（只影响未来新会话）；若不提升为部署级
+// sandbox.mode，设置了的用户在写工作区外/经旧会话时仍被 workspace-write
+// 拒绝（issue #196）。DSH_PERMISSION_MODE 由内核 dsh-base/cordis.patch.yml
+// 的 !!js process.env 行消费，注入后 approval 联动降为 never。
+function userDefaultPreset(): 'danger-full-access' | null {
+  try {
+    const home = ctx.getDshHome();
+    if (!home) return null;
+    const file = path.join(home, 'settings.yaml');
+    if (!fs.existsSync(file)) return null;
+    const text = fs.readFileSync(file, 'utf8');
+    // yaml 随 dsh-settings-file 进入内置依赖树；解析失败宁可返回空
+    // （不注入，保持内核默认 workspace-write），也绝不误判成完全访问。
+    const yaml = require('yaml');
+    const doc = ((yaml.parse && yaml.parse(text)) ?? null) as Record<string, unknown> | null;
+    const permission = doc && typeof doc.permission === 'object' ? doc.permission as Record<string, unknown> : null;
+    return permission && permission.defaultPreset === 'danger-full-access' ? 'danger-full-access' : null;
+  } catch {
+    return null;
+  }
+}
 export function childEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   for (const k of ['DSH_WEB_URL', 'DSH_SESSION_ID', 'DSH_SESSION_JSONL', 'DSH_SHELL', 'ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS']) {
@@ -96,6 +120,9 @@ export function childEnv(): NodeJS.ProcessEnv {
   // MCP 等）据此把安装/读写落到桌面专属 profile，而不是原生的 web profile。
   env.DSH_DESKTOP = '1';
   env.DSH_DESKTOP_PROFILE = ctx.getDesktopProfile();
+  if (dshHome && userDefaultPreset() === 'danger-full-access') {
+    env.DSH_PERMISSION_MODE = 'danger-full-access';
+  }
   env.NO_COLOR = '1';
   return env;
 }

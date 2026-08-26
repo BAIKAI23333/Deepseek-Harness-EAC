@@ -123,3 +123,30 @@ test('checkLatest: falls back to mirror when the default source fails', async ()
   assert.ok(logs.some((l) => l.includes('版本检查成功（镜像源')));
   rmRetry(userDataDir);
 });
+
+test('applyUpdate: npm install 必须携带 --ignore-scripts（阻断 node-pty node-gyp 卡死，issue #191）', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'upd-noscripts-'));
+  const cli = path.join(dir, 'fake-npm.js');
+  fs.writeFileSync(cli, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const args = process.argv.slice(2);
+    // 记录真实 argv 到脚本自身目录，供断言 --ignore-scripts（路径经
+    // path.join 注入，避免任何转义歧义）。
+    fs.writeFileSync(path.join(path.dirname(process.argv[1]), 'npm-args.json'), JSON.stringify(args));
+    if (args.includes('config')) { console.log('https://registry.npmjs.org'); process.exit(0); }
+    const prefix = args[args.indexOf('--prefix') + 1];
+    const bin = path.join(prefix, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
+    fs.mkdirSync(path.dirname(bin), { recursive: true });
+    fs.writeFileSync(bin, 'module.exports = {};');
+    console.log('0.1.0-rc.9');
+    process.exit(0);
+  `);
+  const { ctx } = makeCtx(cli, dir);
+  await updater.applyUpdate(ctx, '0.1.0-rc.9', {});
+  const argsLog = JSON.parse(fs.readFileSync(path.join(dir, 'npm-args.json'), 'utf8'));
+  assert.ok(argsLog.includes('--ignore-scripts'),
+    '必须跳过生命周期脚本（node-pty install/prebuild 会触发 node-gyp，网络受限环境卡死）');
+  assert.ok(argsLog.some((a) => a.startsWith('--registry=')), '镜像源参数应保留');
+  rmRetry(dir);
+});

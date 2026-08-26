@@ -25,6 +25,16 @@
  * @param {Array<string>} [ctx.bundles]                   profile 的 dsh.profile.bundles
  * @returns {Array<object>} 排序后的插件行
  */
+// 内核 bundle 白名单（去 scope 后的短名）：dsh 官方 web profile 的骨架
+// 注册点，禁用会破坏界面 → 管理页锁定为 core；bundles 里的其余条目
+// （市场 / dsh plugin add 装入的第三方包）归入 other 组、可开关。
+const KERNEL_BUNDLE_IDS = new Set([
+  'dsh-base',
+  'dsh-web-app',
+  'web-app',
+  'web-runtime',
+  'client-modules',
+]);
 interface PluginRow {
   id: string; name: string; description: string; enabled: boolean;
   toggleable: boolean; removable: boolean; removed: boolean; core: boolean;
@@ -100,10 +110,15 @@ function collectPluginRows(entries: unknown[], ctx: CollectCtx = {}): PluginRow[
   }
   for (const [id, info] of insertById) if (!companionById.has(id)) addRow(id, info.name, 'other');
   for (const [id, u] of userById) if (!companionById.has(id)) addRow(id, u.name, 'other');
+  // bundles（dsh.profile.bundles）里除 companion 之外还有两类：内核骨架
+  // （官方 web profile 的注册点，禁了界面会坏）与用户/市场装入的第三方包
+  // （dsh plugin add / 市场安装同样登记进 bundles）。旧实现把后者也一律标
+  // 成 core → 插件列表变成「全核心、无法关闭」（issue #212）。改为仅对
+  // 白名单内的内核骨架标 core，第三方 bundle 归入 other、可开关。
   for (const name of bundles) {
     if (companionNames.has(name)) continue;
     const id = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
-    if (!seen.has(id)) addRow(id, name, 'core');
+    if (!seen.has(id)) addRow(id, name, KERNEL_BUNDLE_IDS.has(id) ? 'core' : 'other');
   }
   const order = { companion: 0, other: 1, core: 2 };
   return rows.sort((a, b) => order[a.group] - order[b.group] || a.id.localeCompare(b.id));

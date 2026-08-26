@@ -1428,6 +1428,23 @@ function createWindow({ startHidden = false } = {}) {
   };
   mainWindow.webContents.on('will-navigate', guardNavigation);
   mainWindow.webContents.on('will-redirect', guardNavigation);
+  // issue #60：浏览器后退（鼠标侧键 / Alt+Left / history.back()）走渲染
+  // 进程历史遍历，will-navigate 拦不住；后退成功会落回会话历史第一项
+  // file://...loading.html，而 loading 页同样注入 preload 心跳 → 恢复状态机
+  // 永不判定故障，永久卡「加载界面」。will-frame-navigate 在导航意图阶段
+  // 触发且可拦截，主 frame 离开白名单页时打断并切回 Web UI（webUrl 就绪
+  // 后才回切，避免打断 loading 阶段自身的加载流程）。
+  mainWindow.webContents.on('will-frame-navigate', (event, details) => {
+    if (!details || details.isMainFrame !== true) return;
+    const url = details.url || '';
+    if (isAllowedWebUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) { shell.openExternal(url); return; }
+    if (webUrl && mainWindow && !mainWindow.isDestroyed()) {
+      log('page', '主窗导航离开白名单页被拦截（history 后退/壳页），切回 Web UI: ' + url);
+      mainWindow.loadURL(webUrl).catch((err) => log('page', '切回 Web UI 失败: ' + String((err && err.message) || err)));
+    }
+  });
 
   // 渲染进程错误捕获：插件/页面异常统一落到 desktop.log，便于排查空白视图。
   mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
