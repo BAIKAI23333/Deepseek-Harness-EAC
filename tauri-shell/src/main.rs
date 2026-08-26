@@ -1449,6 +1449,11 @@ fn main() {
                                     // 关闭窗口级 drag&drop handler，放行页面 HTML5 拖拽
                                     //（否则图片/文件拖不进输入框，页面 dragover/drop 收不到）。
                                     .disable_drag_drop_handler()
+                                    // dsh-stt 语音识别：WebView2 在无用户手势下 getUserMedia
+                                    // 可能被拒，放开 autoplay 策略。WebView2 的麦克风权限本身
+                                    // 走 Windows 系统隐私设置，无需额外 permission 授权。
+                                    // ⚠️ 未验证（本机无 cargo 工具链，需装 rustup 后构建确认）。
+                                    .additional_browser_args("--autoplay-policy=no-user-gesture-required")
                                     .initialization_script(BRIDGE_JS);
                                     if let Err(e) = built.build() {
                                         eprintln!("[shell] main window build failed: {}", e);
