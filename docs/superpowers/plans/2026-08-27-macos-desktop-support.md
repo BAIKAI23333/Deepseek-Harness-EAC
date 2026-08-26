@@ -106,7 +106,62 @@ cd ~/dsh-eac-macos && node boot-smoke.js
 ```
 Expected: 临时 DSH_HOME 下 sidecar 启动 → `dsh web: http://127.0.0.1:<port>` → HTTP 探活 200 → 优雅关停零残留。
 
-无提交（vendor 不入库）。
+无提交（vendor 不入库）。注意：`native/{supervisor,snapshot}/index.node` 上游跟踪的是 Windows PE 二进制，darwin 重建后工作区保持 modified、**不提交**；`node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js` 被 npm install 覆盖后执行 `git checkout -- <file>` 恢复跟踪版本。
+
+---
+
+### Task 0-fix: 基线测试 darwin 兼容修复（TDD）
+
+**Files:**
+- Modify: `dsh-desktop/test/sidecar-platform.test.ts`、`dsh-desktop/test/watchdog-behavior.test.ts`
+
+**Interfaces:**
+- Consumes: Task 0 基线产物（vendor Node 24）。
+- Produces: macOS 上全量测试 0 失败（695 pass + 2 修复 = 697 pass，8 skip 保持 Windows 守卫）。
+
+- [ ] **Step 1: RED 证据（已由 Task 0 跑出）**
+
+失败 1：`test/sidecar-platform.test.ts:40` `assert.equal(info.platform, 'linux')`——sidecar 在 macOS 上如实返回 `darwin`。
+失败 2：`test/watchdog-behavior.test.ts:106` 非 win32 分支硬编码 `/bin/true`，macOS 上不存在（只有 `/usr/bin/true`），`existsSync` 断言失败。
+
+- [ ] **Step 2: 修复 watchdog 测试**
+
+`watchdog-behavior.test.ts` 中：
+
+```ts
+  const exe = process.platform === 'win32'
+    ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ping.exe')
+    : process.platform === 'darwin' ? '/usr/bin/true' : '/bin/true';
+```
+
+- [ ] **Step 3: 修复 sidecar-platform 测试**
+
+`sidecar-platform.test.ts` 中 `assert.equal(info.platform, 'linux');` 改为：
+
+```ts
+    assert.equal(info.platform, process.platform);
+```
+
+（`userDataDir` 断言在 darwin 上暂仍走 XDG fallback 故保持通过；Task 1 实现 darwin 数据目录后会随 Task 1 的调度上下文同步更新本测试，见 Task 1 备注。）
+
+- [ ] **Step 4: 恢复 vendored 文件并运行验证**
+
+Run:
+```bash
+cd ~/dsh-eac-macos
+git checkout -- dsh-desktop/node_modules/@deepseek-ai/dsh-tool-bash/lib/index.js
+cd dsh-desktop && vendor/node/node vendor/npm/bin/npm-cli.js test
+```
+Expected: 697 pass / 8 skip / 0 fail，输出无异常噪音。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add dsh-desktop/test/sidecar-platform.test.ts dsh-desktop/test/watchdog-behavior.test.ts
+git commit -m "test(darwin): 基线测试 darwin 兼容——platform 断言与 /usr/bin/true"
+```
+
+（`index.node` 平台二进制保持未提交。）
 
 ---
 
