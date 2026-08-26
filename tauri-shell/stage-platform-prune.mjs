@@ -5,7 +5,8 @@
 import { readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
-/** 是否为 64 位小端 Mach-O（.node 在 macOS 上为 Mach-O dylib）。 */
+/** 是否为 64 位小端 Mach-O（.node 在 macOS 上为 Mach-O dylib）。
+ * 假设：npm 生态的 darwin-arm64 .node 均为 thin（单架构）dylib；若未来出现 FAT/universal 二进制会被误删，届时需扩展魔数识别。 */
 export function isMachO(file) {
   try {
     const data = readFileSync(file);

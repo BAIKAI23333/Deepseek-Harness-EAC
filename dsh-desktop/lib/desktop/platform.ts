@@ -94,7 +94,7 @@ export function createDesktopPlatform(options: DesktopPlatformOptions = {}): Des
     }
     if (platform === 'darwin') {
       // macOS 惯例：~/Library/Application Support/<app>（不经 XDG fallback）。
-      return path.join(homeDir, 'Library', 'Application Support', 'deepseek-harness-eac');
+      return path.posix.join(homeDir, 'Library', 'Application Support', 'deepseek-harness-eac');
     }
     const configHome = env.XDG_CONFIG_HOME || path.join(homeDir, '.config');
     return path.join(configHome, 'deepseek-harness-eac');
