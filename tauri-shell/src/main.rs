@@ -539,6 +539,12 @@ fn is_safe_external_url(url: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// AppleScript 字符串转义：反斜杠与双引号（osascript 通知文案用）。
+#[cfg(target_os = "macos")]
+fn escape_apple_script_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 async fn open_external(url: &str) -> Result<(), String> {
     if !is_safe_external_url(url) {
         return Err("unsafe external URL".into());
@@ -582,6 +588,12 @@ async fn open_native_target(target: &str) -> Result<(), String> {
         command.arg(target);
         return run_bounded_command(command, "xdg-open").await;
     }
+    #[cfg(target_os = "macos")]
+    {
+        let mut command = Command::new("open");
+        command.arg(target);
+        return run_bounded_command(command, "open").await;
+    }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         let _ = target;
@@ -617,6 +629,17 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         let mut command = Command::new("notify-send");
         command.args(["--app-name", "Deepseek Harness EAC", title, body]);
         return run_bounded_command(command, "notify-send").await;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "display notification \"{}\" with title \"{}\"",
+            escape_apple_script_string(body),
+            escape_apple_script_string(title)
+        );
+        let mut command = Command::new("osascript");
+        command.args(["-e", &script]);
+        return run_bounded_command(command, "osascript notification").await;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
@@ -694,6 +717,10 @@ async fn write_clipboard_text(text: &str) -> Result<(), String> {
             "Linux clipboard requires wl-copy, xclip, or xsel ({})",
             failures.join("; ")
         ));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        return run_clipboard_command("pbcopy", &[], text).await;
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
@@ -1674,4 +1701,19 @@ fn main() {
                 println!("[shell] sidecar reaped; exiting");
             }
         });
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::escape_apple_script_string;
+
+    #[test]
+    fn escapes_backslashes_and_quotes() {
+        assert_eq!(escape_apple_script_string("a\\b\"c"), "a\\\\b\\\"c");
+    }
+
+    #[test]
+    fn leaves_plain_text_unchanged() {
+        assert_eq!(escape_apple_script_string("hello 世界"), "hello 世界");
+    }
 }
