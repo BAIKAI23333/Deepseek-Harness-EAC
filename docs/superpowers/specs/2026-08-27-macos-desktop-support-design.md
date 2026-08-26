@@ -55,7 +55,7 @@ L2 Node sidecar、L3 DSH 内核三层架构，照搬 Linux 移植已建立的平
 - `open_native_target`：darwin 分支用 `open`（当前 `cfg(not(win/linux))` 分支返回错误）。
 - `show_system_notification`：darwin 分支用 `osascript -e 'display notification …'`。
 - `write_clipboard_text`：darwin 分支用 `pbcopy`（复用现有 `run_clipboard_command` 骨架）。
-- Windows 专属菜单动作（快捷方式管理等）在 darwin 下 no-op。
+- Windows 专属菜单动作：核实后 L1 壳方法（win.*/float.*/files.* 等）全部为通用 Tauri 操作，无需 darwin no-op；L2 快捷方式维护的非 win32 语义已由 Linux 移植定义。
 - 托盘图标：macOS 需要单色模板 PNG（template 图标），由 `tauri icon` 生成。
 - 其余（WS 中继 127.0.0.1:19873、主窗/浮窗/恢复中心、加载/死亡/更新/向导页）零改动。
 
