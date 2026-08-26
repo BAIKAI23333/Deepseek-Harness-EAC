@@ -122,36 +122,6 @@ public static class IconMask
         return output;
     }
 
-    // Main app icon: brand-blue rounded chip behind the keyed logo. Same
-    // "colored chip" idea as Tray() - the old Process() produced a transparent
-    // rounded canvas that collapsed into a ~9px invisible dot in the taskbar
-    // at 16/24px (issue #197). NOTE: named MainIcon, not Main, because a C#
-    // static method named Main is treated as the process entry point.
-    public static Bitmap MainIcon(Bitmap src, int size, int radius)
-    {
-        var keyed = Resize(src, size, 0);
-        var path = new GraphicsPath();
-        int d = radius * 2;
-        path.AddArc(0, 0, d, d, 180, 90);
-        path.AddArc(size - d, 0, d, d, 270, 90);
-        path.AddArc(size - d, size - d, d, d, 0, 90);
-        path.AddArc(0, size - d, d, d, 90, 90);
-        path.CloseFigure();
-        var output = new Bitmap(size, size, PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(output))
-        {
-            g.Clear(Color.Transparent);
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            using (var brush = new SolidBrush(Color.FromArgb(255, 74, 95, 168)))
-                g.FillPath(brush, path);
-            g.SetClip(path);
-            g.DrawImage(keyed, 0, 0, size, size);
-        }
-        keyed.Dispose();
-        path.Dispose();
-        return output;
-    }
-
     // Multi-size .ico with PNG-compressed entries (Vista+): used for .lnk
     // shortcuts so they pick up the new icon without rebuilding the exe.
     public static void SaveIco(Bitmap src, string path, int[] sizes)
@@ -196,9 +166,9 @@ public static class IconMask
 $jpg = Join-Path $assetsDir 'icon.jpg'
 
 if (Test-Path $jpg) {
-    # --- Mask the user-provided design, on a brand-blue chip (issue #197) ---
+    # --- Mask the user-provided design (transparent rounded canvas, dark logo) ---
     $src = [System.Drawing.Bitmap]::FromFile($jpg)
-    $main = [IconMask]::MainIcon($src, 900, 210)
+    $main = [IconMask]::Process($src, 210, $true)
     $main.Save((Join-Path $buildDir 'icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
     $main.Save((Join-Path $assetsDir 'icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
     [IconMask]::SaveIco($main, (Join-Path $buildDir 'icon.ico'), @(16, 24, 32, 48, 64, 128, 256))
@@ -213,7 +183,7 @@ if (Test-Path $jpg) {
     }
     $tray = [IconMask]::Tray($src, 32, 9)
     $tray.Save((Join-Path $assetsDir 'tray-icon.png'), [System.Drawing.Imaging.ImageFormat]::Png)
-    Write-Output "icon masked from icon.jpg: icon.png (900x900, blue chip, r=210), icon.ico (16-256), tray-icon.png (32x32, white chip)"
+    Write-Output "icon masked from icon.jpg: icon.png (900x900, transparent, r=210), icon.ico (16-256), tray-icon.png (32x32, white chip)"
     $src.Dispose(); $main.Dispose(); $tray.Dispose()
     exit 0
 }
