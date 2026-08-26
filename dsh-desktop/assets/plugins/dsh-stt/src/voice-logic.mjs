@@ -5,9 +5,9 @@
 
 // ── VAD 参数（SPEECH_DESIGN §3.2）────────────────────────
 export const VAD_PARAMS = {
-  silenceThreshold: 0.05,      // 绝对音量下限，防零底噪时阈值过低
+  silenceThreshold: 0.08,      // 绝对音量下限，防零底噪时阈值过低
   baselineWindowMs: 1000,      // 学习底噪的时间窗
-  baselineMultiplier: 1.8,     // 底噪之上的裕度；越大越不易误触发
+  baselineMultiplier: 2.0,     // 底噪之上的裕度；越大越不易误触发
   silenceTimeoutMs: 900,       // 静音判定句末的时长
   minRecordingMs: 350,         // 短于它的片段丢弃（咳嗽/点击）
   maxRecordingMs: 8000,        // 超长语音强制截断
@@ -114,7 +114,7 @@ export function levenshtein(a, b) {
 // 在整句中找与唤醒词编辑距离 ≤ maxDist 的滑动窗口
 export function editDistanceIn(text, word, maxDist) {
   const n = text.length, m = word.length;
-  if (n < Math.max(1, m - maxDist)) return maxDist + 1;
+  if (n < Math.max(1, m - maxDist)) return false;
   for (let i = 0; i < n; i++) {
     for (let len = Math.max(1, m - maxDist); len <= Math.min(n - i, m + maxDist); len++) {
       if (levenshtein(text.slice(i, i + len), word) <= maxDist) return true;
@@ -143,6 +143,13 @@ export function isWakeWord(text, wakeWords) {
   for (const raw of (wakeWords || [])) {
     const w = String(raw).trim().toLowerCase();
     if (!w) continue;
+    // 中文唤醒词：只做裸包含匹配（参考设计 §3.4）。CJK 无拼写错误场景，
+    // 编辑距离 maxDist=2 会让「你好」误匹配任意单字符（如「今天」的「今」），
+    // 导致普通话语被误判成唤醒词。与 client.js 保持一致。
+    if (/[一-鿿]/.test(w)) {
+      if (t.includes(w)) return true;
+      continue;
+    }
     // 层 1 严格：原文包含
     if (t.includes(w)) return true;
     // 层 2 形状：英文辅音簇+元音形态
@@ -152,6 +159,19 @@ export function isWakeWord(text, wakeWords) {
     if (editDistanceIn(t, w, 2)) return true;
   }
   return false;
+}
+
+// 剥离唤醒词（SPEECH_DESIGN §3.4 stripWakeWord）：连续删除句中所有出现的
+// 唤醒词，剩余内容作为命令（大小写不敏感，兼容英文唤醒词）。
+export function stripWakeWord(text, wakeWords) {
+  let t = String(text || '').trim();
+  for (const raw of (wakeWords || [])) {
+    const w = String(raw).trim();
+    if (!w) continue;
+    const re = new RegExp(w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    t = t.replace(re, '');
+  }
+  return t.replace(/^[，。！？、；：,.\s]+/, '').trim();
 }
 
 // ── 片段合并缓冲（SPEECH_DESIGN §3.7）─────────────────────

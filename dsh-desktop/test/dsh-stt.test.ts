@@ -94,10 +94,18 @@ test('严格匹配：原文包含唤醒词', () => {
   assert.equal(logic.isWakeWord('今天天气不错', ['你好小助手']), false);
 });
 
-test('编辑距离匹配：同音/近字 ≤2 命中', () => {
-  assert.equal(logic.isWakeWord('你好小祝手打开文件', ['你好小助手']), true, '小祝手≈小助手');
-  assert.equal(logic.isWakeWord('你好小筑手', ['你好小助手']), true);
-  assert.equal(logic.isWakeWord('完全无关的内容', ['你好小助手']), false);
+test('编辑距离匹配（仅英文：同音/近字 ≤2 命中）', () => {
+  assert.equal(logic.isWakeWord('hey jervis', ['jarvis']), true, '英文编辑距离抗 jervis 误听');
+  assert.equal(logic.isWakeWord('the weather is nice', ['jarvis']), false);
+});
+
+test('中文唤醒词不做编辑距离匹配（避免单字符误匹配）', () => {
+  // 「今天」含「今」，只有 1 个字符与「你好」无关，不应命中
+  assert.equal(logic.isWakeWord('今天天气不错', ['你好']), false);
+  // 同音近字「泥好」不再靠编辑距离命中，中文只认原文包含
+  assert.equal(logic.isWakeWord('泥好', ['你好']), false);
+  // 原文包含才命中
+  assert.equal(logic.isWakeWord('你好世界', ['你好']), true);
 });
 
 test('英文形状匹配：JARVIS 误听形态', () => {
@@ -111,6 +119,21 @@ test('多层唤醒词列表任一命中', () => {
   assert.equal(logic.isWakeWord('你好小助手', ['小爱同学', '你好小助手']), true);
   assert.equal(logic.isWakeWord('小爱同学', ['小爱同学', '你好小助手']), true);
   assert.equal(logic.isWakeWord('随便说说', ['小爱同学', '你好小助手']), false);
+});
+
+// ── 唤醒词剥离（SPEECH_DESIGN §3.4）────────────────────────
+test('stripWakeWord 剥离唤醒词后返回命令主体', () => {
+  assert.equal(logic.stripWakeWord('你好帮我查天气', ['你好']), '帮我查天气');
+  assert.equal(logic.stripWakeWord('你好，帮我查天气', ['你好']), '帮我查天气');
+  assert.equal(logic.stripWakeWord('你好', ['你好']), '');
+});
+
+test('stripWakeWord 无唤醒词时原样返回', () => {
+  assert.equal(logic.stripWakeWord('帮我查天气', ['你好']), '帮我查天气');
+});
+
+test('stripWakeWord 多唤醒词取剥离最彻底', () => {
+  assert.equal(logic.stripWakeWord('你好小爱同学帮我查天气', ['你好', '小爱同学']), '帮我查天气');
 });
 
 // ── 文本过滤（SPEECH_DESIGN §3.8）──────────────────────────
@@ -208,14 +231,14 @@ test('coalesceBuffer 合并窗过期后提交并清空', () => {
 
 // ── VAD 参数边界（SPEECH_DESIGN §3.2）──────────────────────
 test('voiceThreshold 取 max(绝对下限, 底噪×倍数)', () => {
-  assert.equal(logic.voiceThreshold(0, logic.VAD_PARAMS), 0.05, '零底噪 → 绝对下限');
-  assert.ok(Math.abs(logic.voiceThreshold(0.1, logic.VAD_PARAMS) - 0.18) < 1e-9, '0.1×1.8≈0.18');
-  assert.equal(logic.voiceThreshold(0.02, logic.VAD_PARAMS), 0.05, '0.02×1.8=0.036 < 下限 → 0.05');
+  assert.equal(logic.voiceThreshold(0, logic.VAD_PARAMS), 0.08, '零底噪 → 绝对下限');
+  assert.ok(Math.abs(logic.voiceThreshold(0.1, logic.VAD_PARAMS) - 0.2) < 1e-9, '0.1×2.0=0.2');
+  assert.equal(logic.voiceThreshold(0.02, logic.VAD_PARAMS), 0.08, '0.02×2.0=0.04 < 下限 → 0.08');
 });
 
 test('VAD 参数符合规范默认值', () => {
-  assert.equal(logic.VAD_PARAMS.silenceThreshold, 0.05);
-  assert.equal(logic.VAD_PARAMS.baselineMultiplier, 1.8);
+  assert.equal(logic.VAD_PARAMS.silenceThreshold, 0.08);
+  assert.equal(logic.VAD_PARAMS.baselineMultiplier, 2.0);
   assert.equal(logic.VAD_PARAMS.silenceTimeoutMs, 900);
   assert.equal(logic.VAD_PARAMS.minRecordingMs, 350);
   assert.equal(logic.VAD_PARAMS.maxRecordingMs, 8000);
