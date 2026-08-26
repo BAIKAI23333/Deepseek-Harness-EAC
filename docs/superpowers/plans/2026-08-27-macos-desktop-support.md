@@ -110,6 +110,72 @@ Expected: 临时 DSH_HOME 下 sidecar 启动 → `dsh web: http://127.0.0.1:<por
 
 ---
 
+### Task 6-fix: 资源根定位支持 macOS bundle 与开发态布局（TDD）
+
+**Files:**
+- Modify: `tauri-shell/src/main.rs`
+
+**Interfaces:**
+- Consumes: Task 6 产物（打包后的 .app 与 `--bridge-test` 自检入口）。
+- Produces: 打包态 `resource_root()` 命中 `Contents/Resources/`；开发态 `sidecar_script()` 命中 `tauri-shell/sidecar/server.js`；Windows/Linux 打包态行为逐字不变。
+
+- [ ] **Step 1: RED 证据（Task 6 已产出）**
+
+打包二进制 `--bridge-test` 输出：`[bridge] sidecar = /Users/mac/dsh-eac-macos/sidecar/server.js`（不存在）；双击 .app 时 sidecar 从未 spawn、用户数据目录从未创建。根因：`resource_root()`（main.rs:53-83）只探测 exe 同级 `sidecar/` 与 `resources/`，macOS 大小写敏感文件系统下 `Contents/Resources` 不命中，回退开发布局探测命中仓库根，但 `sidecar_script()`（main.rs:84-86）拼 `sidecar/` 而非 `tauri-shell/sidecar/`。
+
+- [ ] **Step 2: 实现 resource_root 的 macOS bundle 探测**
+
+在 `resource_root()` 的 `resources` 探测之后插入（Windows/Linux 打包态探测顺序不变）：
+
+```rust
+            // macOS bundle 布局：Contents/MacOS/<bin> → Contents/Resources/。
+            #[cfg(target_os = "macos")]
+            if let Some(contents) = dir.parent() {
+                let mac_res = contents.join("Resources");
+                if mac_res.join("sidecar").join("server.js").exists() {
+                    return mac_res;
+                }
+            }
+```
+
+- [ ] **Step 3: 实现 sidecar_script 的开发态回退**
+
+```rust
+fn sidecar_script() -> std::path::PathBuf {
+    let root = resource_root();
+    let packaged = root.join("sidecar").join("server.js");
+    if packaged.exists() {
+        return packaged;
+    }
+    // 开发态（仓库根布局）：sidecar 编译产物位于 tauri-shell/sidecar/。
+    root.join("tauri-shell").join("sidecar").join("server.js")
+}
+```
+
+（打包态三平台资源根均含 `sidecar/server.js`，第一分支保持逐字不变的旧行为；开发态仓库根无 `sidecar/`，落到 tauri-shell 分支。）
+
+- [ ] **Step 4: 验证**
+
+Run:
+```bash
+cd ~/dsh-eac-macos/tauri-shell && cargo test && cargo check   # 编译通过
+./target/release/dsh-eac-shell --bridge-test                  # 开发态：sidecar = …/tauri-shell/sidecar/server.js（存在）
+npx -y @tauri-apps/cli@2 build                                # 重建 bundle（数分钟，勿中断）
+APP="target/release/bundle/macos/Deepseek Harness EAC.app"
+"$APP/Contents/MacOS/dsh-eac-shell" --bridge-test             # 打包态：sidecar = …/Contents/Resources/sidecar/server.js（存在）
+open "$APP" && sleep 8 && pgrep -fl sidecar                   # sidecar 进程 spawn
+```
+Expected: 两次 bridge-test 的 sidecar 路径均存在；open 后 sidecar 进程出现、`~/Library/Application Support/deepseek-harness-eac/logs/` 被创建；退出后 `killall dsh-eac-shell` 零残留。
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tauri-shell/src/main.rs
+git commit -m "fix(darwin): resource_root 支持 macOS bundle Resources 与开发态 sidecar 定位"
+```
+
+---
+
 ### Task 0-fix: 基线测试 darwin 兼容修复（TDD）
 
 **Files:**
