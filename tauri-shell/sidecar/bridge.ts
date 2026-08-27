@@ -401,6 +401,10 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   //     flex-start + 子项 margin-block:auto：放得下时居中、放不下时从顶排布可滚。
   //  c) 模型选择弹层遮挡 —— 菜单 absolute 向上展开且 z 只有 20，顶部会捅出滚动
   //     容器/视口并被高 z 覆盖物盖住；抬到内容层之上并支持「翻转向下」救援。
+  //  d) 悬停浮层横向溢出 —— 提示词优化面板与「/」命令菜单等 absolute 浮层向上展开
+  //     时会把 hero 输入区滚动容器撑出横向溢出（hero 态只设 overflow-y，x 轴未
+  //     裁剪），出现横贯窗口的横向滚动条；且面板常驻挂载（仅隐身），移出后溢出
+  //     依旧。在输入区滚动体与 body 层把 x 轴溢出钉死，横向滚动条不再出现。
   // ---------------------------------------------------------------------------
   function injectUiPatchCss(): void {
     if (document.getElementById('dsh-ui-patch')) return;
@@ -413,7 +417,9 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody > *{margin-block:auto!important}\
   html[data-dsh-title-bar-height] ._7KE1Ra_menu{z-index:5100!important}\
   html[data-dsh-title-bar-height] ._7KE1Ra_menu.dsh-popup-flip{top:calc(100% + 8px)!important;bottom:auto!important}\
-  html[data-dsh-title-bar-height] .wSkVaW_composerStack:has(._7KE1Ra_menu){overflow:visible!important}';
+  html[data-dsh-title-bar-height] .wSkVaW_composerStack:has(._7KE1Ra_menu){overflow:visible!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody{overflow-x:hidden!important}\
+  html[data-dsh-title-bar-height] body{overflow-x:hidden!important}';
     document.head.appendChild(tag);
   }
 

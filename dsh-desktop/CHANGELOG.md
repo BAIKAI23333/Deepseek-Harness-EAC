@@ -106,6 +106,50 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
   批准流、手机桥、注册表/契约测试 20+ 项）；Tauri 壳 `cargo check` 通过；
   stage-resources → tauri build → make-portable 打包链路复验。
 
+## 5.1.0 修复批次 2（内部代号 5.1.2）· 2026-08-27
+
+### 悬停浮层横向溢出（提示词优化面板 + 「/」命令菜单）根治
+
+- **「自动优化提示词」面板由 absolute 改 fixed 定位**：旧版面板 `position:absolute`
+  常驻挂载在 hero 输入区右侧，向上展开即把滚动容器撑出横向溢出——鼠标悬停/移出
+  后整页出现横向滚动条、输入卡底部工具行被裁切，且面板常驻 DOM（仅隐身），移出
+  后不恢复。新版改为 `position:fixed` + JS 按触发钮位置视口 clamp（全程随内容/
+  窗口缩放重算），不参与任何祖先 overflow 计算，悬停与移出均不再产生滚动条。
+- **桥内垫片补丁**（`bridge.ts` injectUiPatchCss）：hero 滚动体（`.wSkVaW_scrollBody`）
+  与 `body` 的 x 轴溢出钉死为 `overflow-x:hidden`，覆盖内核「/」命令菜单等一切
+  hero 态 absolute 浮层同类病灶（内核不可改，只能桥内兜底）。
+- **同步修复已安装运行实例**：新插件文件（prompt-optimizer/client.js、dsh-phone、
+  dsh-feature-toggles）+ sidecar 手机桥已复制进安装目录 assets 与 web-desktop
+  profile 副本，重启应用即生效（桥内垫片需随新构建安装后生效）。
+
+### 手机连接桥完整上线（原为「开发中」占位）
+
+- **手机端续聊客户端**（`mobile-app.html`，随 sidecar 分发）：`/` 与 `/app` 由占位
+  页切换为真实客户端——会话列表/历史消息/发送消息/切换模型/新建会话；扫码配对
+  批准后自动进入。
+- **forwardRpc 信封修复**：旧占位版把手机端 body 原样转内核（恒 400 隐藏 bug）；
+  现改为主机 `client-request` 信封 → `server-response` 解包，白名单 RPC 全链路可用。
+- **二维码白块根治**（dsh-phone 设置卡）：qrcode.js 加载失败不再静默留白——加载
+  失败显示可见错误提示；渲染区在组件未就绪时显示「加载中」。配对链接改为展示
+  **完整 URL（含 `?token=`）+ 「复制链接」按钮**（原实现剥掉 token 只显示 host，
+  手敲出来必 403「配对链接无效」）。
+- **LAN 地址选择优先 RFC1918 私网网段**（192.168/10./172.16-31）：不再无条件取
+  第一个非回环网卡（此前常选中虚拟网卡 / APIPA 的 169.254.x，手机扫出来连不上）。
+
+### 设置侧边栏新增「余额」「多智能体协作团队」独立分区
+
+- `dsh-feature-toggles` 在「增强功能」之外再注册两个 `settings.section`：
+  「余额」（余额小鲸鱼挂件开关 + 说明）、「多智能体协作团队」（AgentTeams 开关 +
+  用法说明），复用同一开关卡与插件管理桥；两功能默认仍关闭，开启后重启生效。
+
+### 验证
+
+- `npm test` 全量 **736 用例 731 通过 0 失败**（新增手机桥 lanAddress 网段偏好
+  用例等）；`ui-verify-smoke` 新增 D 组——hero 基线/hover 提示词优化/注入 320px
+  绝对定位浮层/移出鼠标四时刻断言无横向溢出、输入卡完整可见；配对链路本机实测
+  （`/pair?token=` 200 → 批准 → 手机页进入续聊客户端）；stage-resources → tauri
+  build → make-portable 打包链路复验。
+
 ## [5.0.0] · 2026-08-23
 
 ### 新增：设置面板滚轮修复插件

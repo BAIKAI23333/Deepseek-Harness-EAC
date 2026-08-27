@@ -20,10 +20,12 @@
 // disconnect 仅接受回环来源；dsh_mobile cookie HttpOnly + SameSite=Strict，
 // 一年有效期；RPC 白名单仅放行会话/模型/工作区只读或明确的用户动作。
 
+import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as https from 'node:https';
 import * as os from 'node:os';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import * as path from 'node:path';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 一年
@@ -62,14 +64,31 @@ interface PairingState {
   decided: boolean | null; // null=未决, true=批准, false=拒绝
 }
 
-function lanAddress(): string {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const entry of interfaces[name] ?? []) {
-      if (entry.family === 'IPv4' && !entry.internal) return entry.address;
+// 挑一个手机可达的 LAN IPv4：优先 RFC1918 私网地址（192.168/10./172.16-31，
+// 普通家用/办公 Wi-Fi 网段），其次任意非回环地址（含 169.254 链路本地——DHCP
+// 失败时的兜底，本机可达、同网段手机通常也可达），最后回环。旧实现直接取第一
+// 个非回环地址，经常选中虚拟网卡/APIPA 的 169.254.x，手机扫出来的地址连不上。
+// interfaces 参数仅为测试注入 fake 网卡表（生产调用不传，走 os.networkInterfaces）。
+export function lanAddress(interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>): string {
+  const ifaces = interfaces ?? os.networkInterfaces();
+  let fallback: string | null = null;
+  for (const name of Object.keys(ifaces)) {
+    for (const entry of ifaces[name] ?? []) {
+      if (entry.family !== 'IPv4' || entry.internal) continue;
+      const ip = entry.address;
+      if (fallback === null) fallback = ip;
+      const p = ip.split('.').map((s) => Number(s));
+      if (p.length !== 4 || p.some((n) => Number.isNaN(n))) continue;
+      const a = p[0] ?? -1;
+      const b = p[1] ?? -1;
+      const rfc1918 =
+        a === 10 ||
+        (a === 192 && b === 168) ||
+        (a === 172 && b >= 16 && b <= 31);
+      if (rfc1918) return ip;
     }
   }
-  return '127.0.0.1';
+  return fallback ?? '127.0.0.1';
 }
 
 function isLoopback(address: string | undefined): boolean {
@@ -95,6 +114,19 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
     'content-length': Buffer.byteLength(payload),
   });
   res.end(payload);
+}
+
+// 手机端续聊客户端（单文件静态页，随 sidecar 分发；与 phone-bridge.js 同级，
+// stage-resources 的 sidecar 清单已含 mobile-app.html）。读盘失败时回退占位页。
+let mobileClientHtml: string | null = null;
+function mobileClientPage(): string {
+  if (mobileClientHtml !== null) return mobileClientHtml;
+  try {
+    mobileClientHtml = fs.readFileSync(path.join(__dirname, 'mobile-app.html'), 'utf8');
+  } catch {
+    mobileClientHtml = mobilePlaceholderPage();
+  }
+  return mobileClientHtml;
 }
 
 function mobilePlaceholderPage(): string {
@@ -153,7 +185,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
   let port = 0;
   let lanUrl = '';
   let pairing: PairingState | null = null;
-  let mobileReady = false; // 手机端客户端尚未开发
+  let mobileReady = true; // 手机端续聊客户端已随 sidecar 内置分发
 
   function rotatePairing(): void {
     pairing = {
@@ -181,7 +213,14 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         resolve({ status: 400, body: { error: 'bad kernel web url' } });
         return;
       }
-      const payload = JSON.stringify(params === undefined ? {} : params);
+      // 内核只认 dsh-host-apiproxy 的 client-request 信封（docs/MOBILE-CLIENT-DEV-SPEC.md §4.1）；
+      // 旧实现把手机端 body 原样转发，内核信封校验失败恒 400 bad-request。
+      const envelope = JSON.stringify({
+        type: 'client-request',
+        rpcId: randomUUID(),
+        method,
+        payload: params === undefined ? {} : params,
+      });
       const client = url.protocol === 'https:' ? https : http;
       const req = client.request(
         {
@@ -192,7 +231,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           agent: false, // 短连接：桥是低频转发方，不留 keep-alive 池
           headers: {
             'content-type': 'application/json',
-            'content-length': Buffer.byteLength(payload),
+            'content-length': Buffer.byteLength(envelope),
             connection: 'close',
           },
         },
@@ -201,16 +240,29 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           res.on('data', (c: Buffer) => chunks.push(c));
           res.on('end', () => {
             const raw = Buffer.concat(chunks).toString('utf8');
-            let body: unknown = null;
-            try { body = raw ? JSON.parse(raw) : null; } catch { body = { error: 'non-json response' }; }
-            resolve({ status: res.statusCode ?? 0, body });
+            const status = res.statusCode ?? 0;
+            if (status !== 200) {
+              resolve({ status, body: { ok: false, error: { code: `http-${status}`, message: raw.slice(0, 200) || `kernel http ${status}` } } });
+              return;
+            }
+            let parsed: unknown = null;
+            try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = null; }
+            // server-response 解包：result.ok===true 取 value；ok===false 透传业务错误；
+            // 非 server-response 形状（个别窄路径直接回业务对象）按原值放行。
+            const outer = parsed as { type?: string; result?: { ok?: boolean; value?: unknown; error?: unknown } } | null;
+            if (outer && outer.type === 'server-response' && outer.result && typeof outer.result === 'object') {
+              if (outer.result.ok === true) resolve({ status: 200, body: { ok: true, value: outer.result.value } });
+              else resolve({ status: 200, body: { ok: false, error: outer.result.error ?? { code: 'unknown', message: 'unknown kernel error' } } });
+              return;
+            }
+            resolve({ status: 200, body: { ok: true, value: parsed } });
           });
           res.on('error', () => resolve({ status: 502, body: { error: 'forward stream failed' } }));
         },
       );
       req.setTimeout(30_000, () => req.destroy(new Error('forward timeout')));
       req.on('error', (error: Error) => resolve({ status: 502, body: { error: `forward failed: ${error.message}` } }));
-      req.end(payload);
+      req.end(envelope);
     });
   }
 
@@ -223,15 +275,17 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
       return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
     };
 
-    if (req.method === 'GET' && path === '/') {
+    if (req.method === 'GET' && (path === '/' || path === '/app')) {
+      // 手机端续聊客户端（单文件静态页，随 sidecar 分发；docs/MOBILE-CLIENT-DEV-SPEC.md §5）。
+      const page = mobileClientPage();
       res.writeHead(200, {
         'content-type': 'text/html; charset=utf-8',
         'cache-control': 'no-store',
         'x-frame-options': 'DENY',
-        'content-security-policy': "default-src 'self'",
-        'content-length': Buffer.byteLength(mobilePlaceholderPage()),
+        'content-security-policy': "default-src 'self' 'unsafe-inline'",
+        'content-length': Buffer.byteLength(page),
       });
-      res.end(mobilePlaceholderPage());
+      res.end(page);
       return;
     }
 
@@ -285,9 +339,9 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         json(res, 401, { error: 'not paired' });
         return;
       }
-      let body: { method?: unknown; params?: unknown };
+      let body: { method?: unknown; params?: unknown; payload?: unknown };
       try {
-        body = (await readJson()) as { method?: unknown; params?: unknown };
+        body = (await readJson()) as { method?: unknown; params?: unknown; payload?: unknown };
       } catch {
         json(res, 400, { error: 'invalid json body' });
         return;
@@ -296,7 +350,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         json(res, 400, { error: 'method not allowed' });
         return;
       }
-      const forwarded = await forwardRpc(body.method, body.params);
+      const forwarded = await forwardRpc(body.method, body.params !== undefined ? body.params : body.payload);
       json(res, forwarded.status, forwarded.body);
       return;
     }
