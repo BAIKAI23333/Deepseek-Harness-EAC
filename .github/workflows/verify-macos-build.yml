@@ -108,9 +108,11 @@ jobs:
           test -f "$APP/Contents/MacOS/dsh-eac-shell" || { echo "main 二进制缺失"; exit 1; }
           test -f "$APP/Contents/Resources/sidecar/server.js" || { echo "Contents/Resources/sidecar/server.js 缺失"; exit 1; }
           test -d "$APP/Contents/Resources/dsh-desktop" || { echo "Contents/Resources/dsh-desktop 缺失"; exit 1; }
-          DMG="tauri-shell/target/release/bundle/macos/Deepseek Harness EAC.dmg"
-          test -f "$DMG" || { echo ".dmg 未生成"; exit 1; }
-          ls -lh "tauri-shell/target/release/bundle/macos/"
+          # macOS dmg 由 tauri 放到 bundle/dmg/，文件名含版本与架构
+          DMG="$(find tauri-shell/target/release/bundle/dmg -maxdepth 1 -name '*.dmg' -type f -print -quit)"
+          test -n "$DMG" || { echo ".dmg 未生成"; exit 1; }
+          echo "DMG: $DMG"
+          ls -lh tauri-shell/target/release/bundle/macos/ tauri-shell/target/release/bundle/dmg/
           echo "== .app 结构审计通过 =="
 
       - name: --bridge-test 打包态自检（sidecar 解析应命中 Contents/Resources）
@@ -153,6 +155,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dsh-eac-macos-arm64-verify
-          path: tauri-shell/target/release/bundle/macos/
+          path: |
+            tauri-shell/target/release/bundle/macos/
+            tauri-shell/target/release/bundle/dmg/
           if-no-files-found: error
           retention-days: 7
