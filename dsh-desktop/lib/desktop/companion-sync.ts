@@ -161,11 +161,14 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
   // 侧边临时会话：浮窗追问、不写主会话、多种回答引擎（Ctrl+Shift+S）。
   { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
-  // 手机连接（5.1.1）：LAN 扫码配对 + 白名单 RPC + 手机端占位页（设置页「连接手机」）。
+  // 手机连接（5.1.0 批次）：LAN 扫码配对 + 白名单 RPC + 手机端占位页（设置页「连接手机」）。
   // 桥本体在 Tauri 壳 sidecar（phone-bridge.js）；本插件只是 Web UI 入口与二维码。
   { id: 'dsh-phone', name: 'dsh-phone', dir: 'dsh-phone' },
+  // 新增强化功能入口分区（5.1.0 批次）：设置页「增强功能」——为默认关闭的
+  // 内置插件（余额小鲸鱼 / AgentTeams 等）提供一键启用/停用开关。
+  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles', dir: 'dsh-feature-toggles' },
   // DeepSeek 余额小鲸鱼挂件（MeteorNOX/DeepSeek-Balance-Whale-Widget，MIT）。
-  // 默认关闭：用户到「设置 → 插件 → 管理」自行启用（需 DEEPSEEK_API_KEY 凭据）。
+  // 默认关闭：用户到「设置 → 插件 → 管理」或「增强功能」分区自行启用（需 DEEPSEEK_API_KEY 凭据）。
   { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget', disabled: true },
   // 多智能体团队协作（NanmiCoder/dsh-agent-teams，MIT）：队长 + 子代理成员 +
   // 依赖感知任务 DAG + 活动面板。默认关闭，由用户自行决定是否开启。

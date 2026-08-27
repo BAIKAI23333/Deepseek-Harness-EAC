@@ -257,7 +257,7 @@ window.__ModuleLoader__.load({
         return ctx.slots.register({
           name: "settings.section",
           id: "dsh-phone",
-          order: 90,
+          order: 9,
           label: function () { return t("nav"); },
           locale: NS,
         }, function (props) {
