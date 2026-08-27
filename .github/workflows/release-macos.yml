@@ -8,8 +8,10 @@
 # 触发：仅 workflow_dispatch（不挂 push/PR 事件，避免无谓消耗 macOS runner 分钟数；
 #       需要打包验证时手动触发一次即可）
 #
-# ⚠️ tag 输入值不要以 "v" 开头：release-tauri.yml 监听 v* 标签，会连带触发
-#    Windows/Linux 发布管线；macOS 用独立 tag（如 macos-arm64-5.1.0）。
+# tag 两种用法：
+#   - 已存在的 tag（如 v5.1.0）→ 把 .app.zip/.dmg/校验和 追加进该 Release（多平台同 tag 发布）
+#   - 不存在的 tag → 创建 Draft Release 待人工 Publish
+# ⚠️ 注意：新建 v* 标签会连带触发 release-tauri.yml 的 Windows/Linux 发布管线（属预期行为）
 name: release-macos
 
 on:
@@ -116,7 +118,7 @@ jobs:
           ditto -c -k --keepParent "$APP" "release-assets/Deepseek Harness EAC_${VERSION}_macos-arm64.app.zip"
           cp "$DMG_SRC" "release-assets/Deepseek Harness EAC_${VERSION}_macos-arm64.dmg"
           cd release-assets
-          shasum -a 256 *.zip *.dmg > SHA256SUMS.txt
+          shasum -a 256 *.zip *.dmg > SHA256SUMS-macos.txt
           ls -lh
 
       - name: 上传构建产物（7 天保留）
@@ -127,7 +129,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: 创建草稿 Release（署名 macOS 移植贡献者）
+      - name: 创建/追加 Release（tag 已存在则并入，否则建草稿；署名 macOS 移植贡献者）
         working-directory: ${{ github.workspace }}
         shell: bash
         env:
@@ -136,10 +138,8 @@ jobs:
           set -eu
           TAG="${{ inputs.tag }}"
           VERSION="5.1.0"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "错误：标签 $TAG 已存在（已发布过？换一个 tag 输入）。"
-            exit 1
-          fi
+          EXISTING=0
+          if gh release view "$TAG" >/dev/null 2>&1; then EXISTING=1; fi
           cat > "$RUNNER_TEMP/notes.md" <<'EOF'
           ## macOS（Apple Silicon arm64）桌面预览版
 
@@ -167,13 +167,23 @@ jobs:
           EOF
           # 统一命名后上传（.app.zip / .dmg / 校验和）
           cd release-assets
-          gh release create "$TAG" \
-            "Deepseek Harness EAC_${VERSION}_macos-arm64.app.zip" \
-            "Deepseek Harness EAC_${VERSION}_macos-arm64.dmg" \
-            SHA256SUMS.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "Deepseek Harness EAC macOS（Apple Silicon arm64）v${VERSION}" \
-            --notes-file "$RUNNER_TEMP/notes.md"
-          echo "草稿 Release 创建完成："
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,url -q '"  name="+.name+"  draft="+(.isDraft|tostring)+"  url="+.url'
+          if [ "$EXISTING" = 1 ]; then
+            echo "目标 tag $TAG 已存在 → 仅追加 macOS 资产（不动标题与既有正文）"
+            gh release upload "$TAG" \
+              "Deepseek Harness EAC_${VERSION}_macos-arm64.app.zip" \
+              "Deepseek Harness EAC_${VERSION}_macos-arm64.dmg" \
+              SHA256SUMS-macos.txt \
+              --repo "$GITHUB_REPOSITORY" --clobber
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,url -q '"  已并入：name="+.name+"  draft="+(.isDraft|tostring)+"  url="+.url'
+          else
+            gh release create "$TAG" \
+              "Deepseek Harness EAC_${VERSION}_macos-arm64.app.zip" \
+              "Deepseek Harness EAC_${VERSION}_macos-arm64.dmg" \
+              SHA256SUMS-macos.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Deepseek Harness EAC macOS（Apple Silicon arm64）v${VERSION}" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+            echo "草稿 Release 创建完成："
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json name,isDraft,url -q '"  name="+.name+"  draft="+(.isDraft|tostring)+"  url="+.url'
+          fi
