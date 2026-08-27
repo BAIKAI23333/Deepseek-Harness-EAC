@@ -127,12 +127,46 @@ fn set_current_web_url(url: &str) {
 
 const DEFAULT_INNER_W: f64 = 1400.0;
 const DEFAULT_INNER_H: f64 = 900.0;
-const MIN_INNER_W: f64 = 800.0;
-const MIN_INNER_H: f64 = 560.0;
+/// 主窗允许的最小逻辑尺寸默认值（480×360：适配副屏窄屏，与浮窗下限一致）。
+/// 可用环境变量 DSH_WINDOW_MIN_W / DSH_WINDOW_MIN_H 覆盖（任意 >0 的有限值）。
+const MIN_INNER_W_DEFAULT: f64 = 480.0;
+const MIN_INNER_H_DEFAULT: f64 = 360.0;
 /// 无保存状态时首启尺寸相对 work area 的边距（逻辑像素）。
 const FIRST_RUN_MARGIN: f64 = 16.0;
 /// 恢复位置时保证可见的最小宽度（逻辑像素），防止窗口大半落在屏外。
 const MIN_VISIBLE_W: f64 = 80.0;
+
+/// 读取正浮点环境变量；缺失或非法（非数值 / ≤0 / 非有限）时回退 fallback。
+/// 供窗口边界覆盖（DSH_WINDOW_MIN_W/H、DSH_WINDOW_W/H）使用。
+fn env_positive_f64(name: &str, fallback: f64) -> f64 {
+    match std::env::var(name) {
+        Ok(v) => v
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|f| f.is_finite() && *f > 0.0)
+            .unwrap_or(fallback),
+        Err(_) => fallback,
+    }
+}
+
+/// 主窗允许的最小逻辑尺寸（默认 480×360，可用环境变量覆盖）。
+fn min_inner_w() -> f64 {
+    env_positive_f64("DSH_WINDOW_MIN_W", MIN_INNER_W_DEFAULT)
+}
+
+fn min_inner_h() -> f64 {
+    env_positive_f64("DSH_WINDOW_MIN_H", MIN_INNER_H_DEFAULT)
+}
+
+/// 无记忆时首启默认逻辑尺寸（默认 1400×900，可用环境变量覆盖）。
+fn default_inner_w() -> f64 {
+    env_positive_f64("DSH_WINDOW_W", DEFAULT_INNER_W)
+}
+
+fn default_inner_h() -> f64 {
+    env_positive_f64("DSH_WINDOW_H", DEFAULT_INNER_H)
+}
 
 #[derive(serde::Deserialize, serde::Serialize, Clone)]
 struct WindowState {
@@ -212,8 +246,10 @@ fn resolved_initial_bounds(
 ) -> (f64, f64, Option<(f64, f64)>, bool) {
     let primary = app.primary_monitor().ok().flatten();
 
-    let mut out_w = DEFAULT_INNER_W;
-    let mut out_h = DEFAULT_INNER_H;
+    let min_w = min_inner_w();
+    let min_h = min_inner_h();
+    let mut out_w = default_inner_w();
+    let mut out_h = default_inner_h();
     let mut out_pos: Option<(f64, f64)> = None;
     let mut out_max = false;
 
@@ -222,8 +258,12 @@ fn resolved_initial_bounds(
         let ct = p.work_area();
         let work_w = ct.size.width as f64 / scale;
         let work_h = ct.size.height as f64 / scale;
-        out_w = out_w.min(work_w - FIRST_RUN_MARGIN).max(MIN_INNER_W);
-        out_h = out_h.min(work_h - FIRST_RUN_MARGIN).max(MIN_INNER_H);
+        // 窄屏收敛：配置的下限若超过 work area（OS 级最小尺寸大于屏幕可用
+        // 范围），窗口将永远无法完整显示 —— 以 work area 为实际下限（保底 1px）。
+        let eff_min_w = min_w.min(work_w - FIRST_RUN_MARGIN).max(1.0);
+        let eff_min_h = min_h.min(work_h - FIRST_RUN_MARGIN).max(1.0);
+        out_w = out_w.min(work_w - FIRST_RUN_MARGIN).max(eff_min_w);
+        out_h = out_h.min(work_h - FIRST_RUN_MARGIN).max(eff_min_h);
         let cx = ct.position.x as f64 + (ct.size.width as f64 - out_w * scale) / 2.0;
         let cy = ct.position.y as f64 + (ct.size.height as f64 - out_h * scale) / 2.0;
         out_pos = Some((cx / scale, cy / scale));
@@ -245,8 +285,12 @@ fn resolved_initial_bounds(
             let wa = m.work_area();
             let work_w = wa.size.width as f64 / mscale;
             let work_h = wa.size.height as f64 / mscale;
-            let w = st.w.clamp(MIN_INNER_W, work_w.max(MIN_INNER_W));
-            let h = st.h.clamp(MIN_INNER_H, work_h.max(MIN_INNER_H));
+            // 与首启一致：恢复下限不越过目标显示器 work area（极窄副屏上
+            // 已保存的窄尺寸原样恢复，不会被 OS 下限弹回而显示不全）。
+            let eff_min_w = min_w.min(work_w - FIRST_RUN_MARGIN).max(1.0);
+            let eff_min_h = min_h.min(work_h - FIRST_RUN_MARGIN).max(1.0);
+            let w = st.w.clamp(eff_min_w, work_w.max(eff_min_w));
+            let h = st.h.clamp(eff_min_h, work_h.max(eff_min_h));
             let min_vis = MIN_VISIBLE_W.max(w * 0.4);
             let x = (st.x as f64)
                 .max(wa.position.x as f64)
@@ -1593,7 +1637,7 @@ fn main() {
                                     )
                                     .title("Deepseek Harness EAC")
                                     .inner_size(sim_w, sim_h)
-                                    .min_inner_size(MIN_INNER_W, MIN_INNER_H)
+                                    .min_inner_size(min_inner_w(), min_inner_h())
                                     .decorations(false)
                                     // 关闭窗口级 drag&drop handler，放行页面 HTML5 拖拽
                                     //（否则图片/文件拖不进输入框，页面 dragover/drop 收不到）。
@@ -1692,7 +1736,7 @@ fn main() {
                                         )
                                         .title("Deepseek Harness EAC")
                                         .inner_size(sim_w, sim_h)
-                                        .min_inner_size(MIN_INNER_W, MIN_INNER_H)
+                                        .min_inner_size(min_inner_w(), min_inner_h())
                                         .decorations(false);
                                         if let Some((px, py)) = sim_pos {
                                             builder = builder.position(px, py);
