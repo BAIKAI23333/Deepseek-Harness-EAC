@@ -95,6 +95,21 @@ See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/rel
 - Unsigned and not notarized (personal use): if Gatekeeper blocks the first launch, right-click → Open.
 - Client self-update is disabled in the macOS v1 build (no macOS assets upstream yet); dsh agent (kernel) updates are fully retained.
 
+### Linux (x64)
+
+> The Linux desktop build is continuously built and verified by our CI (Ubuntu 22.04) and released on its own version line (latest maintained release: v4.4.0). Windows/macOS share the unified v5.1.0 line; folding Linux into the unified line is planned once the release pipeline is ready.
+
+| File | Description |
+| --- | --- |
+| [.deb (Debian/Ubuntu)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | Installs and launches from the app menu |
+| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | No installation: `chmod +x` and run |
+| [.rpm (Fedora/openSUSE)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
+| [.pacman (Arch)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
+
+- Dependencies: Tauri 2 with webkit2gtk-4.1 (Debian-family build deps such as `libwebkit2gtk-4.1-dev` mirror the repo CI); the AppImage bundles its own runtime, built against an Ubuntu 22.04 baseline.
+- Desktop config directory: `~/.config/deepseek-harness-eac` (XDG); dsh data stays in `~/.dsh` (shared with the CLI).
+- System integration (clipboard via `wl-copy`/`xclip`/`xsel`, notifications via `notify-send`) depends on your desktop environment; when missing, the capability honestly degrades to "external-dependency" rather than pretending to work.
+
 ### First Run
 
 1. Launch the app. After the startup animation, the DeepSeek Harness Web UI loads automatically in a native window and is accessible only through the local loopback interface.
