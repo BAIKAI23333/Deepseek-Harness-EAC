@@ -3,6 +3,7 @@
 // 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
 import fs = require('node:fs');
 import path = require('node:path');
+import { execFileSync } from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-host-directory-picker-native', 'lib', 'index.js');
@@ -348,12 +349,48 @@ function patchMenuSubmenuScroll(file?: string): boolean {
   return true;
 }
 
+// VCP 渲染引擎补丁（dsh-raw-html 插件）：把 v6-inject 稳定区模块注入
+// dsh-web-frontend 的 dist bundle（index-*.js）。事实源是 vendored 的
+// install-v6.cjs（assets/plugins/dsh-raw-html/patch/），传 bundle 路径参数。
+// 幂等：bundle 已含 window.__vcpStable 则跳过；锚点不匹配安全中止（上游
+// 版本变化不写坏文件）；install-v6.cjs 自带备份（*.bak-installv6-*）。
+function patchVcpRawHtml(): void {
+  const installer = path.join(root, 'assets', 'plugins', 'dsh-raw-html', 'patch', 'install-v6.cjs');
+  const assetsDir = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-web-frontend', 'dist', 'assets');
+  if (!fs.existsSync(installer)) {
+    console.log('[patch-deps] dsh-raw-html install-v6.cjs 不存在，跳过');
+    return;
+  }
+  if (!fs.existsSync(assetsDir)) {
+    console.log('[patch-deps] dsh-web-frontend dist 不存在，跳过');
+    return;
+  }
+  const bundle = fs.readdirSync(assetsDir).find((f) => /^index-[\w-]+\.js$/.test(f));
+  if (!bundle) {
+    console.log('[patch-deps] dsh-web-frontend 未找到 index-*.js bundle，跳过');
+    return;
+  }
+  const target = path.join(assetsDir, bundle);
+  const src = fs.readFileSync(target, 'utf8');
+  if (src.includes('window.__vcpStable')) {
+    console.log('[patch-deps] VCP 渲染引擎补丁已应用，跳过');
+    return;
+  }
+  try {
+    execFileSync(process.execPath, [installer, target], { stdio: 'inherit' });
+    console.log('[patch-deps] 已应用 VCP 渲染引擎补丁（dsh-raw-html）: ' + bundle);
+  } catch (e) {
+    console.log('[patch-deps] VCP 渲染引擎补丁失败（锚点不匹配或异常），不阻断: ' + (e && (e as Error).message || e));
+  }
+}
+
 function main(): void {
   patchPickerWorker();
   patchSettingsNavScroll();
   patchOptionalEscalationFields();
   patchAgentPresetMenu();
   patchMenuSubmenuScroll();
+  patchVcpRawHtml();
 }
 
 // 单测 require 本模块时不应改写真实 node_modules；仅命令行直接执行时跑 main()。

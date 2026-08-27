@@ -24,6 +24,9 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
 排队消费对 update 类任务遗漏）；本地链接（link:/file:）插件从上游接管更新
 （junction EPERM 处理 + 失败回滚）；24h 发布保护期过滤；市场自身经官方
 内置插件更新自更新）→
+内置 VCP 视觉通感插件（dsh-raw-html 0.6.0：消息 HTML 渲染为界面 +
+KaTeX / Mermaid / 内置 7 款 OFL 书法字体，默认开启；渲染引擎前端补丁由
+patch-deps 随构建自动应用；profile bundles 播种让存量用户升级即默认启用）→
 5.0.0（本版：桌面壳切换 Tauri —— Rust L1 壳 + Node sidecar L2 + dsh 内核
 零改动 L3 三层架构（ADR 0002）；安装包体积 241MB → 155MB；全功能桥
 （窗口/托盘/浮窗隔离/退出策略/救援链/快捷方式维护）；自更新接线（客户端

@@ -23,8 +23,14 @@ const updater = require('../../updater') as {
 };
 
 export const DESKTOP_PROFILE = 'web-desktop';
-// 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app）。
-export const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app'];
+// 内置 bundle 插件（随应用内置分发、默认随 bundles 加载）：bundle 机制
+// 驱动 host + client 注入，overlay 配套行会被 removeBundledRowDuplicates
+// 去重（见 companion-sync.ts），故必须走 bundles 而非 patch 行。
+// dsh-raw-html —— VCP 视觉通感协议插件（消息 HTML 渲染为界面）。
+export const BUNDLED_BUILTIN_PLUGINS = ['dsh-raw-html'];
+// 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app），
+// 外加内置 bundle 插件；仅用于全新 profile 播种。
+export const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...BUNDLED_BUILTIN_PLUGINS];
 
 /** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
 export interface ProfileCtx {
