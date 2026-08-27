@@ -52,6 +52,9 @@ interface SettingsLike {
 
 export async function runClientUpdateFlow(manual: boolean): Promise<void> {
   if (mod.isQuitting()) return;
+  // macOS v1：上游 Release 无 macOS 资产，客户端更新整体关闭（恢复
+  // external-handoff 需上游发布 macOS 包，届时删除本守卫即可）。
+  if (mod.getPlatform() === 'darwin') return;
   if (clientUpdateBusy) {
     if (manual) await mod.showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
     return;
