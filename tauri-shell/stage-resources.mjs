@@ -217,7 +217,7 @@ console.log('[stage] 编译 TypeScript（tsc 就地产物）');
 execSync('npx tsc -p tsconfig.json', { cwd: dd, stdio: 'inherit' });
 
 console.log('[stage] sidecar 产物');
-for (const f of ['server.js', 'bridge.js', 'rescue-integration.js']) {
+for (const f of ['server.js', 'bridge.js', 'rescue-integration.js', 'phone-bridge.js']) {
   cpSync(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f));
 }
 

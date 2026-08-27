@@ -30,6 +30,81 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
 整树交换 + agent 更新 + 自动检查定时器）；安装器自动接管旧 Electron 版；
 新增 /update /about /wizard 壳页；便携版改 zip 分发；Electron 链路冻结
 保留为可回退救生索）→
+5.1.0（压缩频发修复：截断不再强制 retain-0 全量压缩 + pressure 阈值 +
+15s/代际冷却；better-sidebar 抽搐/hero 截断/模型菜单翻转修复）→
+5.1.0 修复批次（内部代号 5.1.1，本版：窗口大小/位置记忆与副屏适配；临时会话「插件自带 Key」输入
+修复；computer-use 批准问答卡 + /computer 幂等批准；400 瞬态自愈与压缩
+误报护栏；移除内置「第三方模型思考强度」插件；手机连接桥（LAN 配对 +
+白名单 RPC，手机端占位）；内置鲸鱼余额挂件与 AgentTeams（均默认关闭）。
+版本号字段保持 5.1.0，不引 5.1.1 —— 与 R13 产物命名规则一致）
+
+## 5.1.0 修复批次（内部代号 5.1.1）· 2026-08-27
+
+### 窗口：最小尺寸下调 + 大小/位置记忆（副屏适配）
+
+- 主窗最小尺寸 960×640 → **800×560**；首启尺寸按当前显示器工作区收敛
+  （不再固定 1400×900，窄副屏不再显示不全）。
+- 新增窗口状态持久化（`app_config_dir/window-state.json`）：关闭/移动/缩放
+  自动保存（800ms 节流 + 退出兜底），重启恢复尺寸、位置与最大化状态；
+  恢复时校验落在某显示器工作区内，越界自动 clamp（拼接屏拔插/分辨率变化
+  不再把窗口甩出屏幕）。
+
+### 临时会话：模式 2「插件自带 Key」输入修复
+
+- 重写侧边临时会话设置卡的 API Key / 模型 / 基址输入：草稿本地化 + 编辑中
+  快照回写不再覆盖正在输入的值；模式切换后字段按最新已存配置重新填充；
+  Key 落盘（settings.yaml，role(secret) 不回显）后显示「已保存」占位，
+  空串不再覆盖已存 Key；回车/失焦即存，卸载兜底写回。
+
+### computer-use：批准问答卡 + 幂等批准
+
+- 手动批准模式不再只抛错误：优先走官方「批准问答」（对话内弹出 允许/拒绝
+  卡，host approval 服务 + 客户端 PendingApproval 卡），允许本次放行；
+  拒绝/取消/服务不可用时给出一致提示并可回落 `/computer`。
+- `/computer` 由「开关」改为**幂等批准**（重复发送不误撤销；`/computer 撤销`
+  才撤销）——此前第二次输入会把第一次的批准悄悄撤掉，表现为「批准了但没
+  生效」。
+
+### 400 瞬态自愈 + 压缩误报护栏（dsh-compact）
+
+- **溢出误报护栏**：供应商报 CONTEXT_WINDOW_EXCEEDED 但实测 tokens 远低于
+  窗口一半时，判定为供应商侧误报——不压缩、不重试，原样保留 400 详情
+  （此前免费服务商一次 400 就把整个会话历史无谓压掉）。
+- **瞬态 400 自愈**：非溢出的 400（INVALID_REQUEST）且本会话此前已有成功
+  回答时，自动原样重试一次（60s 内最多 2 次），自动复现「继续说一句才好」；
+  设置页可关（`retryTransientBadRequest`，支持按模型覆盖）。
+- 400 失败详情（供应商响应体摘要）写入 harness.log，不再「莫名其妙」。
+
+### 移除内置「第三方模型思考强度」插件
+
+- 按用户要求移除 `dsh-third-party-thinking`（reasoning_effort 控件）：
+  目录删除 + COMPANION_PLUGINS 摘除 + onboarding 列表移除；存量 profile
+  的 patch 行/包副本由 `RETIRED_BUILTIN_PLUGINS` 退役清理兜底。
+
+### 手机连接桥（接口预留，手机端开发中）
+
+- sidecar 新增 `phone-bridge`（Tauri 壳）：0.0.0.0 LAN HTTP，一次
+  5min TTL 配对 token（timingSafeEqual）+ 桌面端批准（仅回环）+ 一年期
+  `dsh_mobile` cookie（HttpOnly + SameSite=Strict）+ 白名单 RPC 转发
+  （9 项会话/模型/工作区动作，`/api/rpc`）；手机访问显示「开发中」占位页
+  （保留 PWA meta 与接入点）；断开即轮换 token 使手机端失效。
+- 新增内置插件 `dsh-phone`：设置页「连接手机」——二维码（内置
+  qrcode-generator）、配对状态、批准/拒绝/断开。
+- 已分析上游 dsh-desktop「手机能力」本质：扫码配对 + 白名单 RPC 续聊桥，
+  **非** scrcpy 类屏幕远控。
+
+### 内置插件两枚（均默认关闭，用户自行开启）
+
+- `dsh-whale-widget`（MeteorNOX/DeepSeek-Balance-Whale-Widget，MIT）：
+  DeepSeek 余额小鲸鱼挂件（余额/今日已用/每轮消耗，右下角常驻）。
+- `@nanmicoder/dsh-agent-teams`（MIT）：多智能体团队协作（队长/子代理/
+  依赖任务 DAG/活动面板）。
+
+### 验证
+
+- `npm test` 全量 **724 用例 719 通过 0 失败**（新增压缩护栏、computer-use
+  批准流、手机桥、注册表/契约测试 20+ 项）；Tauri 壳 `cargo check` 通过；
+  stage-resources → tauri build → make-portable 打包链路复验。
 
 ## [5.0.0] · 2026-08-23
 

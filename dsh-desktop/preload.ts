@@ -62,6 +62,17 @@ const dshDesktop = {
     open: (sessionId: string): Promise<unknown> => ipcRenderer.invoke('chrome:float-window', { action: 'open', sessionId }),
     close: (): void => ipcRenderer.send('float:close'),
   },
+  // 手机连接桥（5.1.1，Tauri 壳专用）：LAN 配对 + 白名单 RPC + 手机端占位页。
+  // 键集与 bridge.ts 一致（契约锁定）。Electron 开发壳不承载该通道，拒绝并
+  // 提示走 Tauri 桌面壳；实际部署为 Tauri 壳时由 bridge.ts 提供真实实现。
+  phoneBridge: {
+    start: (): Promise<unknown> => Promise.reject(new Error('phoneBridge 仅在 Tauri 桌面壳可用')),
+    stop: (): Promise<unknown> => Promise.reject(new Error('phoneBridge 仅在 Tauri 桌面壳可用')),
+    status: (): Promise<unknown> => Promise.reject(new Error('phoneBridge 仅在 Tauri 桌面壳可用')),
+    decide: (): Promise<unknown> => Promise.reject(new Error('phoneBridge 仅在 Tauri 桌面壳可用')),
+    disconnect: (): Promise<unknown> => Promise.reject(new Error('phoneBridge 仅在 Tauri 桌面壳可用')),
+    onStatus: (): (() => void) => () => {},
+  },
   // 插件保护中心（plugin-guard.js）：快照 / 回滚 / 体检 / 修复 / 事故报告。
   // 设置页「插件保护」分区（dsh-plugin-shield 插件）从这里驱动主进程引擎。
   guard: {

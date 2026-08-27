@@ -41,7 +41,6 @@ const RECOMMENDED_PLUGIN_IDS = new Set([
   'dsh-session-manager',
   'conversation-tweaks',
   'prompt-custom',
-  'third-party-thinking',
   'offpeak',
 ]);
 
