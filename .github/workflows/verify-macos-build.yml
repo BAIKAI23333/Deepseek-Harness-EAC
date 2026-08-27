@@ -77,9 +77,11 @@ jobs:
         shell: bash
         run: |
           set -eu
-          tree="tauri-shell/staged-resources/dsh-desktop"
+          stash="tauri-shell/staged-resources"
+          tree="$stash/dsh-desktop"
+          # stage-resources 的 sidecar 产物在 staged-resources/sidecar/（与 dsh-desktop 平级）
+          test -f "$stash/sidecar/server.js" || { echo "缺 $stash/sidecar/server.js"; exit 1; }
           test -f "$tree/vendor/node/node" && test -x "$tree/vendor/node/node" || { echo "vendor node 缺失或不可执行"; exit 1; }
-          test -f "$tree/sidecar/server.js" || { echo "staged-resources 顶层缺 sidecar/server.js"; exit 1; }
           test -d "$tree/assets/plugins/computer-user" && { echo "computer-user 插件未被裁剪"; exit 1; }
           test -d "$tree/assets/plugins/dsh-dafeiyu" && { echo "dsh-dafeiyu 插件未被裁剪"; exit 1; }
           test -d "$tree/assets/agent-presets" && { echo "agent-presets 未被裁剪"; exit 1; }
