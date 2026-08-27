@@ -62,6 +62,7 @@ On top of the official foundation, EAC embraces community creations — skins, p
 ### Requirements
 
 - Windows 10/11 (x64)
+- macOS 13+ (Apple Silicon / arm64; desktop edition)
 - No pre-installed Node.js or other runtime required
 
 ### Windows
@@ -79,6 +80,20 @@ See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/rel
 > 💡 **Upgrading**: just download and run the newest installer above over your existing install.
 > Plugins, skins, sessions and settings are preserved: data lives in
 > `%APPDATA%\Deepseek Harness EAC\` and `~/.dsh`, untouched by the upgrade.
+
+### macOS (Apple Silicon / arm64)
+
+> The macOS desktop build shares the same version and codebase as Windows/Linux and is published under the same [v5.1.0 Release](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v5.1.0).
+
+| File | Description | Size |
+| --- | --- | --- |
+| [Disk image .dmg](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.dmg) | Mount and drag into Applications | ~136 MB |
+| [App bundle .app.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.app.zip) | Unzip and run directly | ~157 MB |
+| [SHA256SUMS-macos.txt](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/SHA256SUMS-macos.txt) | macOS asset checksums | — |
+
+- Desktop config directory: `~/Library/Application Support/deepseek-harness-eac/`; dsh data stays in `~/.dsh` (shared with the CLI).
+- Unsigned and not notarized (personal use): if Gatekeeper blocks the first launch, right-click → Open.
+- Client self-update is disabled in the macOS v1 build (no macOS assets upstream yet); dsh agent (kernel) updates are fully retained.
 
 ### First Run
 
@@ -311,7 +326,7 @@ Nine skins come from the community project [dsh-web-ui](https://github.com/zhu10
 
 ### Contributors
 
-Thanks to every contributor:
+Thanks to every contributor — special thanks to [@CharlesAQ](https://github.com/CharlesAQ) for the macOS desktop port ([PR #234](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/234)): the darwin branches of the Tauri shell, the platform adapter layer, darwin resource staging & pruning, and the `.app`/`.dmg` packaging configuration that brought EAC to Apple Silicon for the first time.
 
 <p align="center">
   <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">
