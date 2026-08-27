@@ -74,22 +74,19 @@
 ;      taskkill /T 按镜像名整树终结（node sidecar / dsh web 均为子孙进程，
 ;      一并结束释放句柄）；进程不存在时退出码非零，属预期，不视为失败。
 
-; 结束进程：单次 taskkill 同时终结两个镜像名（Tauri 壳 + 旧 Electron 壳），
-; 减少一次全进程枚举扫描。/T 整树终结（node sidecar / WebView2 子孙一并
-; 结束，释放被占文件句柄）；进程不存在时退出码非零，属预期。返回码 0 表示
-; 确有进程被结束——仅此时才需等待句柄异步释放，全新安装直接跳过固定延迟。
+!macro DSH_KillAppExe EXENAME
+  DetailPrint "DSH EAC: 结束运行中的 ${EXENAME} 进程树（升级需独占安装文件）"
+  nsExec::ExecToLog 'taskkill /F /T /IM "${EXENAME}"'
+  Pop $R1
+!macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  DetailPrint "DSH EAC: 结束运行中的进程树（升级需独占安装文件）"
-  nsExec::ExecToLog 'taskkill /F /T /IM "dsh-eac-shell.exe" /IM "Deepseek Harness EAC.exe"'
-  Pop $R1
-  ${If} $R1 == 0
-    ; 确有进程被结束：句柄异步释放，给文件系统一点缓冲（避免解压撞锁）。
-    ; 仅在必要时等待，全新安装（无运行进程）直接跳过，省去固定延迟。
-    Sleep 1000
-  ${Else}
-    DetailPrint "DSH EAC: 未检测到运行中的进程，跳过结束等待"
-  ${EndIf}
+  ; 先杀进程再接管：旧壳运行中时其卸载器删不动被占用文件，宠物插件
+  ; webm 等资源锁不释放则解压同样报「不能打开要写入的文件」。
+  !insertmacro DSH_KillAppExe "dsh-eac-shell.exe"
+  !insertmacro DSH_KillAppExe "Deepseek Harness EAC.exe"
+  ; 句柄异步释放，给文件系统一点缓冲（NSIS 原生 Sleep，不产生网络行为）。
+  Sleep 2000
   ; 三个候选键名 × HKCU/HKLM 双 hive：覆盖
   ;   - Electron 时代（productName 键 / com.deepseek.dsh.desktop 键，含
   ;     perMachine 安装残留在 HKLM 的情况）；
