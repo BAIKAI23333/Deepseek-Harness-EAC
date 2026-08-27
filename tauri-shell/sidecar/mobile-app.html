@@ -34,7 +34,6 @@ footer{flex:none;background:#161b22;border-top:1px solid #232b36;padding:8px 10p
 .inputrow{display:flex;gap:8px;align-items:flex-end}
 textarea{flex:1;resize:none;background:#1c2128;border:1px solid #2b333d;border-radius:12px;color:#e8eaed;font-family:inherit;font-size:15px;line-height:1.4;padding:9px 11px;max-height:120px;min-height:40px;outline:none}
 .send{flex:none;border:none;background:#2f6fce;color:#fff;border-radius:12px;width:44px;height:40px;font-size:15px;cursor:pointer}
-.send:disabled{opacity:.45}
 .send.stop{background:#8a3a3a}
 .toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:#2a3340;color:#e8eaed;border-radius:10px;padding:9px 16px;font-size:13px;max-width:80vw;display:none;z-index:9}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;z-index:10;align-items:flex-end}
@@ -111,16 +110,27 @@ function relTime(ms) {
 function showUnpaired() {
   stopPoll();
   $('ftr').style.display = 'none'; $('modelBtn').style.display = 'none';
-  $('empty').innerHTML = '尚未与桌面配对或配对已断开。<br>请在电脑端「设置 → 连接手机」重新扫码配对。';
-  $('empty').style.display = 'block';
-  $('main').innerHTML = ''; $('main').appendChild($('empty'));
+  showEmpty('尚未与桌面配对或配对已断开。<br>请在电脑端「设置 → 连接手机」重新扫码配对。');
+}
+
+/* empty 态统一入口：清空 main 后挂回 #empty（#empty 初始即 main 的子节点） */
+function showEmpty(text) {
+  var e = $('empty');
+  e.innerHTML = text;
+  $('main').innerHTML = '';
+  $('main').appendChild(e);
+  e.style.display = 'block';
+  return e;
+}
+function hideEmpty() {
+  var e = $('empty');
+  if (e.parentNode === $('main')) e.style.display = 'none';
 }
 
 /* ---------- 页面 A：会话列表 ---------- */
 function loadList() {
   banner(null);
-  $('empty').style.display = 'block'; $('empty').textContent = '正在加载会话…';
-  $('main').innerHTML = ''; $('main').appendChild($('empty'));
+  showEmpty('正在加载会话…');
   rpc('session.list').then(function (v) { renderList(v.items || []); }).catch(function (e) {
     if (e.message === 'not paired') return;
     $('empty').textContent = '加载失败：' + e.message;
@@ -130,11 +140,9 @@ function loadList() {
 function renderList(items) {
   $('main').innerHTML = '';
   if (!items.length) {
-    var e = $('empty'); e.textContent = '还没有会话。点右上角「＋」新建一个。';
-    $('main').appendChild(e); e.style.display = 'block';
+    showEmpty('还没有会话。点右上角「＋」新建一个。');
     return;
   }
-  $('empty').style.display = 'none';
   for (var i = 0; i < items.length; i++) {
     var it = items[i];
     var card = document.createElement('div');
@@ -182,6 +190,20 @@ function startPoll() {
   }, 2000);
 }
 
+// 抽取内容块：texts 为正文/思考文本，tools 为工具调用描述。user 消息取
+// texts（textOf 语义），assistant 消息三类型各自归位（foldEvent 语义）。
+function blockParts(blocks) {
+  var texts = [], tools = [];
+  for (var i = 0; i < blocks.length; i++) {
+    var b = blocks[i];
+    if (b.type === 'text' && b.text) texts.push(b.text);
+    else if (b.type === 'reasoning' && b.text) texts.push('💭 ' + b.text.split('\n').slice(0, 2).join(' ').slice(0, 120) + (b.text.length > 120 ? '…' : ''));
+    else if (b.type === 'tool-call' || b.type === 'tool_use' || b.type === 'toolCall') tools.push('🔧 ' + (b.name || b.toolName || '工具调用'));
+  }
+  return { texts: texts, tools: tools };
+}
+function textOf(content) { return blockParts(content || []).texts.join('\n'); }
+
 function foldEvent(ev) {
   // 返回 {kind:'user'|'assistant'|'tool'|'skip', text, meta}；渲染规则见 SPEC §4.4
   var e = ev.event || {};
@@ -194,24 +216,27 @@ function foldEvent(ev) {
     var msg = d.message || d;
     var blocks = msg.content || [];
     if (!blocks.length) return null;
-    var parts = [], tools = [];
-    for (var i = 0; i < blocks.length; i++) {
-      var b = blocks[i];
-      if (b.type === 'text' && b.text) parts.push(b.text);
-      else if (b.type === 'reasoning' && b.text) parts.push('💭 ' + b.text.split('\n').slice(0, 2).join(' ').slice(0, 120) + (b.text.length > 120 ? '…' : ''));
-      else if (b.type === 'tool-call' || b.type === 'tool_use' || b.type === 'toolCall') tools.push('🔧 ' + (b.name || b.toolName || '工具调用'));
-    }
-    if (!parts.length && !tools.length) return null;
-    return { kind: 'assistant', text: parts.join('\n\n'), tools: tools, seq: e.seq };
+    var p = blockParts(blocks);
+    if (!p.texts.length && !p.tools.length) return null;
+    return { kind: 'assistant', text: p.texts.join('\n\n'), tools: p.tools, seq: e.seq };
   }
   if (e.type === 'tool/result') return { kind: 'tool', text: '工具结果', seq: e.seq };
   return null;
 }
-function textOf(content) {
-  var out = [];
-  var blocks = content || [];
-  for (var i = 0; i < blocks.length; i++) if (blocks[i].type === 'text' && blocks[i].text) out.push(blocks[i].text);
-  return out.join('\n');
+
+// 逆扫事件流判定运行态:最近一个 turn/end → 未运行；turn/start → 运行中。
+function scanRunning(flat) {
+  var running = false;
+  for (var i = flat.length - 1; i >= 0; i--) {
+    var t = flat[i].event && flat[i].event.type;
+    if (t === 'turn/end') break;
+    if (t === 'turn/start') { running = true; break; }
+  }
+  return running;
+}
+function showRunning(running) {
+  state.running = running;
+  $('thinking').style.display = running && state.view === 'session' ? 'block' : 'none';
 }
 
 function loadHistory(reset) {
@@ -226,25 +251,14 @@ function loadHistory(reset) {
 function renderHistory(v, reset) {
   var evs = (v.events || []).filter(function (ev) { return foldEvent(ev) !== null; });
   state.hasMore = !!v.hasMore;
-  var running = false;
-  var seenStart = false;
   var flat = v.events || [];
-  for (var i = flat.length - 1; i >= 0; i--) {
-    var t = flat[i].event && flat[i].event.type;
-    if (t === 'turn/end') { seenStart = true; break; }
-    if (t === 'turn/start') { running = true; break; }
-  }
-  state.running = running;
-  $('thinking').style.display = running && state.view === 'session' ? 'block' : 'none';
+  showRunning(scanRunning(flat));
   if (reset) {
     state.oldestSeq = evs.length ? evs[0].event.seq : null;
     var last = flat.length ? flat[flat.length - 1].event.seq : 0;
     state.lastSeq = last;
-    $('main').innerHTML = '';
-    if (!evs.length) {
-      var e = $('empty'); e.textContent = '暂无消息，发第一条试试。';
-      $('main').appendChild(e); e.style.display = 'block';
-    }
+    if (!evs.length) { showEmpty('暂无消息，发第一条试试。'); }
+    else { $('main').innerHTML = ''; }
     for (var k = 0; k < evs.length; k++) appendMsg(evs[k]);
     $('main').scrollTop = $('main').scrollHeight;
     updateSend();
@@ -264,14 +278,7 @@ function refreshTail() {
   rpc('session.history', { sessionId: state.sessionId, maxMessages: state.pageSize }).then(function (v) {
     var flat = v.events || [];
     var last = flat.length ? flat[flat.length - 1].event.seq : 0;
-    var running = false, seenEnd = false;
-    for (var i = flat.length - 1; i >= 0; i--) {
-      var t = flat[i].event && flat[i].event.type;
-      if (t === 'turn/end') { seenEnd = true; break; }
-      if (t === 'turn/start') { running = true; break; }
-    }
-    state.running = running;
-    $('thinking').style.display = running && state.view === 'session' ? 'block' : 'none';
+    showRunning(scanRunning(flat));
     if (last > state.lastSeq) {
       var fresh = [];
       for (var k = 0; k < flat.length; k++) {
@@ -280,8 +287,7 @@ function refreshTail() {
       }
       state.lastSeq = last;
       if (state.oldestSeq === null && flat.length) state.oldestSeq = flat[0].event.seq;
-      var emptyEl = $('empty');
-      if (emptyEl.parentNode === $('main')) emptyEl.style.display = 'none';
+      hideEmpty();
       for (var m = 0; m < fresh.length; m++) appendMsg(fresh[m]);
       $('main').scrollTop = $('main').scrollHeight;
     }
@@ -368,7 +374,6 @@ function pickModel() {
     var d = document.createElement('div'); d.className = 'empty'; d.textContent = e.message; panel.appendChild(d);
   });
 }
-function pickPreset() { /* v1 不提供预设切换入口 */ }
 
 /* ---------- 事件接线 ---------- */
 $('back').onclick = backToList;

@@ -13,79 +13,33 @@
 // win.start-dragging（WebView2 无 -webkit-app-region），5s 心跳，页面异常上报。
 // 拖入文件路径（getPathForFile）返回 ''，与浏览器打开 WebUI 时一致，插件自带降级。
 
-interface BridgeFrame { jsonrpc: string; id?: number; method: string; params?: unknown }
-type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
-
 (function () {
-  var WS_URL = (window as any).__DSH_BRIDGE_WS__ || 'ws://127.0.0.1:19873/ws';
   var BAR_ID = '__dsh_desktop_chrome__';
   var BAR_HEIGHT = 36;
   var FLOAT_BAR_ID = '__dsh_desktop_floatbar__';
   var FLOAT_BAR_HEIGHT = 24;
 
-  var seq = 0;
-  var pending: { [id: number]: BridgePending } = {};
-  var ws: WebSocket | null = null;
-  var wsReady = false;
+  // 回环 WS JSON-RPC 客户端（单源：assets/ws-jsonrpc-client.js，Rust 壳在
+  // initialization_script 序列中先注入本桥）。connect/queue/call/重连逻辑
+  // 只存在于单源文件；这里只做钩子接线与语义别名。
   var notifyHooks: ((method: string, params: any) => void)[] = [];
   var readyHooks: ((info: any) => void)[] = [];
-  var queue: BridgeFrame[] = [];
-
-  function rawSend(obj: BridgeFrame): void {
-    try { if (ws) ws.send(JSON.stringify(obj)); } catch (e) { /* 断线由重连兜底 */ }
-  }
-
-  // fire-and-forget（Electron ipcRenderer.send 语义）：不等回复，断了就丢。
-  function send(method: string, params?: unknown): void {
-    if (wsReady) rawSend({ jsonrpc: '2.0', method: method, params: params || {} });
-  }
-
-  // invoke 语义（ipcRenderer.invoke）：Promise + 超时。
-  function call(method: string, params?: unknown, timeoutMs?: number): Promise<any> {
-    return new Promise(function (resolve, reject) {
-      var id = ++seq;
-      pending[id] = { resolve: resolve, reject: reject };
-      if (!wsReady) { queue.push({ jsonrpc: '2.0', id: id, method: method, params: params || {} }); }
-      else rawSend({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
-      setTimeout(function () {
-        if (pending[id]) {
-          delete pending[id];
-          reject(new Error('bridge call timeout: ' + method));
-        }
-      }, timeoutMs || 30000);
-    });
-  }
-
-  function connect(): void {
-    ws = new WebSocket(WS_URL);
-    ws.onopen = function () {
-      wsReady = true;
-      while (queue.length) rawSend(queue.shift() as BridgeFrame);
+  var rpc = (window as any).__DSH_WS_RPC__({
+    onOpen: function () {
       call('chrome.init', {}).then(function (info) {
         try { readyHooks.forEach(function (h) { h(info); }); } catch (e) { /* 页面回调异常不断桥 */ }
       }).catch(function () { /* chrome.init 不可用不致命 */ });
-    };
-    ws.onmessage = function (ev: MessageEvent) {
-      var msg: any; try { msg = JSON.parse(ev.data); } catch (e) { return; }
-      if (msg.id != null && pending[msg.id]) {
-        var r = pending[msg.id]!; delete pending[msg.id];
-        if (msg.error) r.reject(new Error(msg.error.message || 'rpc error'));
-        else r.resolve(msg.result);
-      } else if (msg.method) {
-        // 通知帧：win.maximized / dsh.balance / boot.web-ready …
-        try { notifyHooks.forEach(function (h) { h(msg.method, msg.params); }); } catch (e) { /* 同上 */ }
-      }
-    };
-    ws.onclose = function () {
-      wsReady = false;
-      setTimeout(connect, 1500);
-    };
-    ws.onerror = function () { try { if (ws) ws.close(); } catch (e) { /* 重连由 onclose 驱动 */ } };
-  }
+    },
+  });
+  rpc.onNotify(function (method: string, params: any): void {
+    try { notifyHooks.forEach(function (h) { h(method, params); }); } catch (e) { /* 同上 */ }
+  });
 
+  // fire-and-forget（ipcRenderer.send 语义）：不等回复，断了就丢。
+  function send(method: string, params?: unknown): void { rpc.send(method, params); }
+  // invoke 语义（ipcRenderer.invoke）：Promise + 超时。
+  function call(method: string, params?: unknown, timeoutMs?: number): Promise<any> { return rpc.call(method, params, timeoutMs); }
   function onNotify(fn: (method: string, params: any) => void): void { notifyHooks.push(fn); }
-
-  window.addEventListener('DOMContentLoaded', function () { connect(); });
 
   // ---------------------------------------------------------------------------
   // window.dshDesktop（键集与 preload.js:26-127 一致；契约测试锁定）

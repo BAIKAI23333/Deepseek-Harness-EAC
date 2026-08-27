@@ -62,6 +62,7 @@
 ### 系统要求
 
 - Windows 10/11（x64）
+- macOS 13+（Apple Silicon / arm64，桌面版）
 - 无需预装 Node.js 或任何其他运行时
 
 ### Windows
@@ -80,6 +81,35 @@
 > - 直接下载上方最新安装包覆盖安装即可；
 > - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
 >   与 `~/.dsh`，升级过程不触碰。
+
+### macOS（Apple Silicon / arm64）
+
+> macOS 桌面版与 Windows/Linux 同源同版本，随 [v5.1.0 Release](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v5.1.0) 一同发布。
+
+| 文件 | 说明 | 大小 |
+| --- | --- | --- |
+| [安装镜像 .dmg](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.dmg) | 双击挂载后拖入 Applications | ~136 MB |
+| [应用包 .app.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.app.zip) | 解压后直接运行 | ~157 MB |
+| [校验和 SHA256SUMS-macos.txt](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/SHA256SUMS-macos.txt) | macOS 资产 SHA256 | — |
+
+- 桌面配置目录：`~/Library/Application Support/deepseek-harness-eac/`；dsh 数据仍在 `~/.dsh`（与 CLI 共享，会话互通）。
+- 未签名、未公证（个人自用定位）：首次打开若被 Gatekeeper 拦截，右键 →「打开」。
+- 客户端自更新在 macOS v1 暂不提供（上游 Release 暂无 macOS 资产）；dsh agent（内核）更新完整保留。
+
+### Linux（x64）
+
+> Linux 桌面端由 CI（Ubuntu 22.04）持续构建与验证，以独立版本线发布（最近维护版 v4.4.0）。Windows/macOS 走统一版本线（当前 v5.1.0），Linux 并入统一版本线待发布管线就绪后补发。
+
+| 文件 | 说明 |
+| --- | --- |
+| [.deb（Debian/Ubuntu）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | 安装后可从应用菜单启动 |
+| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | 免安装：`chmod +x` 后直接运行 |
+| [.rpm（Fedora/openSUSE）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
+| [.pacman（Arch）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
+
+- 依赖：Tauri 2 + webkit2gtk-4.1（debian 系安装 `libwebkit2gtk-4.1-dev` 等构建依赖见仓库 CI）；AppImage 自带运行时，构建基线 Ubuntu 22.04。
+- 桌面配置目录：`~/.config/deepseek-harness-eac`（XDG）；dsh 数据仍在 `~/.dsh`（与 CLI 共享）。
+- 剪贴板等系统集成依赖桌面环境的 `wl-copy`/`xclip`/`xsel`，通知依赖 `notify-send`；缺失时对应能力自动降级为「外部依赖」，不伪装成功。
 
 ### 首次使用
 
@@ -198,10 +228,12 @@ node make-portable.mjs           # 便携 zip（可选）→ target/release/port
 cd dsh-desktop
 npm install
 npm run fetch-runtime
-npm run dist             # 构建 portable + NSIS 安装包 → dist/
+# 打包（Tauri 三段链，产出入 tauri-shell/target/release/）
+node ../tauri-shell/stage-resources.mjs     # 装配 staged-resources
+cd ../tauri-shell
+npx -y @tauri-apps/cli@2 build              # → bundle/nsis/*-setup.exe（含 sidecar 运行树）
+node make-portable.mjs                      # → portable/*-portable.zip + SHA256SUMS.txt
 ```
-
-> 网络受限时：Electron 镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 
 </details>
 
@@ -244,27 +276,26 @@ node ../update-smoke.js  # 自更新链路冒烟（mock 发布源 + 目录树交
 ### 目录结构
 
 ```
-dsh-desktop/                  # Electron 桌面端
-├── main.js                   # Electron 主进程
+dsh-desktop/                  # Node/TS 后端 + 数据面（Tauri 壳的后端运行时）
 ├── updater.js                # 官方 dsh agent 更新引擎
 ├── client-updater.js         # 客户端本体自更新引擎
 ├── balance.js                # DeepSeek 余额查询
 ├── session-watcher.js        # 会话完成监听
 ├── plugin-guard.js           # 插件保护中心引擎（快照/回滚/体检/修复/守护启动/事故报告）
 ├── profile-module-heal.js    # profile 模块遮蔽自愈（真实目录 + pnpm 链接）
-├── preload.js                # 沙箱预加载
-├── assets/                   # 加载页、更新进度页、图标、皮肤、配套插件
+├── assets/                   # 恢复中心页、手机桥、单源 WS 客户端、图标、皮肤、配套插件
 │   ├── skins/                # 10 款内置 Web UI 皮肤
-│   └── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch
-│                             # 内置社区插件：dsh-webui-market / dsh-tool-vision
-│                             # / dsh-soul-md / dsh-web-mobile-fix
-│                             # （含 vendor 与自包含运行时依赖，随仓库分发）
+│   ├── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
+│   │                         # / dsh-easy-setup / dsh-skin-switch
+│   │                         # 内置社区插件：dsh-webui-market / dsh-tool-vision
+│   │                         # / dsh-soul-md / dsh-web-mobile-fix
+│   │                         # （含 vendor 与自包含运行时依赖，随仓库分发）
+│   └── ws-jsonrpc-client.js  # 桌面窗 ↔ sidecar 的 WS JSON-RPC 客户端（单源）
 ├── scripts/                  # 构建与开发辅助脚本
-├── build/icon.png            # electron-builder 图标
 ├── vendor/                   # 内置 node.exe / npm CLI（不入库）
-├── electron-builder.yml      # 打包配置
-└── dist/                     # 构建产物（不入库，发布到 Releases）
+└── lib/                      # L2 业务服务层 / 恢复中心 / 扩展宿主（.ts 源，tsc 就地编译）
+tauri-shell/                  # Tauri v2 壳：Rust（main.rs）+ sidecar（server/bridge/phone-bridge）
+│                             # + stage-resources / make-portable 打包链
 openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
 research/                     # 第三方微信/桥接协议调研资料
 ```
@@ -348,6 +379,8 @@ research/                     # 第三方微信/桥接协议调研资料
 ### 贡献者
 
 感谢每一位贡献者：
+
+特别致谢 [@CharlesAQ](https://github.com/CharlesAQ) —— macOS 桌面移植（[PR #234](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/234)）：Tauri 壳 darwin 分支、平台适配层、darwin 资源装配与裁剪、`.app`/`.dmg` 打包配置，让 EAC 首次跑上 Apple Silicon。
 
 <p align="center">
   <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">

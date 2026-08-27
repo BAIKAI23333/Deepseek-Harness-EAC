@@ -7,11 +7,13 @@
 import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
+import crypto = require('node:crypto');
 import { updCtx, APP_ROOT } from './runtime-paths';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './profile';
 import { ensureGuard } from './guard-box';
 import { applySessionManageFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
+import { writeFileAtomic } from '../atomic-json.js';
 // 未类型化依赖（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
   loadSettings(c: ReturnType<typeof updCtx>): { removedPlugins?: unknown };
@@ -212,10 +214,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 冲突，故默认启用而非原插件的 disabled）。纯客户端实现（host 半边 no-op）。
   // 独立发布：https://github.com/jing-hy/dsh-file-drop-eac（issue #141）。
   { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
-  // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
-  // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
-  // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
-  { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom', dir: 'dsh-settings-nav-custom' },
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
   // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
@@ -320,19 +318,7 @@ export function builtinPluginSourceDir(dirName: string): string {
 // 默认全部以 disabled: true 注册（不启用任何皮肤），由「设置 → 皮肤」切换。
 export const SKINS_DIR = path.join(APP_ROOT, 'assets', 'skins');
 
-export function readJsonFile(file: string): Record<string, unknown> | null {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
-}
-
-// 拷贝一个插件包目录到 profile node_modules（按包名 scope 落位，幂等）。
-// 插件包复制（vnext-absorb Phase 3）：戳记/拷贝/完整性判定收编到
-// lib/plugin-copy.ts —— 戳记 {v,f,b}→{v,f,b,h}（FNV-1a 滚动哈希，捕获同字节
-// 就地改写）+ 单遍走树 + 进程内源戳缓存 + 目标完整性判定缓存（同进程内
-// 第二次 sync 免全量走树）。行为契约不变：companion-copy-integrity 锁定的
-// 「源戳记一致但目标文件缺失 → 重拷」语义保留（pluginCopyIsComplete 缓存按
-// 目标顶层 mtime 失效）。re-export 保持既有消费方（plugin-ops / 契约测试）
-// 零改动。
-import { copyPluginPackage } from '../plugin-copy.js';
+import { copyPluginPackage, readJsonFile } from '../plugin-copy.js';
 
 export {
   COPY_STAMP,
@@ -341,6 +327,7 @@ export {
   pluginStampOf,
   pluginCopyIsComplete,
   copyPluginPackage,
+  readJsonFile,
 } from '../plugin-copy.js';
 
 // pnpm（dsh plugin add / 插件市场）hoist 进 profile node_modules 的
@@ -372,6 +359,13 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 5.1.1：按用户要求移除内置「第三方模型思考强度」插件
   //（reasoning_effort 控件）。老 profile 的 patch 行/包副本由退役清理兜底。
   { id: 'third-party-thinking', name: '@deepseek-ai/dsh-third-party-thinking' },
+  // dsh-tool-vision 自 4.5.0 起被 picturereader 取代但从未列入退役清单：
+  // 老 profile 残留的行+包副本会在设置页注册一张「视觉模型」卡，其
+  // settings 命名空间在新内核上失效，点开即空白页。
+  { id: 'tool-vision', name: 'dsh-tool-vision' },
+  // 按用户要求移除「普通/高级」分栏（nav-custom 是该分栏唯一写入者，
+  // 见 test/settings-groups-standdown.test.ts 的单写者契约改判）。
+  { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -382,9 +376,7 @@ export function retireRemovedBuiltinPlugins(profileDirP: string): void {
       const text = fs.readFileSync(patchFile, 'utf8');
       const patched = removePluginFromPatch(text, p.id);
       if (patched !== text) {
-        const tmp = patchFile + '.tmp';
-        fs.writeFileSync(tmp, patched, 'utf8');
-        fs.renameSync(tmp, patchFile);
+        writeFileAtomic(patchFile, patched);
         ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
       }
     } catch (err) {
@@ -425,10 +417,15 @@ function safeModeActive(): boolean {
   }
 }
 
-// 退役清理的「升级对齐门控」（issue #74）：删除性手术只在应用版本变化后的
-// 首次启动执行一次 —— 升级时清掉上一版本退役插件残留；同一版本内用户
-// 手动恢复/调整的插件树（管理页开关、市场安装的同类包）不再被每次启动
-// 强制改写。settings 键 pluginTreeAlignedVersion 记录已对齐的应用版本。
+// 退役清理的「升级对齐门控」（issue #74）：删除性手术只在「应用版本变化」
+// 或「退役清单本身变化」（新增退役目标）后的首次启动执行一次 —— 升级时清掉
+// 上一版本退役插件残留，同一版本内用户手动恢复/调整的插件树（管理页开关、
+// 市场安装的同类包）不再被每次启动强制改写。settings 键 pluginTreeAlignedVersion
+// 记录已对齐的应用版本，pluginTreeRetiredListHash 记录已对齐的清单内容：
+// 只比对版本会让同版本内新列入的退役条目永远清不到（5.1.0 实测踩坑）。
+function retiredListHash(): string {
+  return crypto.createHash('sha256').update(JSON.stringify(RETIRED_BUILTIN_PLUGINS)).digest('hex');
+}
 function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
   let version = '';
   try {
@@ -444,14 +441,15 @@ function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
   try {
     const c = updCtx();
     const settings = updater.loadSettings(c) as Record<string, unknown>;
-    if (settings && settings.pluginTreeAlignedVersion === version) {
+    const hash = retiredListHash();
+    if (settings && settings.pluginTreeAlignedVersion === version && settings.pluginTreeRetiredListHash === hash) {
       ctx.log('boot', `已在本版本（${version}）对齐过内置插件树，跳过退役清理（用户调整优先）`);
       return;
     }
     retireRemovedBuiltinPlugins(profileDirP);
     const next = settings && typeof settings === 'object'
-      ? { ...settings, pluginTreeAlignedVersion: version }
-      : { pluginTreeAlignedVersion: version };
+      ? { ...settings, pluginTreeAlignedVersion: version, pluginTreeRetiredListHash: hash }
+      : { pluginTreeAlignedVersion: version, pluginTreeRetiredListHash: hash };
     updater.saveSettings(c, next);
     ctx.log('boot', `已在本版本（${version}）完成内置插件树对齐`);
   } catch (err) {

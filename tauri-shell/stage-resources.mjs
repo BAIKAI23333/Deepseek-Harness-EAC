@@ -25,14 +25,16 @@ if (targetPlatform !== 'win32' && targetPlatform !== 'linux') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
 
-// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 已废弃，不再打包）。
+// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 与其
+// 独享模块 error-detail / koffi-preflight / renderer-recovery / watchdog /
+// session-encoding-heal 已随壳退役，不再打包）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
-  'balance.js', 'session-watcher.js', 'session-encoding-heal.js', 'profile-module-heal.js',
+  'balance.js', 'session-watcher.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
-  'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
-  'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
-  'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
+  'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js',
+  'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js',
+  'shortcut-maintenance.js',
   'host-bootstrap.js',
 ];
 const LIB_DESKTOP = [
@@ -42,14 +44,14 @@ const LIB_DESKTOP = [
   'boot-server.js',
 ];
 const SCRIPTS = [
-  'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
-  'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
+  'patch-session-manage.js', 'plugin-manager-patch.js',
+  'onboarding.js', 'patch-deps.js',
 ];
 
 // vnext 隔离体系（vnext-absorb Phase 2）：sidecar require 的 lib/{state,log,
 // supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
 const LIB_VNEXT = [
-  'state.js', 'log.js', 'plugin-copy.js',
+  'state.js', 'log.js', 'plugin-copy.js', 'atomic-json.js',
   'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
   'supervisor/permissions.js', 'supervisor/incidents.js',
   'extension-host/manager.js', 'extension-host/bridge-server.js',
