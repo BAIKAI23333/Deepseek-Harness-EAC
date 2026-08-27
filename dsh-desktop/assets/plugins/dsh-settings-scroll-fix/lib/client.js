@@ -89,12 +89,15 @@ window.__ModuleLoader__.load({
 
     function discoverSettingsRoots() {
       const seeds = []
+      // Canonical, high-confidence anchors only. The settings UI renders under a
+      // `settings.*` slot (the left rail is `settings.section`), so we key off
+      // that plus an explicit opt-in marker. The old loose text/aria-label
+      // heuristics (any dialog, any element labelled "设置"/"Settings") used to
+      // over-match generic popovers, pickers and chat panels and force them to
+      // scroll — the reported "non-slidable interfaces now slide" bug.
       const selectors = [
         '[data-dsh-settings-root]',
         '[data-slot^="settings."]',
-        '[aria-label*="设置"]',
-        '[aria-label*="Settings"]',
-        '[role="dialog"]',
       ]
       for (const selector of selectors) {
         try {
@@ -104,16 +107,14 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const navigationSignals = []
-      for (const element of document.querySelectorAll('button, a, [role="tab"], [role="menuitem"], nav a, nav button')) {
-        const text = normalizedText(element)
-        if (text.length <= 32 && SETTINGS_LABELS.some(label => text.includes(label)) && isVisible(element)) {
-          navigationSignals.push(element)
+      // A dialog counts as a settings root ONLY when it genuinely embeds a
+      // settings slot (a settings modal). Plain dialogs are skipped.
+      try {
+        for (const dialog of document.querySelectorAll('[role="dialog"]')) {
+          if (dialog.querySelector('[data-slot^="settings."]') !== null) seeds.push(dialog)
         }
-      }
-      if (navigationSignals.length >= 1) {
-        const ancestor = commonAncestor(navigationSignals)
-        if (ancestor !== null) seeds.push(ancestor)
+      } catch {
+        // Ignore unsupported selectors in older Chromium builds.
       }
 
       const roots = []
@@ -145,10 +146,24 @@ window.__ModuleLoader__.load({
       if (rect.width < 50 || rect.height < 40) return -1
 
       const style = window.getComputedStyle(element)
+      const role = String(element.getAttribute('role') || '').toLowerCase()
+      // Only take over scrolling for areas the design already intended to scroll
+      // (the element constrains its overflow) or the settings nav rail itself.
+      // A plain `overflow: visible` layout container must NOT be forced to
+      // `overflow-y: auto` — that is what made unrelated, non-scrolling
+      // interfaces start sliding. The settings sidebar (`settings.section`, a
+      // NAV / navigation / tablist) stays scrollable either way.
+      const isNavLike =
+        role === 'navigation' || role === 'tablist' || element.tagName === 'NAV' ||
+        (typeof element.matches === 'function' && element.matches('[data-slot^="settings."]'))
+      const overflowConstrained =
+        style.overflowY === 'auto' || style.overflowY === 'scroll' ||
+        style.overflowY === 'hidden' || style.overflowY === 'clip'
+      if (!isNavLike && !overflowConstrained) return -1
+
       let score = Math.min(scrollHeight - clientHeight, 2000)
       if (style.overflowY === 'hidden' || style.overflowY === 'clip') score += 600
       if (style.overflowY === 'auto' || style.overflowY === 'scroll') score += 300
-      const role = String(element.getAttribute('role') || '').toLowerCase()
       if (role === 'navigation' || role === 'tablist') score += 400
       if (element.tagName === 'NAV') score += 500
       if (rootRect.width > 0 && rect.width < rootRect.width * 0.45) score += 120
@@ -188,6 +203,10 @@ window.__ModuleLoader__.load({
       let markedScrollables = new Set()
       let markedFlexItems = new Set()
       let animationFrame = 0
+      let lastRepairAt = 0
+      let lastRootsKey = ''
+      let lastFullScanAt = 0
+      let rootIdSeq = 0
       let disposed = false
 
       const syncMarks = (previousSet, nextSet, attribute) => {
@@ -200,21 +219,51 @@ window.__ModuleLoader__.load({
       const repair = () => {
         animationFrame = 0
         if (disposed) return
+        const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()
+        // Coalesce bursty mutations (boot / settings-open churn) into at most
+        // one scan per ~100ms so we never run the candidate scan in a tight
+        // per-frame loop. Imperceptible for the user, eliminates the jank.
+        if (now - lastRepairAt < 100) {
+          animationFrame = window.requestAnimationFrame(repair)
+          return
+        }
+        lastRepairAt = now
 
         const nextRoots = new Set(discoverSettingsRoots())
-        const nextScrollables = new Set()
-        const nextFlexItems = new Set()
-        for (const root of nextRoots) {
-          for (const candidate of collectScrollableCandidates(root)) {
-            nextScrollables.add(candidate)
-            let parent = candidate.parentElement
-            while (isElement(parent) && parent !== root) {
-              const display = window.getComputedStyle(parent).display
-              if (display === 'flex' || display === 'grid') nextFlexItems.add(parent)
-              parent = parent.parentElement
+        // Stable-root cache: during boot / settings-open churn the settings
+        // root's identity does not change, yet the MutationObserver fires
+        // constantly. Re-running the full-subtree candidate scan on every
+        // frame was the startup regression, so we only rescan when the root
+        // set actually changes or every ~2s (to pick up dynamically added
+        // scroll areas). The 100ms gate above already coalesces bursts.
+        const rootKey = [...nextRoots].map(r => {
+          if (r.__dssfId == null) r.__dssfId = ++rootIdSeq
+          return r.__dssfId
+        }).join(',')
+        const rootsChanged = rootKey !== lastRootsKey
+        const forceRescan = now - lastFullScanAt > 2000
+        let nextScrollables
+        let nextFlexItems
+        if (rootsChanged || forceRescan) {
+          nextScrollables = new Set()
+          nextFlexItems = new Set()
+          for (const root of nextRoots) {
+            for (const candidate of collectScrollableCandidates(root)) {
+              nextScrollables.add(candidate)
+              let parent = candidate.parentElement
+              while (isElement(parent) && parent !== root) {
+                const display = window.getComputedStyle(parent).display
+                if (display === 'flex' || display === 'grid') nextFlexItems.add(parent)
+                parent = parent.parentElement
+              }
             }
           }
+          lastFullScanAt = now
+        } else {
+          nextScrollables = markedScrollables
+          nextFlexItems = markedFlexItems
         }
+        lastRootsKey = rootKey
 
         syncMarks(markedRoots, nextRoots, ROOT_ATTR)
         syncMarks(markedScrollables, nextScrollables, SCROLL_ATTR)
