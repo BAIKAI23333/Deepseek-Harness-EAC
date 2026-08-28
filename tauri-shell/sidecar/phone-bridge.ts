@@ -28,6 +28,20 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365; // 一年
 
+// LAN 明网（http://192.168.x.x）是非安全上下文：`crypto.randomUUID`（Chrome 92+
+// 起）只在安全上下文暴露，手机端拿到的是 undefined。内核浏览器端用它生成
+// RpcId / 消息 id（dsh-client-connection），一崩就是全部 RPC 失败 —— 会话与
+// 工作区列表全空、退回「选择工作区」冷启动、目录选择弹「crypto.randomUUID
+// is not a function」。桥在 HTML 响应最前面注入 polyfill（getRandomValues 在
+// 非安全上下文可用），内核源码不动。仅注入未压缩的 text/html。
+const RANDOMUUID_POLYFILL =
+  '<script>if(typeof crypto!=="undefined"&&typeof crypto.randomUUID!=="function"){'
+  + 'crypto.randomUUID=function(){var b=crypto.getRandomValues(new Uint8Array(16));'
+  + 'b[6]=(b[6]&0x0f)|0x40;b[8]=(b[8]&0x3f)|0x80;'
+  + 'var h="";for(var i=0;i<16;i++)h+=(b[i]+256).toString(16).slice(1);'
+  + 'return h.slice(0,8)+"-"+h.slice(8,12)+"-"+h.slice(12,16)+"-"+h.slice(16,20)+"-"+h.slice(20);};}'
+  + '</script>';
+
 export interface PhoneBridgeOptions {
   getWebUrl: () => string | null;
   log: (message: string) => void;
@@ -302,6 +316,21 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             delete headers['content-encoding'];
             res.writeHead(up.statusCode ?? 200, { ...headers, 'content-encoding': 'gzip', vary: 'accept-encoding' });
             up.pipe(zlib.createGzip()).pipe(res);
+          } else if (!isUnaryJson && contentType.includes('text/html') && up.headers['content-encoding'] === undefined) {
+            // HTML 页面：注入 crypto.randomUUID polyfill（见 RANDOMUUID_POLYFILL 注释）。
+            const chunks: Buffer[] = [];
+            up.on('data', (chunk) => chunks.push(chunk as Buffer));
+            up.on('end', () => {
+              let body = Buffer.concat(chunks).toString('utf8');
+              const headMatch = /<head[^>]*>/i.exec(body);
+              const injectAt = headMatch ? (headMatch.index + headMatch[0].length) : 0;
+              body = body.slice(0, injectAt) + RANDOMUUID_POLYFILL + body.slice(injectAt);
+              const payload = Buffer.from(body, 'utf8');
+              const headers = { ...up.headers };
+              headers['content-length'] = String(Buffer.byteLength(payload));
+              res.writeHead(up.statusCode ?? 200, headers);
+              res.end(payload);
+            });
           } else {
             res.writeHead(up.statusCode ?? 200, up.headers);
             up.pipe(res);

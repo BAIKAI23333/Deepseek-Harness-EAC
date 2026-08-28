@@ -218,7 +218,7 @@ window.__ModuleLoader__.load({
               }
             }
           }
-          return h("div", { className: "__ph_qr" }, h("canvas", { width: size, height: size }));
+          return h("div", { className: "__ph_qr" }, h("img", { src: canvas.toDataURL("image/png"), width: size, height: size, alt: "配对二维码" })); // 修复：画好的内容转 dataURL 上 img（旧版挂空 canvas 恒白；直挂 DOM 节点在 React 下非法会炸分区）
         } catch (e) {
           return h("span", { className: "__ph_hint", style: { color: "var(--dsw-alias-state-error-primary)" } }, String((e && e.message) || e));
         }
