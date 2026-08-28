@@ -5,7 +5,7 @@
 
 import path = require('node:path');
 import fs = require('node:fs');
-import cp = require('node:child_process');
+import os = require('node:os');
 
 export interface RescueHost {
   dshHome: string;
@@ -237,31 +237,73 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
 
 let rescueBusy = false;
 
-// 恢复页面（assets/recovery.html 语义）：日志打包到桌面并打开目录。
+type ArchiverLike = {
+  directory(source: string, destination: false): ArchiverLike;
+  finalize(): Promise<void> | void;
+  on(event: string, listener: (error: Error) => void): ArchiverLike;
+  pipe(output: NodeJS.WritableStream): NodeJS.WritableStream;
+};
+
+export function resolveLogsExportDir(
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+  fallbackDir: string,
+): string {
+  const candidates = [
+    env.DSH_LOG_EXPORT_DIR,
+    env.OneDriveConsumer && path.join(env.OneDriveConsumer, 'Desktop'),
+    env.OneDriveCommercial && path.join(env.OneDriveCommercial, 'Desktop'),
+    env.OneDrive && path.join(env.OneDrive, 'Desktop'),
+    path.join(homeDir, 'Desktop'),
+  ].filter((candidate): candidate is string => !!candidate);
+  return candidates.find((candidate) => {
+    try { return fs.statSync(candidate).isDirectory(); } catch { return false; }
+  }) || fallbackDir;
+}
+
+export async function createLogsArchive(logsDir: string, zipPath: string): Promise<void> {
+  const archiverPath = require.resolve('archiver', { paths: [DSH_DESKTOP_ROOT] });
+  const archiverFactory = require(archiverPath) as (format: 'zip', options: Record<string, unknown>) => ArchiverLike;
+  fs.mkdirSync(path.dirname(zipPath), { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiverFactory('zip', { zlib: { level: 9 } });
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        try { output.destroy(); } catch {}
+        try { fs.rmSync(zipPath, { force: true }); } catch {}
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    output.on('close', () => finish());
+    output.on('error', (error) => finish(error));
+    archive.on('error', (error) => finish(error));
+    archive.pipe(output);
+    archive.directory(logsDir, false);
+    Promise.resolve(archive.finalize()).catch((error: Error) => finish(error));
+  });
+}
+
+// 日志内容由 L2 打包；打开文件或目录仍由 L1 的原生动作负责。
 async function exportLogs(): Promise<Record<string, unknown>> {
   try {
     const logsDir = path.join(H.userDataDir, 'logs');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const zip = path.join(os_home_desktop(), 'dsh-eac-logs-' + stamp + '.zip');
     if (!fs.existsSync(logsDir)) return { ok: false, error: '日志目录不存在' };
-    await new Promise<void>((resolve) => {
-      const ps = cp.spawn('powershell', ['-NoProfile', '-Command',
-        `Compress-Archive -Path "${logsDir}\\*" -DestinationPath "${zip}" -Force`], { windowsHide: true, stdio: 'ignore' });
-      ps.on('exit', () => resolve());
-      ps.on('error', () => resolve());
-    });
-    if (!fs.existsSync(zip)) return { ok: false, error: '打包失败' };
-    cp.exec(`start "" "${path.dirname(zip).replace(/"/g, '')}"`, { windowsHide: true }, () => {});
+    const fallbackDir = path.join(H.userDataDir, 'diagnostics-exports');
+    const outDir = resolveLogsExportDir(process.env, os.homedir(), fallbackDir);
+    const zip = path.join(outDir, 'dsh-eac-logs-' + stamp + '.zip');
+    await createLogsArchive(logsDir, zip);
     H.log('rescue', '日志已导出: ' + zip);
     return { ok: true, path: zip };
   } catch (err) {
     return { ok: false, error: String(((err as Error).message) || err) };
   }
-}
-
-function os_home_desktop(): string {
-  const home = process.env.USERPROFILE || path.join('C:', 'Users', 'Public');
-  return path.join(home, 'Desktop');
 }
 
 /** 救援方法面（rescue 系列 / safe-mode / recovery 系列）—— server.ts 侧 Object.assign 进 methods。 */

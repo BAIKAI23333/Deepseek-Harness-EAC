@@ -17,6 +17,9 @@ tokio-tungstenite = "0.24"
 futures-util = "0.3"
 http = "1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 [[bin]]
 name = "dsh-eac-shell"
 path = "src/main.rs"

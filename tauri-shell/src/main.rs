@@ -444,18 +444,24 @@ async fn handle_shell_method(
                     Ok(Some(reply(Value::Null)))
                 }
                 "open-browser" => {
-                    if let Some(url) = current_web_url() {
-                        if let Err(error) = open_external(&url).await {
-                            eprintln!("[shell] open browser failed: {}", error);
-                        }
+                    let result = match current_web_url() {
+                        Some(url) => open_external(&url).await,
+                        None => Err("web URL unavailable".into()),
+                    };
+                    if let Err(error) = &result {
+                        eprintln!("[shell] open browser failed: {}", error);
                     }
-                    Ok(Some(reply(Value::Null)))
+                    Ok(Some(reply(native_action_result(result))))
                 }
                 "feedback" => {
-                    if let Err(error) = open_external("https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues").await {
+                    let result = open_external(
+                        "https://github.com/zouyuxuan122/Deepseek-Harness-EAC/issues",
+                    )
+                    .await;
+                    if let Err(error) = &result {
                         eprintln!("[shell] open feedback failed: {}", error);
                     }
-                    Ok(Some(reply(Value::Null)))
+                    Ok(Some(reply(native_action_result(result))))
                 }
                 _ => Err(()), // 其余菜单动作（更新/开关/导出/关于…）→ sidecar
             }
@@ -546,6 +552,13 @@ async fn open_external(url: &str) -> Result<(), String> {
     open_native_target(url).await
 }
 
+fn native_action_result(result: Result<(), String>) -> Value {
+    match result {
+        Ok(()) => serde_json::json!({"ok":true}),
+        Err(error) => serde_json::json!({"ok":false,"error":error}),
+    }
+}
+
 async fn run_bounded_command(mut command: Command, label: &str) -> Result<(), String> {
     command
         .stdout(Stdio::null())
@@ -566,15 +579,39 @@ async fn run_bounded_command(mut command: Command, label: &str) -> Result<(), St
 async fn open_native_target(target: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        let mut command = Command::new("cmd");
-        // start 是 cmd 内建命令；目标由 URL 校验或 L2 文件授权产生，Windows
-        // 文件名本身也不允许双引号。整段置于引号内，避免 URL 查询串的 `&`
-        // 被 cmd 当作命令分隔符。
-        let command_line = format!("start \"\" \"{}\"", target);
-        command.args(["/d", "/s", "/c", &command_line]);
-        command.as_std_mut().creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        return run_bounded_command(command, "cmd start").await;
+        use std::os::windows::ffi::OsStrExt;
+        use std::ptr::null;
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+        if target.contains('\0') {
+            return Err("native target contains NUL".into());
+        }
+        let operation: Vec<u16> = std::ffi::OsStr::new("open")
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let target_wide: Vec<u16> = std::ffi::OsStr::new(target)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        // ShellExecuteW uses the registered Windows association directly. This keeps
+        // Unicode paths and URL query strings out of cmd.exe parsing entirely.
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                target_wide.as_ptr(),
+                null(),
+                null(),
+                SW_SHOWNORMAL,
+            )
+        } as isize;
+        return if result > 32 {
+            Ok(())
+        } else {
+            Err(format!("ShellExecuteW failed with code {}", result))
+        };
     }
     #[cfg(target_os = "linux")]
     {

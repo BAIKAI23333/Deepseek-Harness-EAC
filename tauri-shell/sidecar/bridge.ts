@@ -244,6 +244,8 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   var menuOpen = false;
   var menuEl: HTMLElement | null = null;
   var maxBtn: HTMLElement | null = null;
+  var statusEl: HTMLElement | null = null;
+  var statusTimer: number | null = null;
   var state: any = { appVersion: '', agentVersion: '', agentSource: '', notifyOnTurnEnd: true, closeToTray: true, exitAction: 'ask', shortcutPolicy: 'auto' };
 
   var EXIT_ACTIONS = [
@@ -253,6 +255,23 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   ];
 
   function esc(s: any): string { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string; }); }
+
+  function actionErrorMessage(result: any, fallback: string): string | null {
+    if (result && result.ok === false) return String(result.error || fallback);
+    return null;
+  }
+
+  function showMenuStatus(message: string, isError: boolean): void {
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.setAttribute('data-error', isError ? '1' : '0');
+    statusEl.hidden = false;
+    if (statusTimer != null) window.clearTimeout(statusTimer);
+    statusTimer = window.setTimeout(function () {
+      if (statusEl) statusEl.hidden = true;
+      statusTimer = null;
+    }, isError ? 8000 : 5000);
+  }
 
   // WebView2 无 -webkit-app-region:drag —— mousedown 转发壳层 start_dragging。
   // 双击标题 = 最大化/还原（Electron 拖拽区默认行为对齐）。
@@ -324,7 +343,16 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
           return;
         }
         closeMenu();
-        dshDesktop.menu.action(act).catch(function () { /* 同上 */ });
+        dshDesktop.menu.action(act).then(function (result: any) {
+          var error = actionErrorMessage(result, '操作失败');
+          if (error) {
+            showMenuStatus(error, true);
+          } else if (act === 'export-logs' && result && result.path) {
+            showMenuStatus('日志已导出：' + String(result.path), false);
+          }
+        }).catch(function (error: any) {
+          showMenuStatus(String((error && error.message) || error || '操作失败'), true);
+        });
       });
     });
     (menuEl as HTMLElement).querySelectorAll('.dch-copy').forEach(function (btn) {
@@ -427,6 +455,12 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   color:var(--dsw-alias-label-primary,#eef2ff)}\
 #' + BAR_ID + ' .dch-btn:active{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(255,255,255,.14))}\
 #' + BAR_ID + ' .dch-close:hover{background:#e81123;color:#fff}\
+#' + BAR_ID + ' .dch-status{position:fixed;top:' + (BAR_HEIGHT + 8) + 'px;left:50%;transform:translateX(-50%);\
+  max-width:min(560px,calc(100vw - 32px));padding:8px 12px;z-index:2147483002;border-radius:8px;\
+  background:var(--dsw-alias-bg-layer-2,#182033);border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.12));\
+  color:var(--dsw-alias-label-primary,#eef2ff);box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:12px;\
+  line-height:18px;overflow-wrap:anywhere;pointer-events:none}\
+#' + BAR_ID + ' .dch-status[data-error="1"]{background:#4b1f25;border-color:#a94753;color:#fff0f1}\
 #' + BAR_ID + ' .dch-menu{position:fixed;top:' + (BAR_HEIGHT + 8) + 'px;right:8px;width:272px;z-index:2147483001;\
   box-sizing:border-box;padding:6px;\
   background:var(--dsw-alias-bg-layer-2,color-mix(in srgb,var(--dsw-alias-bg-base,#0b1220) 92%,white));\
@@ -486,6 +520,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
       <button class="dch-btn" data-act="max" title="最大化" aria-label="最大化">' + GLYPHS.max + '</button>\
       <button class="dch-btn dch-close" data-act="close" title="关闭" aria-label="关闭">' + GLYPHS.close + '</button>\
     </div>\
+    <div class="dch-status" role="status" aria-live="polite" hidden></div>\
     <div class="dch-menu" hidden></div>';
     document.body.appendChild(bar);
 
@@ -493,6 +528,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     var icon = bar.querySelector('.dch-icon') as HTMLImageElement | null;
     maxBtn = bar.querySelector('[data-act="max"]') as HTMLElement | null;
     menuEl = bar.querySelector('.dch-menu') as HTMLElement | null;
+    statusEl = bar.querySelector('.dch-status') as HTMLElement | null;
 
     var left = bar.querySelector('.dch-left');
     if (left) armDrag(left);
