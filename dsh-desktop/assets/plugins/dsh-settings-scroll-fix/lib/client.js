@@ -54,7 +54,7 @@ window.__ModuleLoader__.load({
       if (role !== 'dialog') return false
       const ariaModal = String(element.getAttribute('aria-modal') || '').toLowerCase()
       if (ariaModal !== 'true') return false
-      return element.querySelector(`[data-slot^="${SETTINGS_SLOT_PREFIX}"]`) !== null
+      return hasSettingsSlotDescendant(element)
     }
 
     function hasSettingsSlotDescendant(element) {
@@ -111,6 +111,8 @@ window.__ModuleLoader__.load({
       const seen = new Set()
 
       const tryPush = (elements) => {
+        if (!elements) return
+        if (!elements[Symbol.iterator]) elements = [elements]
         for (const el of elements) {
           if (!seen.has(el)) {
             seen.add(el)
