@@ -17,6 +17,7 @@ const root = join(fileURLToPath(new URL('..', import.meta.url)));
 test('boot-server applies the platform process-group spawn options', () => {
   const source = readFileSync(join(root, 'lib', 'desktop', 'boot-server.ts'), 'utf8');
   assert.match(source, /\.\.\.childProcessSpawnOptions\(\)/);
+  assert.doesNotMatch(source, /['"]--no-open['"]/);
   assert.deepEqual(childProcessSpawnOptions('linux'), { detached: true });
   assert.deepEqual(childProcessSpawnOptions('win32'), { detached: false });
 });

@@ -42,6 +42,8 @@ const RECOMMENDED_PLUGIN_IDS = new Set([
   'conversation-tweaks',
   'prompt-custom',
   'offpeak',
+  // VCP 视觉通感协议（dsh-raw-html）：消息 HTML 渲染为界面，默认勾选。
+  'dsh-raw-html',
 ]);
 
 /**

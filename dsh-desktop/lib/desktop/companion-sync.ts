@@ -9,7 +9,7 @@ import fs = require('node:fs');
 import os = require('node:os');
 import crypto = require('node:crypto');
 import { updCtx, APP_ROOT } from './runtime-paths';
-import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './profile';
+import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
 import { ensureGuard } from './guard-box';
 import { applySessionManageFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
@@ -129,6 +129,13 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
   // schemastery（已加入 app 闭包，见 package.json）。
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
+  // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：消息 HTML 渲染
+  // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）。EAC 集成通过
+  // conversation.chat.node 的 assistant-step slot 接管，不修改上游压缩 bundle。
+  // bundle 插件：
+  // 必须进 profile bundles（BUNDLED_BUILTIN_PLUGINS / DESKTOP_PROFILE_BUNDLES
+  // 播种），overlay 行会被 removeBundledRowDuplicates 去重，不可写 patch 行。
+  { id: 'dsh-raw-html', name: 'dsh-raw-html', dir: 'dsh-raw-html' },
   // Trae 风格对话回退：用户消息 hover 出「编辑并回退」，按上一完整回合
   // 分叉新会话（sessions.fork）并以编辑后内容重发（inputActions）。
   // 纯客户端实现，host 半边为 no-op。
@@ -276,6 +283,8 @@ export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: stri
   'dsh-session-manager': { npm: 'dsh-session-manager' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
+  // dsh-raw-html 是 EAC 托管适配版，不登记上游更新源，避免被原版 bundle
+  // 注入实现覆盖。上游升级必须先移植并通过 EAC slot 集成回归。
 };
 
 // ---------------------------------------------------------------------------
@@ -295,6 +304,45 @@ export function saveRemovedPluginIds(ids: Set<string>): void {
   const s = updater.loadSettings(c) as Record<string, unknown>;
   s.removedPlugins = Array.from(ids);
   updater.saveSettings(c, s);
+}
+
+/** 内置 bundle 插件播种（纯函数，可单测）：确保 profile package.json 的
+ *  dsh.profile.bundles 包含 BUNDLED_BUILTIN_PLUGINS。幂等：缺失则追加并写回
+ * （保持 JSON 缩进 2 + 尾换行，与 ensureDesktopProfileInit 出厂格式一致），
+ * 已有（用户市场安装 / dsh plugin add / 曾经播种过）则不动。返回变化标记与
+ * 播种后的 bundles 数组。失败不抛异常：返回 { changed: false, bundles: [] }。 */
+export function seedBundledPlugins(profileDir: string): { changed: boolean; bundles: unknown[] } {
+  let bundled: unknown[] = [];
+  try {
+    const pkgDsh = readJsonFile(path.join(profileDir, 'package.json'))?.dsh as Record<string, unknown> | undefined;
+    const prof = pkgDsh?.profile as Record<string, unknown> | undefined;
+    bundled = Array.isArray(prof?.bundles) ? prof.bundles : [];
+  } catch { bundled = []; }
+  const orig = bundled.slice();
+  let changed = false;
+  for (const bundleName of BUNDLED_BUILTIN_PLUGINS) {
+    if (!bundled.includes(bundleName)) { bundled.push(bundleName); changed = true; }
+  }
+  if (changed) {
+    try {
+      const pkgFile = path.join(profileDir, 'package.json');
+      const pkg = readJsonFile(pkgFile);
+      if (pkg && typeof pkg === 'object') {
+        const pkgRec = pkg as Record<string, unknown>;
+        const dsh = (pkgRec.dsh || (pkgRec.dsh = {})) as Record<string, unknown>;
+        const prof = (dsh.profile || (dsh.profile = {})) as Record<string, unknown>;
+        prof.bundles = bundled;
+        fs.writeFileSync(pkgFile, JSON.stringify(pkgRec, null, 2) + '\n');
+      } else {
+        changed = false;
+        bundled = orig;
+      }
+    } catch {
+      changed = false;
+      bundled = orig;
+    }
+  }
+  return { changed, bundles: bundled };
 }
 
 /** 把内置插件表 + 更新源注册表合并成 plugin-updater 的 sources 输入。 */
@@ -714,11 +762,20 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // 也有一行（syncCompanionPlugins 写的），整个插件树会以
     // “duplicate loader entry id” 崩溃。清掉 overlay 重复行（包内行保留）。
     let bundled: unknown[] = [];
+    // 内置 bundle 插件播种（DESKTOP_PROFILE_BUNDLES 只影响全新 profile，存量
+    // profile 的 bundles 在这里幂等补齐）：缺失则追加，已有（用户市场安装 /
+    // dsh plugin add / 曾经播种过）则不动；仅在有变化时写回。纯函数
+    // seedBundledPlugins 见本文件（可单测）。
     try {
-      const pkgDsh = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh as Record<string, unknown> | undefined;
-      const prof = pkgDsh?.profile as Record<string, unknown> | undefined;
-      bundled = Array.isArray(prof?.bundles) ? prof.bundles : [];
-    } catch { bundled = []; }
+      const seeded = seedBundledPlugins(profileDirP);
+      bundled = seeded.bundles;
+      if (seeded.changed) {
+        ctx.log('boot', '已播种内置 bundle 插件到 profile: ' + BUNDLED_BUILTIN_PLUGINS.join(', '));
+      }
+    } catch (err) {
+      bundled = [];
+      ctx.log('boot', '播种内置 bundle 插件失败: ' + String(((err as Error).message) || err));
+    }
     // 同一 entry id 被两处声明（bundle 的包内 patch + overlay 的配套行）会以
     // “duplicate loader entry id” 拖垮整个插件树。旧逻辑只按「包名 ∈ bundles」
     // 匹配，git/fork/link 安装的插件包名与配套行包名不符时永远删不掉（issue

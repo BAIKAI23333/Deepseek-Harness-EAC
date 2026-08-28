@@ -98,6 +98,9 @@ const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'ma
 const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
   startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
 };
+const credentialsHeal = require(path.join(DSH_DESKTOP_ROOT, 'credentials-format-heal.js')) as {
+  healCredentialsVersion(file: string, log: (tag: string, message: string) => void): { changed: boolean };
+};
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
 const desktopProfileFn = profileMod.desktopProfile as () => string;
@@ -333,10 +336,11 @@ say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
 vnextLog.setLogSink(log);
 vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
 
-// 前置文件树准备（= main.js boot() 在 startAndShowGuarded 之前的序列，摘除
-// GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽修复 → 构建
-// 产物回填。boot.start 与重启/恢复中心 retry-boot 共用。
+// 前置文件树准备：旧凭据格式迁移 → 市场排队 → 退役清理 → 配套插件/技能
+// 同步 → 模块遮蔽修复 → 构建产物回填。boot.start 与重启/恢复中心
+// retry-boot 共用。
 async function preBootSync(): Promise<void> {
+  credentialsHeal.healCredentialsVersion(path.join(dshHome, '.credentials.yaml'), log);
   await (marketMod.processPendingMarketOps as () => Promise<void>)();
   (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
   (companionSyncMod.syncCompanionPlugins as () => void)();
