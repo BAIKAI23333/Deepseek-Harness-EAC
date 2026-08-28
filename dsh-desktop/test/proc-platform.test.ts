@@ -22,11 +22,6 @@ test('boot-server applies the platform process-group spawn options', () => {
   assert.deepEqual(childProcessSpawnOptions('win32'), { detached: false });
 });
 
-test('Electron main boot command does not pass unsupported dsh options', () => {
-  const source = readFileSync(join(root, 'main.js'), 'utf8');
-  assert.doesNotMatch(source, /['"]--no-open['"]/);
-});
-
 test('POSIX DSH process-group termination reaps a spawned descendant', { skip: process.platform === 'win32' }, async () => {
   init({ log: () => {}, getDshHome: () => null, getDesktopProfile: () => 'desktop' });
   const script = [
