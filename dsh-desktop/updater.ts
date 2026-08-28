@@ -36,6 +36,13 @@ const NPM_STALL_MS = 300 * 1000;
 
 let activeProc: cp.ChildProcess | null = null;
 
+const { readJsonFile } = require('./lib/plugin-copy') as {
+  readJsonFile(file: string): Record<string, unknown> | null;
+};
+const { writeJsonAtomic } = require('./lib/atomic-json') as {
+  writeJsonAtomic(file: string, value: unknown): void;
+};
+
 // --- settings -------------------------------------------------------------
 
 interface UpdaterCtx {
@@ -48,12 +55,11 @@ interface UpdaterCtx {
 function settingsPath(ctx: UpdaterCtx): string { return path.join(ctx.userDataDir, 'settings.json'); }
 
 function loadSettings(ctx: UpdaterCtx): Record<string, any> {
-  try { return JSON.parse(fs.readFileSync(settingsPath(ctx), 'utf8')); }
-  catch { return {}; }
+  return readJsonFile(settingsPath(ctx)) ?? {};
 }
 
 function saveSettings(ctx: UpdaterCtx, s: Record<string, any>): void {
-  try { fs.writeFileSync(settingsPath(ctx), JSON.stringify(s, null, 2) + '\n'); }
+  try { writeJsonAtomic(settingsPath(ctx), s); }
   catch (err) { ctx.log('update', '保存 settings 失败: ' + (err as Error).message); }
 }
 
@@ -330,6 +336,11 @@ async function applyUpdate(ctx: UpdaterCtx, version: string, { onProgress = null
       const args: string[] = [
         'install', '--prefix', staging, PKG + '@' + version,
         '--save-exact', '--omit=dev', '--no-audit', '--no-fund', '--no-update-notifier',
+        // 绝不执行第三方构建脚本（与 plugin-updater 的安装语义对齐）：
+        // node-pty 等原生依赖的 prebuilds/ 已随包分发，本地 node-gyp 构建
+        // 在无 VS Build Tools / 网络受限环境会长时间静默（用户侧表现为
+        // 「卡 125/126」，换镜像源也无解），平台错配应走预编译产物而非现场编译。
+        '--ignore-scripts',
         '--loglevel=info',
       ];
       if (registry) args.push('--registry=' + registry);

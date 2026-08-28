@@ -7,13 +7,14 @@
 //   staged-resources/dsh-desktop/<Electron 时代的精确文件清单 + 生产 node_modules
 //                              + assets + vendor/node + vendor/npm>
 //
-// 用法：node stage-resources.mjs [--target=win32|linux] [--skip-npm]
+// 用法：node stage-resources.mjs [--target=win32|linux|darwin] [--skip-npm]
 
 import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
+import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dd = path.join(root, 'dsh-desktop');
@@ -21,35 +22,37 @@ const staged = path.join(root, 'tauri-shell', 'staged-resources');
 const skipNpm = process.argv.includes('--skip-npm');
 const targetArg = process.argv.find((arg) => arg.startsWith('--target='));
 const targetPlatform = targetArg ? targetArg.slice('--target='.length) : process.platform;
-if (targetPlatform !== 'win32' && targetPlatform !== 'linux') {
+if (targetPlatform !== 'win32' && targetPlatform !== 'linux' && targetPlatform !== 'darwin') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
 
-// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 已废弃，不再打包）。
+// 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 与其
+// 独享模块 error-detail / koffi-preflight / renderer-recovery / watchdog /
+// session-encoding-heal 已随壳退役，不再打包）。
 const ROOT_FILES = [
   'updater.js', 'client-updater.js', 'logger.js', 'plugin-updater.js',
-  'balance.js', 'session-watcher.js', 'session-encoding-heal.js', 'profile-module-heal.js',
+  'balance.js', 'session-watcher.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
-  'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js', 'error-detail.js',
-  'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js', 'koffi-preflight.js',
-  'renderer-recovery.js', 'watchdog.js', 'shortcut-maintenance.js',
+  'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js',
+  'bundle-integrity.js', 'credentials-format-heal.js', 'stable-port.js', 'stream-write-guard.js',
+  'shortcut-maintenance.js',
   'host-bootstrap.js',
 ];
 const LIB_DESKTOP = [
   'file-roots.js', 'proc.js', 'platform.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',
   'runtime-patches.js', 'companion-sync.js', 'plugin-ops.js', 'market.js',
   'shortcuts.js', 'junction-patrol.js', 'client-update.js', 'static-preview.js',
-  'boot-server.js',
+  'boot-server.js', 'feature-pack.js',
 ];
 const SCRIPTS = [
-  'koffi-preflight.cjs', 'patch-session-manage.js', 'plugin-manager-patch.js',
-  'onboarding.js', 'make-release-hashes.js', 'patch-deps.js',
+  'patch-session-manage.js', 'plugin-manager-patch.js',
+  'onboarding.js', 'patch-deps.js', 'feature-pack-cli.js',
 ];
 
 // vnext 隔离体系（vnext-absorb Phase 2）：sidecar require 的 lib/{state,log,
 // supervisor,extension-host,recovery-center} 编译产物 + 原生模块。
 const LIB_VNEXT = [
-  'state.js', 'log.js', 'plugin-copy.js',
+  'state.js', 'log.js', 'plugin-copy.js', 'atomic-json.js',
   'supervisor/registry.js', 'supervisor/state-machine.js', 'supervisor/installer.js',
   'supervisor/permissions.js', 'supervisor/incidents.js',
   'extension-host/manager.js', 'extension-host/bridge-server.js',
@@ -124,6 +127,38 @@ function pruneMuslPackages(nodeModules) {
   }
 }
 
+// node-pty 双二进制错配防护（issue #206）：lib/utils.js 的 loadNativeModule
+// 按 ['build/Release','build/Debug','prebuilds/<platform>-<arch>'] 顺序加载，
+// build/Release 里的 pty.node 若是历史残留/编译机产物（旧签名），会先于
+// prebuilds 被 require，终端首个 resize 即崩（Linux 实测，Windows 同构）。
+// 装配后把两份二进制做内容核对：不一致（或 reads 失败）直接删 build 目录，
+// 强制加载逻辑落到随包分发的 prebuilds 预编译产物；prebuilds 也缺失时
+// 保留 build（别无选择）并告警。
+function healNodePtyPlugin(nodeModules, platform, arch) {
+  const ptyDir = path.join(nodeModules, 'node-pty');
+  const buildDir = path.join(ptyDir, 'build');
+  if (!existsSync(buildDir)) return;
+  const buildRelease = path.join(buildDir, 'Release', 'pty.node');
+  const prebuilt = path.join(ptyDir, 'prebuilds', `${platform}-${arch}`, 'pty.node');
+  const hasBuild = existsSync(buildRelease);
+  const hasPre = existsSync(prebuilt);
+  if (!hasBuild) return;
+  if (!hasPre) {
+    console.warn(`[stage] node-pty prebuilds/${platform}-${arch} 缺失，保留 build/Release 兜底（构建机残留风险）`);
+    return;
+  }
+  try {
+    const a = readFileSync(buildRelease);
+    const b = readFileSync(prebuilt);
+    if (a.equals(b)) {
+      console.log('[stage] node-pty build/Release 与 prebuilds 一致，保留');
+      return;
+    }
+  } catch {}
+  console.log('[stage] node-pty build/Release 与 prebuilds 不一致，剔除 build 目录（强制走 prebuilds 预编译产物）');
+  rmSync(buildDir, { recursive: true, force: true });
+}
+
 function pluginEntrypoints(pkg) {
   const result = [];
   const add = (value) => {
@@ -185,7 +220,8 @@ console.log('[stage] 编译 TypeScript（tsc 就地产物）');
 execSync('npx tsc -p tsconfig.json', { cwd: dd, stdio: 'inherit' });
 
 console.log('[stage] sidecar 产物');
-for (const f of ['server.js', 'bridge.js', 'rescue-integration.js']) {
+// 5.2 起 mobile-app.html 退役（手机桥 = 完整 Web UI 反向代理，见 phone-bridge.ts）。
+for (const f of ['server.js', 'bridge.js', 'rescue-integration.js', 'phone-bridge.js']) {
   cpSync(path.join(root, 'tauri-shell', 'sidecar', f), path.join(staged, 'sidecar', f));
 }
 
@@ -213,6 +249,18 @@ mkdirSync(path.join(staged, 'dsh-desktop', 'scripts'), { recursive: true });
 for (const f of SCRIPTS) {
   copyRequired(path.join(dd, 'scripts', f), path.join(staged, 'dsh-desktop', 'scripts', f), '脚本');
 }
+// 功能包链路自检（copyRequired 保证源存在，这里校验"成对"装配）：
+// scripts/feature-pack-cli.js 与 lib/desktop/feature-pack.js 必须同时入包 ——
+// CLI 运行时 require ../lib/desktop/feature-pack，漏一个功能包页就整体不可用
+// （市场插件只能报"功能包 CLI 不可用"）。后续新增随包 CLI 照此成对补充。
+{
+  const cli = path.join(staged, 'dsh-desktop', 'scripts', 'feature-pack-cli.js');
+  const core = path.join(staged, 'dsh-desktop', 'lib', 'desktop', 'feature-pack.js');
+  if (existsSync(cli) !== existsSync(core)) {
+    throw new Error('[stage] 功能包链路装配不完整：feature-pack-cli.js 与 feature-pack.js 必须同时入包');
+  }
+  if (existsSync(cli)) console.log('[stage] 功能包链路自检通过（CLI + 核心）');
+}
 // package.json + lock 原样拷贝（npm ci 要求两者一致；--omit=dev 只装生产树）。
 // .npmrc（legacy-peer-deps）必须随行：内核包互相声明 peer，staged 目录里的
 // npm ci 若不带该配置会因 lock 缺 peer 闭包直接 EUSAGE 拒装（全新打包必踩）。
@@ -233,7 +281,7 @@ copyRequired(
   path.join(staged, 'dsh-desktop', 'vendor', 'node', runtimeName),
   `${targetPlatform} Node runtime`,
 );
-if (targetPlatform === 'linux') {
+if (targetPlatform === 'linux' || targetPlatform === 'darwin') {
   chmodSync(path.join(staged, 'dsh-desktop', 'vendor', 'node', runtimeName), 0o755);
 }
 if (existsSync(path.join(dd, 'vendor', 'npm'))) {
@@ -260,6 +308,18 @@ if (targetPlatform === 'linux') {
     { recursive: true, force: true },
   );
 }
+if (targetPlatform === 'darwin') {
+  console.log('[stage] 移除 Darwin 不可达的 Windows/Linux payload');
+  rmSync(path.join(staged, 'dsh-desktop', 'assets', 'plugins', 'computer-user'), { recursive: true, force: true });
+  rmSync(path.join(staged, 'dsh-desktop', 'assets', 'plugins', 'dsh-dafeiyu'), { recursive: true, force: true });
+  rmSync(path.join(staged, 'dsh-desktop', 'assets', 'agent-presets'), { recursive: true, force: true });
+  pruneDarwinPayloads(path.join(staged, 'dsh-desktop', 'assets'));
+  pruneNonDarwinPrebuilds(nmDest);
+  pruneDarwinPayloads(nmDest);
+}
+// node-pty 双二进制防护（issue #206）：全平台统一执行（Linux 分支已清除
+// 非 linux prebuilds，win 分支保留原 prebuilds）。
+healNodePtyPlugin(nmDest, targetPlatform, process.arch);
 writeStagedPlatformStamp(platformStamp, targetPlatform);
 
 // dsh-desktop 锚点补丁（patch-deps：可选升级字段 / picker 退出码 / 设置左栏滚动）——

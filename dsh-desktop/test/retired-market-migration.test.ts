@@ -25,10 +25,10 @@ test('all historical built-in markets are retired before unified-market sync', (
       `${id} must be removed during profile migration`);
   }
 
-  const cleanupCall = main.indexOf('retireRemovedBuiltinPlugins(desktopProfileDir());');
+  const cleanupCall = main.indexOf('retireRemovedBuiltinPluginsGated(desktopProfileDir());');
   const syncLoop = main.indexOf('for (const p of COMPANION_PLUGINS)', cleanupCall);
   assert.ok(cleanupCall !== -1 && syncLoop > cleanupCall,
-    'retired markets must be removed before companion plugins are synced');
+    'retired markets must be removed (version-gated) before companion plugins are synced');
 });
 
 test('retired market migration removes only the exact historical patch rows', () => {

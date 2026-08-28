@@ -7,11 +7,13 @@
 import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
+import crypto = require('node:crypto');
 import { updCtx, APP_ROOT } from './runtime-paths';
-import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit } from './profile';
+import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
 import { ensureGuard } from './guard-box';
 import { applySessionManageFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
+import { writeFileAtomic } from '../atomic-json.js';
 // 未类型化依赖（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
   loadSettings(c: ReturnType<typeof updCtx>): { removedPlugins?: unknown };
@@ -102,16 +104,38 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // 读屏 + 鼠标键盘自动化（Codex-style computer use，配 picturereader；纯本地）。
   { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
+  // 语音识别（仅 STT）：本地 sherpa-onnx SenseVoice + 自定义唤醒词 + 多轮交互，
+  // 识别文本回填输入框草稿。模型首次启动下载到 ~/.dsh/models/dsh-stt/。
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
   // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
   // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
   // 写 config 是双保险，healSoulMdPatchRow 另负责修复存量坏行。
   { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
   { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
+  // 视口钳制（文档级滚动根治）：html/body overflow:hidden + 稳定契约
+  // （data-phase/data-conversation-scroll）hero 居中兜底。纯客户端 CSS，
+  // 随内核页面加载 —— 桌面壳 / 浏览器 / 手机端三端同源生效，不再依赖
+  // 桌面壳垫片与 CSS Modules 哈希类（内核更新换哈希即失效的旧方案）。
+  { id: 'viewport-lock', name: 'dsh-viewport-lock', dir: 'dsh-viewport-lock' },
+  // 喵丝滑（Phant0Meow/dsh-meow-smooth 0.5.0，MIT）：手机端 UI 交互优化
+  // （输入框折叠/侧边栏手势/窄屏适配）+ 通知系统（页面卡片 / Web Push /
+  // webhook）+ 审计投影只读路由。5.2 起取代自研 mobile-app.html 续聊客户端
+  // —— 手机桥改为完整 Web UI 反向代理，手机直接获得真界面，本插件负责
+  // 移动端体验。host 半边依赖 web-push（已加入 app 闭包 + 插件宿主依赖
+  // 落位，缺省时优雅降级：仅系统推送不可用）。配置沿用上游出厂默认。
+  { id: 'meow-smooth', name: 'meow-smooth', dir: 'dsh-meow-smooth', config: { enabled: true } },
   // VSCode 风格右侧边栏（文件树 / 编辑器 / 终端 / Git，按会话隔离）。
   // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
   // schemastery（已加入 app 闭包，见 package.json）。
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
+  // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：消息 HTML 渲染
+  // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）。EAC 集成通过
+  // conversation.chat.node 的 assistant-step slot 接管，不修改上游压缩 bundle。
+  // bundle 插件：
+  // 必须进 profile bundles（BUNDLED_BUILTIN_PLUGINS / DESKTOP_PROFILE_BUNDLES
+  // 播种），overlay 行会被 removeBundledRowDuplicates 去重，不可写 patch 行。
+  { id: 'dsh-raw-html', name: 'dsh-raw-html', dir: 'dsh-raw-html' },
   // Trae 风格对话回退：用户消息 hover 出「编辑并回退」，按上一完整回合
   // 分叉新会话（sessions.fork）并以编辑后内容重发（inputActions）。
   // 纯客户端实现，host 半边为 no-op。
@@ -156,10 +180,21 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
   // 自定义注入提示词：整体替换/追加官方 persona，应用到 standard 预设。
   { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
-  // 第三方 OpenAI 兼容模型的 reasoning_effort 控件（字段名可自定义）。
-  { id: 'third-party-thinking', name: '@deepseek-ai/dsh-third-party-thinking' },
   // 侧边临时会话：浮窗追问、不写主会话、多种回答引擎（Ctrl+Shift+S）。
   { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
+  // 手机连接（5.2 方案）：LAN 扫码配对 + 完整 Web UI 反向代理（设置页「连接手机」）。
+  // 桥本体在 Tauri 壳 sidecar（phone-bridge.js）；手机端体验由内置喵丝滑
+  // （meow-smooth）提供，自研 mobile-app.html 续聊客户端已退役。
+  { id: 'dsh-phone', name: 'dsh-phone', dir: 'dsh-phone' },
+  // 新增强化功能入口分区（5.1.0 批次）：设置页「增强功能」——为默认关闭的
+  // 内置插件（余额小鲸鱼 / AgentTeams 等）提供一键启用/停用开关。
+  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles', dir: 'dsh-feature-toggles' },
+  // DeepSeek 余额小鲸鱼挂件（MeteorNOX/DeepSeek-Balance-Whale-Widget，MIT）。
+  // 默认关闭：用户到「设置 → 插件 → 管理」或「增强功能」分区自行启用（需 DEEPSEEK_API_KEY 凭据）。
+  { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget', disabled: true },
+  // 多智能体团队协作（NanmiCoder/dsh-agent-teams，MIT）：队长 + 子代理成员 +
+  // 依赖感知任务 DAG + 活动面板。默认关闭，由用户自行决定是否开启。
+  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams', disabled: true },
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
@@ -199,10 +234,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 冲突，故默认启用而非原插件的 disabled）。纯客户端实现（host 半边 no-op）。
   // 独立发布：https://github.com/jing-hy/dsh-file-drop-eac（issue #141）。
   { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
-  // 设置页左侧边栏自定义（V4.1，用户建议）：设置面板导航底部「自定义
-  // 边栏」按钮，按需显示/隐藏与排序 settings.section 导航项，
-  // localStorage 持久化，默认全显；纯客户端实现（host 半边 no-op）。
-  { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom', dir: 'dsh-settings-nav-custom' },
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
   // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
@@ -252,6 +283,8 @@ export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: stri
   'dsh-session-manager': { npm: 'dsh-session-manager' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
+  // dsh-raw-html 是 EAC 托管适配版，不登记上游更新源，避免被原版 bundle
+  // 注入实现覆盖。上游升级必须先移植并通过 EAC slot 集成回归。
 };
 
 // ---------------------------------------------------------------------------
@@ -271,6 +304,45 @@ export function saveRemovedPluginIds(ids: Set<string>): void {
   const s = updater.loadSettings(c) as Record<string, unknown>;
   s.removedPlugins = Array.from(ids);
   updater.saveSettings(c, s);
+}
+
+/** 内置 bundle 插件播种（纯函数，可单测）：确保 profile package.json 的
+ *  dsh.profile.bundles 包含 BUNDLED_BUILTIN_PLUGINS。幂等：缺失则追加并写回
+ * （保持 JSON 缩进 2 + 尾换行，与 ensureDesktopProfileInit 出厂格式一致），
+ * 已有（用户市场安装 / dsh plugin add / 曾经播种过）则不动。返回变化标记与
+ * 播种后的 bundles 数组。失败不抛异常：返回 { changed: false, bundles: [] }。 */
+export function seedBundledPlugins(profileDir: string): { changed: boolean; bundles: unknown[] } {
+  let bundled: unknown[] = [];
+  try {
+    const pkgDsh = readJsonFile(path.join(profileDir, 'package.json'))?.dsh as Record<string, unknown> | undefined;
+    const prof = pkgDsh?.profile as Record<string, unknown> | undefined;
+    bundled = Array.isArray(prof?.bundles) ? prof.bundles : [];
+  } catch { bundled = []; }
+  const orig = bundled.slice();
+  let changed = false;
+  for (const bundleName of BUNDLED_BUILTIN_PLUGINS) {
+    if (!bundled.includes(bundleName)) { bundled.push(bundleName); changed = true; }
+  }
+  if (changed) {
+    try {
+      const pkgFile = path.join(profileDir, 'package.json');
+      const pkg = readJsonFile(pkgFile);
+      if (pkg && typeof pkg === 'object') {
+        const pkgRec = pkg as Record<string, unknown>;
+        const dsh = (pkgRec.dsh || (pkgRec.dsh = {})) as Record<string, unknown>;
+        const prof = (dsh.profile || (dsh.profile = {})) as Record<string, unknown>;
+        prof.bundles = bundled;
+        fs.writeFileSync(pkgFile, JSON.stringify(pkgRec, null, 2) + '\n');
+      } else {
+        changed = false;
+        bundled = orig;
+      }
+    } catch {
+      changed = false;
+      bundled = orig;
+    }
+  }
+  return { changed, bundles: bundled };
 }
 
 /** 把内置插件表 + 更新源注册表合并成 plugin-updater 的 sources 输入。 */
@@ -307,19 +379,7 @@ export function builtinPluginSourceDir(dirName: string): string {
 // 默认全部以 disabled: true 注册（不启用任何皮肤），由「设置 → 皮肤」切换。
 export const SKINS_DIR = path.join(APP_ROOT, 'assets', 'skins');
 
-export function readJsonFile(file: string): Record<string, unknown> | null {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
-}
-
-// 拷贝一个插件包目录到 profile node_modules（按包名 scope 落位，幂等）。
-// 插件包复制（vnext-absorb Phase 3）：戳记/拷贝/完整性判定收编到
-// lib/plugin-copy.ts —— 戳记 {v,f,b}→{v,f,b,h}（FNV-1a 滚动哈希，捕获同字节
-// 就地改写）+ 单遍走树 + 进程内源戳缓存 + 目标完整性判定缓存（同进程内
-// 第二次 sync 免全量走树）。行为契约不变：companion-copy-integrity 锁定的
-// 「源戳记一致但目标文件缺失 → 重拷」语义保留（pluginCopyIsComplete 缓存按
-// 目标顶层 mtime 失效）。re-export 保持既有消费方（plugin-ops / 契约测试）
-// 零改动。
-import { copyPluginPackage } from '../plugin-copy.js';
+import { copyPluginPackage, readJsonFile } from '../plugin-copy.js';
 
 export {
   COPY_STAMP,
@@ -328,6 +388,7 @@ export {
   pluginStampOf,
   pluginCopyIsComplete,
   copyPluginPackage,
+  readJsonFile,
 } from '../plugin-copy.js';
 
 // pnpm（dsh plugin add / 插件市场）hoist 进 profile node_modules 的
@@ -356,6 +417,16 @@ export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'plugin-marketplace', name: '@deepseek-ai/dsh-plugin-marketplace' },
   { id: 'dsh-market-plugin', name: '@sanqi-normal/dsh-webui-market-plugin' },
   { id: 'zat-market', name: 'zat-dsh-engine' },
+  // 5.1.1：按用户要求移除内置「第三方模型思考强度」插件
+  //（reasoning_effort 控件）。老 profile 的 patch 行/包副本由退役清理兜底。
+  { id: 'third-party-thinking', name: '@deepseek-ai/dsh-third-party-thinking' },
+  // dsh-tool-vision 自 4.5.0 起被 picturereader 取代但从未列入退役清单：
+  // 老 profile 残留的行+包副本会在设置页注册一张「视觉模型」卡，其
+  // settings 命名空间在新内核上失效，点开即空白页。
+  { id: 'tool-vision', name: 'dsh-tool-vision' },
+  // 按用户要求移除「普通/高级」分栏（nav-custom 是该分栏唯一写入者，
+  // 见 test/settings-groups-standdown.test.ts 的单写者契约改判）。
+  { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -366,9 +437,7 @@ export function retireRemovedBuiltinPlugins(profileDirP: string): void {
       const text = fs.readFileSync(patchFile, 'utf8');
       const patched = removePluginFromPatch(text, p.id);
       if (patched !== text) {
-        const tmp = patchFile + '.tmp';
-        fs.writeFileSync(tmp, patched, 'utf8');
-        fs.renameSync(tmp, patchFile);
+        writeFileAtomic(patchFile, patched);
         ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
       }
     } catch (err) {
@@ -409,6 +478,47 @@ function safeModeActive(): boolean {
   }
 }
 
+// 退役清理的「升级对齐门控」（issue #74）：删除性手术只在「应用版本变化」
+// 或「退役清单本身变化」（新增退役目标）后的首次启动执行一次 —— 升级时清掉
+// 上一版本退役插件残留，同一版本内用户手动恢复/调整的插件树（管理页开关、
+// 市场安装的同类包）不再被每次启动强制改写。settings 键 pluginTreeAlignedVersion
+// 记录已对齐的应用版本，pluginTreeRetiredListHash 记录已对齐的清单内容：
+// 只比对版本会让同版本内新列入的退役条目永远清不到（5.1.0 实测踩坑）。
+function retiredListHash(): string {
+  return crypto.createHash('sha256').update(JSON.stringify(RETIRED_BUILTIN_PLUGINS)).digest('hex');
+}
+function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
+  let version = '';
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')) as { version?: string };
+    version = typeof pkg.version === 'string' ? pkg.version : '';
+  } catch {
+    // 读不到版本时退回无条件清理（旧语义）。
+  }
+  if (!version) {
+    retireRemovedBuiltinPlugins(profileDirP);
+    return;
+  }
+  try {
+    const c = updCtx();
+    const settings = updater.loadSettings(c) as Record<string, unknown>;
+    const hash = retiredListHash();
+    if (settings && settings.pluginTreeAlignedVersion === version && settings.pluginTreeRetiredListHash === hash) {
+      ctx.log('boot', `已在本版本（${version}）对齐过内置插件树，跳过退役清理（用户调整优先）`);
+      return;
+    }
+    retireRemovedBuiltinPlugins(profileDirP);
+    const next = settings && typeof settings === 'object'
+      ? { ...settings, pluginTreeAlignedVersion: version, pluginTreeRetiredListHash: hash }
+      : { pluginTreeAlignedVersion: version, pluginTreeRetiredListHash: hash };
+    updater.saveSettings(c, next);
+    ctx.log('boot', `已在本版本（${version}）完成内置插件树对齐`);
+  } catch (err) {
+    ctx.log('boot', '记录插件树对齐版本失败，按旧语义清理: ' + String(err));
+    retireRemovedBuiltinPlugins(profileDirP);
+  }
+}
+
 export function syncCompanionPlugins(): void {
   const platform = ctx.platform ?? 'win32';
   const inSafeMode = safeModeActive();
@@ -419,7 +529,7 @@ export function syncCompanionPlugins(): void {
     ensureDesktopProfileInit();
     // 清理已退役内置插件在 profile 的残留，避免
     // 「行在包被清」拖垮插件树或退役插件继续加载。
-    retireRemovedBuiltinPlugins(desktopProfileDir());
+    retireRemovedBuiltinPluginsGated(desktopProfileDir());
     // V4 运行时补丁（幂等，随启动 / 服务重启 / agent 更新后重放）：
     //  · 对话删除/归档 —— dsh-session-manager 插件的全链路前置依赖；
     applySessionManageFix();
@@ -616,6 +726,9 @@ function ensurePluginHostDeps(profileDirP: string): void {
     }
   };
   ensureCopy('schemastery', 0);
+  // web-push（meow-smooth 通知 host 半边的运行时依赖；动态 import，缺省时
+  // 该插件优雅降级为仅页面内提醒 —— 这里落位让系统推送开箱即用）。
+  ensureCopy('web-push', 0);
   // cosmokit 只在共享层没有时兜底（避免遮蔽内核闭包内的配套版本）。
   const sharedCosmo = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules', '@deepseek-ai', 'cosmokit');
   if (!fs.existsSync(sharedCosmo)) {
@@ -649,11 +762,20 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // 也有一行（syncCompanionPlugins 写的），整个插件树会以
     // “duplicate loader entry id” 崩溃。清掉 overlay 重复行（包内行保留）。
     let bundled: unknown[] = [];
+    // 内置 bundle 插件播种（DESKTOP_PROFILE_BUNDLES 只影响全新 profile，存量
+    // profile 的 bundles 在这里幂等补齐）：缺失则追加，已有（用户市场安装 /
+    // dsh plugin add / 曾经播种过）则不动；仅在有变化时写回。纯函数
+    // seedBundledPlugins 见本文件（可单测）。
     try {
-      const pkgDsh = readJsonFile(path.join(profileDirP, 'package.json'))?.dsh as Record<string, unknown> | undefined;
-      const prof = pkgDsh?.profile as Record<string, unknown> | undefined;
-      bundled = Array.isArray(prof?.bundles) ? prof.bundles : [];
-    } catch { bundled = []; }
+      const seeded = seedBundledPlugins(profileDirP);
+      bundled = seeded.bundles;
+      if (seeded.changed) {
+        ctx.log('boot', '已播种内置 bundle 插件到 profile: ' + BUNDLED_BUILTIN_PLUGINS.join(', '));
+      }
+    } catch (err) {
+      bundled = [];
+      ctx.log('boot', '播种内置 bundle 插件失败: ' + String(((err as Error).message) || err));
+    }
     // 同一 entry id 被两处声明（bundle 的包内 patch + overlay 的配套行）会以
     // “duplicate loader entry id” 拖垮整个插件树。旧逻辑只按「包名 ∈ bundles」
     // 匹配，git/fork/link 安装的插件包名与配套行包名不符时永远删不掉（issue

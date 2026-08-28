@@ -62,6 +62,7 @@ On top of the official foundation, EAC embraces community creations — skins, p
 ### Requirements
 
 - Windows 10/11 (x64)
+- macOS 13+ (Apple Silicon / arm64; desktop edition)
 - No pre-installed Node.js or other runtime required
 
 ### Windows
@@ -79,6 +80,35 @@ See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/rel
 > 💡 **Upgrading**: just download and run the newest installer above over your existing install.
 > Plugins, skins, sessions and settings are preserved: data lives in
 > `%APPDATA%\Deepseek Harness EAC\` and `~/.dsh`, untouched by the upgrade.
+
+### macOS (Apple Silicon / arm64)
+
+> The macOS desktop build shares the same version and codebase as Windows/Linux and is published under the same [v5.1.0 Release](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v5.1.0).
+
+| File | Description | Size |
+| --- | --- | --- |
+| [Disk image .dmg](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.dmg) | Mount and drag into Applications | ~136 MB |
+| [App bundle .app.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.app.zip) | Unzip and run directly | ~157 MB |
+| [SHA256SUMS-macos.txt](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/SHA256SUMS-macos.txt) | macOS asset checksums | — |
+
+- Desktop config directory: `~/Library/Application Support/deepseek-harness-eac/`; dsh data stays in `~/.dsh` (shared with the CLI).
+- Unsigned and not notarized (personal use): if Gatekeeper blocks the first launch, right-click → Open.
+- Client self-update is disabled in the macOS v1 build (no macOS assets upstream yet); dsh agent (kernel) updates are fully retained.
+
+### Linux (x64)
+
+> The Linux desktop build is continuously built and verified by our CI (Ubuntu 22.04) and released on its own version line (latest maintained release: v4.4.0). Windows/macOS share the unified v5.1.0 line; folding Linux into the unified line is planned once the release pipeline is ready.
+
+| File | Description |
+| --- | --- |
+| [.deb (Debian/Ubuntu)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | Installs and launches from the app menu |
+| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | No installation: `chmod +x` and run |
+| [.rpm (Fedora/openSUSE)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
+| [.pacman (Arch)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
+
+- Dependencies: Tauri 2 with webkit2gtk-4.1 (Debian-family build deps such as `libwebkit2gtk-4.1-dev` mirror the repo CI); the AppImage bundles its own runtime, built against an Ubuntu 22.04 baseline.
+- Desktop config directory: `~/.config/deepseek-harness-eac` (XDG); dsh data stays in `~/.dsh` (shared with the CLI).
+- System integration (clipboard via `wl-copy`/`xclip`/`xsel`, notifications via `notify-send`) depends on your desktop environment; when missing, the capability honestly degrades to "external-dependency" rather than pretending to work.
 
 ### First Run
 
@@ -242,51 +272,52 @@ research/                     # Third-party WeChat / bridge protocol research
 
 | Plugin | Description |
 | --- | --- |
+| computer-user (provider: jing-hy) | Screen reading plus mouse/keyboard automation (Codex-style computer use; pairs with picturereader so text-only models work) |
 | dsh-auto-compact | Automatically sends `/compact` as the context approaches its limit |
-| @deepseek-ai/dsh-balance | Account balance, cost estimates, and pricing settings |
+| @deepseek-ai/dsh-balance (provider: deepseek-ai) | Account balance, cost estimates, and pricing settings |
 | dsh-better-sidebar (provider: omdsh-dev) | VS Code-style right sidebar with Explorer, editor, terminal, Git, and browser views |
 | dsh-change-review | AI change review for automatically rechecking file modifications |
-| @deepseek-ai/dsh-client-file-changes | Files view with session change tracking and one-click restore |
-| dsh-compact | Request-path context compaction and overflow recovery |
-| @deepseek-ai/dsh-conversation-tweaks | Collapses long output and adds a right-side conversation navigation rail |
+| @deepseek-ai/dsh-client-file-changes (provider: deepseek-ai) | Files view with session change tracking and one-click restore |
+| dsh-compact (provider: zixin947) | Request-path context compaction and overflow recovery |
+| @deepseek-ai/dsh-conversation-tweaks (provider: deepseek-ai) | Collapses long output and adds a right-side conversation navigation rail |
 | dsh-dafeiyu (provider: QCYTSN) | Dafeiyu desktop companion |
 | dsh-deep-whale (provider: Small-tailqwq) | Source of the Deep-Sea Maid Workshop `maid-atelier` skin |
 | dsh-dock-settings | Skills and MCP settings management |
-| @deepseek-ai/dsh-easy-setup | Quick setup for vision models, `soul.md`, and migration |
-| @deepseek-ai/dsh-file-changes | Session file-change projection |
-| dsh-file-drop-eac | Drag files or folders into a conversation |
-| @deepseek-ai/dsh-float-window | Opens a conversation in a separate window |
+| @deepseek-ai/dsh-easy-setup (provider: deepseek-ai) | Quick setup for vision models, `soul.md`, and migration |
+| @deepseek-ai/dsh-file-changes (provider: deepseek-ai) | Session file-change projection |
+| dsh-file-drop-eac (provider: jing-hy) | Drag files or folders into a conversation |
+| @deepseek-ai/dsh-float-window (provider: deepseek-ai) | Opens a conversation in a separate window |
 | dsh-font-custom | Custom fonts plus text and code colors |
 | dsh-image-paste | Paste and send clipboard images |
 | dsh-message-rewind | Rewrite a message and regenerate from that point |
 | @vlln/dsh-navbar (provider: vlln) | Conversation-node navigation bar for jumping between user messages |
 | dsh-offpeak (provider: christophersmith2737-commits) | DeepSeek peak/off-peak pricing reminder and interception |
-| @deepseek-ai/dsh-openclaw-bridge | WeChat ClawBot / OpenClaw bridge |
+| @deepseek-ai/dsh-openclaw-bridge (provider: deepseek-ai) | WeChat ClawBot / OpenClaw bridge |
 | dsh-pet (provider: PC2005-cloud) | Floating desktop pet for the page |
 | dsh-pet-settings | Desktop pet settings section |
 | dsh-plugin-guard (provider: lxzy-7) | Pre-install snapshots, rollback, and guarded startup |
 | dsh-plugin-healthcheck (provider: chenw2759-wq) | Static plugin health checks and risk inspection |
-| @deepseek-ai/dsh-plugin-manager | Lists and enables or disables bundled plugins |
+| @deepseek-ai/dsh-plugin-manager (provider: deepseek-ai) | Lists and enables or disables bundled plugins |
 | dsh-plugin-shield | Plugin protection with snapshots, rollback, and health checks |
 | dsh-plugin-wizard | Plugin selection wizard |
-| @deepseek-ai/dsh-prompt-custom | Custom core prompts |
-| dsh-session-manager | Session deletion and archive management |
+| @deepseek-ai/dsh-prompt-custom (provider: deepseek-ai) | Custom core prompts |
+| dsh-session-manager (provider: hkkz9522) | Session deletion and archive management |
 | dsh-settings-groups | Collapsible advanced options on the Settings page |
 | dsh-settings-nav-custom | Customization for the Settings sidebar |
-| dsh-settings-scroll-fix | Mouse-wheel and overflow scrolling repair for Settings |
+| dsh-settings-scroll-fix (provider: says693) | Mouse-wheel and overflow scrolling repair for Settings |
 | @dsh-external/dsh-side-session (provider: dsh-external) | Temporary side conversations that do not affect the main conversation |
-| @deepseek-ai/dsh-skin-switch | Built-in skin switching |
+| @deepseek-ai/dsh-skin-switch (provider: deepseek-ai) | Built-in skin switching |
 | dsh-soul-md (provider: Scorp1o117) | `soul.md` persona-card injection |
-| @deepseek-ai/dsh-terminal | Interactive command line inside a conversation |
-| @deepseek-ai/dsh-third-party-thinking | Reasoning-effort controls for third-party models |
+| @deepseek-ai/dsh-terminal (provider: deepseek-ai) | Interactive command line inside a conversation |
+| @deepseek-ai/dsh-third-party-thinking (provider: deepseek-ai) | Reasoning-effort controls for third-party models |
 | dsh-tool-vision (provider: Scorp1o117) | Image analysis through OpenAI-compatible vision models |
-| dsh-undo-savepoint | Configuration snapshots and undo/rollback |
-| dsh-unified-market | Unified plugin marketplace aggregating three sources |
-| dsh-web-plugin-manager (provider: LX2000WASD) | Entry point for guarded plugin installation and health checks |
+| dsh-undo-savepoint (provider: lire1131) | Configuration snapshots and undo/rollback |
+| dsh-unified-market (provider: jing-hy) | Unified plugin marketplace aggregating three sources |
 | dsh-web-mobile-fix (provider: AcidGr) | Mobile layout fixes |
+| dsh-web-plugin-manager (provider: LX2000WASD) | Entry point for guarded plugin installation and health checks |
 | dsh-web-ui (provider: zhu1090093659) | Source of nine built-in Web UI skins |
 | dsh-webui-market (provider: Sanqi-normal) | Community plugin directory with one-click installation and removal |
-| picturereader | Unified image-understanding plugin |
+| picturereader (provider: jing-hy) | Unified image-understanding plugin |
 
 Thank you to every plugin provider for contributing to this project and the open-source community. With so many plugins, we may not have identified every plugin and source individually. If you recognize your work here, please let us know so we can add it to the acknowledgements. You are also welcome to join our community groups to exchange ideas and help the ecosystem grow.
 
@@ -311,7 +342,7 @@ Nine skins come from the community project [dsh-web-ui](https://github.com/zhu10
 
 ### Contributors
 
-Thanks to every contributor:
+Thanks to every contributor — special thanks to [@CharlesAQ](https://github.com/CharlesAQ) for the macOS desktop port ([PR #234](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/234)): the darwin branches of the Tauri shell, the platform adapter layer, darwin resource staging & pruning, and the `.app`/`.dmg` packaging configuration that brought EAC to Apple Silicon for the first time.
 
 <p align="center">
   <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">

@@ -70,6 +70,8 @@ build/*
 /lib/desktop/shortcuts.js
 /lib/desktop/static-preview.js
 /lib/desktop/companion-sync.js
+/lib/desktop/feature-pack.js
+/scripts/feature-pack-cli.js
 /stable-port.js
 /error-detail.js
 /bundle-integrity.js
@@ -77,6 +79,7 @@ build/*
 /lib/desktop/boot-server.js
 /stream-write-guard.js
 /session-encoding-heal.js
+/credentials-format-heal.js
 /builtin-collision.js
 /koffi-preflight.js
 /balance.js
@@ -90,3 +93,4 @@ build/*
 /shared/protocol.js
 /lib/plugin-copy.js
 /scripts/build-native.js
+/lib/atomic-json.js

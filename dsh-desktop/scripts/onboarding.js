@@ -41,8 +41,9 @@ const RECOMMENDED_PLUGIN_IDS = new Set([
   'dsh-session-manager',
   'conversation-tweaks',
   'prompt-custom',
-  'third-party-thinking',
   'offpeak',
+  // VCP 视觉通感协议（dsh-raw-html）：消息 HTML 渲染为界面，默认勾选。
+  'dsh-raw-html',
 ]);
 
 /**

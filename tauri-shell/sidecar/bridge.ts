@@ -13,79 +13,33 @@
 // win.start-dragging（WebView2 无 -webkit-app-region），5s 心跳，页面异常上报。
 // 拖入文件路径（getPathForFile）返回 ''，与浏览器打开 WebUI 时一致，插件自带降级。
 
-interface BridgeFrame { jsonrpc: string; id?: number; method: string; params?: unknown }
-type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
-
 (function () {
-  var WS_URL = (window as any).__DSH_BRIDGE_WS__ || 'ws://127.0.0.1:19873/ws';
   var BAR_ID = '__dsh_desktop_chrome__';
   var BAR_HEIGHT = 36;
   var FLOAT_BAR_ID = '__dsh_desktop_floatbar__';
   var FLOAT_BAR_HEIGHT = 24;
 
-  var seq = 0;
-  var pending: { [id: number]: BridgePending } = {};
-  var ws: WebSocket | null = null;
-  var wsReady = false;
+  // 回环 WS JSON-RPC 客户端（单源：assets/ws-jsonrpc-client.js，Rust 壳在
+  // initialization_script 序列中先注入本桥）。connect/queue/call/重连逻辑
+  // 只存在于单源文件；这里只做钩子接线与语义别名。
   var notifyHooks: ((method: string, params: any) => void)[] = [];
   var readyHooks: ((info: any) => void)[] = [];
-  var queue: BridgeFrame[] = [];
-
-  function rawSend(obj: BridgeFrame): void {
-    try { if (ws) ws.send(JSON.stringify(obj)); } catch (e) { /* 断线由重连兜底 */ }
-  }
-
-  // fire-and-forget（Electron ipcRenderer.send 语义）：不等回复，断了就丢。
-  function send(method: string, params?: unknown): void {
-    if (wsReady) rawSend({ jsonrpc: '2.0', method: method, params: params || {} });
-  }
-
-  // invoke 语义（ipcRenderer.invoke）：Promise + 超时。
-  function call(method: string, params?: unknown, timeoutMs?: number): Promise<any> {
-    return new Promise(function (resolve, reject) {
-      var id = ++seq;
-      pending[id] = { resolve: resolve, reject: reject };
-      if (!wsReady) { queue.push({ jsonrpc: '2.0', id: id, method: method, params: params || {} }); }
-      else rawSend({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
-      setTimeout(function () {
-        if (pending[id]) {
-          delete pending[id];
-          reject(new Error('bridge call timeout: ' + method));
-        }
-      }, timeoutMs || 30000);
-    });
-  }
-
-  function connect(): void {
-    ws = new WebSocket(WS_URL);
-    ws.onopen = function () {
-      wsReady = true;
-      while (queue.length) rawSend(queue.shift() as BridgeFrame);
+  var rpc = (window as any).__DSH_WS_RPC__({
+    onOpen: function () {
       call('chrome.init', {}).then(function (info) {
         try { readyHooks.forEach(function (h) { h(info); }); } catch (e) { /* 页面回调异常不断桥 */ }
       }).catch(function () { /* chrome.init 不可用不致命 */ });
-    };
-    ws.onmessage = function (ev: MessageEvent) {
-      var msg: any; try { msg = JSON.parse(ev.data); } catch (e) { return; }
-      if (msg.id != null && pending[msg.id]) {
-        var r = pending[msg.id]!; delete pending[msg.id];
-        if (msg.error) r.reject(new Error(msg.error.message || 'rpc error'));
-        else r.resolve(msg.result);
-      } else if (msg.method) {
-        // 通知帧：win.maximized / dsh.balance / boot.web-ready …
-        try { notifyHooks.forEach(function (h) { h(msg.method, msg.params); }); } catch (e) { /* 同上 */ }
-      }
-    };
-    ws.onclose = function () {
-      wsReady = false;
-      setTimeout(connect, 1500);
-    };
-    ws.onerror = function () { try { if (ws) ws.close(); } catch (e) { /* 重连由 onclose 驱动 */ } };
-  }
+    },
+  });
+  rpc.onNotify(function (method: string, params: any): void {
+    try { notifyHooks.forEach(function (h) { h(method, params); }); } catch (e) { /* 同上 */ }
+  });
 
+  // fire-and-forget（ipcRenderer.send 语义）：不等回复，断了就丢。
+  function send(method: string, params?: unknown): void { rpc.send(method, params); }
+  // invoke 语义（ipcRenderer.invoke）：Promise + 超时。
+  function call(method: string, params?: unknown, timeoutMs?: number): Promise<any> { return rpc.call(method, params, timeoutMs); }
   function onNotify(fn: (method: string, params: any) => void): void { notifyHooks.push(fn); }
-
-  window.addEventListener('DOMContentLoaded', function () { connect(); });
 
   // ---------------------------------------------------------------------------
   // window.dshDesktop（键集与 preload.js:26-127 一致；契约测试锁定）
@@ -127,6 +81,26 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
         // 壳层按标签关窗：浮窗 init 脚本把 window.__DSH_FLOAT__.win 置为标签。
         var f = (window as any).__DSH_FLOAT__;
         send('float.close', { win: f && f.win });
+      },
+    },
+    // 手机连接桥（5.1.1）：LAN 配对 + 白名单 RPC + 手机端占位页。消费端是
+    // 内置插件 dsh-phone 的设置页「连接手机」；键集与 preload.ts 一致（契约锁定）。
+    phoneBridge: {
+      start: function () { return call('phone.start', {}); },
+      stop: function () { return call('phone.stop', {}); },
+      status: function () { return call('phone.status', {}); },
+      decide: function (approved: boolean) { return call('phone.decide', { approved: !!approved }); },
+      disconnect: function () { return call('phone.disconnect', {}); },
+      onStatus: function (cb: (status: any) => void) {
+        var hook = function (method: string, params: any) {
+          if (method !== 'phone.status') return;
+          try { cb(params); } catch (e) { /* 回调异常不断桥 */ }
+        };
+        notifyHooks.push(hook);
+        return function () {
+          var i = notifyHooks.indexOf(hook);
+          if (i >= 0) notifyHooks.splice(i, 1);
+        };
       },
     },
     // 插件保护中心：快照 / 回滚 / 体检 / 修复 / 事故报告。
@@ -398,8 +372,97 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     maxBtn.setAttribute('aria-label', maxBtn.title);
   }
 
+  // ---------------------------------------------------------------------------
+  // UI 稳定性垫片（主窗与浮窗共用；issue #217 同款桥内 CSS 通道，不碰内核/插件）。
+  // 背景：DSH 0.1.x 配套插件与内核弹层存在三类布局问题，全新/覆盖安装均复现：
+  //  a) 抽搐 —— dsh-better-sidebar 对 #root 与中栏注入 0.3s margin 过渡，会话切换
+  //     或面板开合时整条中栏（含输入栏）随之滑动/回读抖动；这里的布局让位仍
+  //     保留，只是瞬间到位（transition 掐断）。
+  //  b) 新建对话裁剪 —— hero 阶段 scrollBody 用 justify-content:center 居中内容，
+  //     内容高于视口时顶部不可滚动到达、被 overflow 链与自绘标题栏切掉；改为
+  //     flex-start + 子项 margin-block:auto：放得下时居中、放不下时从顶排布可滚。
+  //  c) 模型选择弹层遮挡 —— 菜单 absolute 向上展开且 z 只有 20，顶部会捅出滚动
+  //     容器/视口并被高 z 覆盖物盖住；抬到内容层之上并支持「翻转向下」救援。
+  //  d) 悬停浮层横向溢出 —— 提示词优化面板与「/」命令菜单等 absolute 浮层向上展开
+  //     时会把 hero 输入区滚动容器撑出横向溢出（hero 态只设 overflow-y，x 轴未
+  //     裁剪），出现横贯窗口的横向滚动条；且面板常驻挂载（仅隐身），移出后溢出
+  //     依旧。在输入区滚动体与 body 层把 x 轴溢出钉死，横向滚动条不再出现。
+  // ---------------------------------------------------------------------------
+  function injectUiPatchCss(): void {
+    if (document.getElementById('dsh-ui-patch')) return;
+    var tag = document.createElement('style');
+    tag.id = 'dsh-ui-patch';
+    tag.textContent = '\
+  html[data-dsh-title-bar-height] #root,\
+  html[data-dsh-title-bar-height] #root > div[data-slot="root"] > div > div:nth-child(2){transition:none!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody{justify-content:flex-start!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody > *{margin-block:auto!important}\
+  html[data-dsh-title-bar-height] ._7KE1Ra_menu{z-index:5100!important}\
+  html[data-dsh-title-bar-height] ._7KE1Ra_menu.dsh-popup-flip{top:calc(100% + 8px)!important;bottom:auto!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_composerStack:has(._7KE1Ra_menu){overflow:visible!important}\
+  html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody{overflow-x:hidden!important}\
+  html[data-dsh-title-bar-height] body{overflow-x:hidden!important}';
+    document.head.appendChild(tag);
+  }
+
+  // 模型选择弹层救援：菜单绝对定位向上展开（最高 360px + 8px 间距），在 hero
+  // 页或矮窗口里顶部会越出滚动容器/视口被切。探到菜单顶部进入玻璃栏区（<40px）
+  // 就翻转向下展开，并按触发钮下方可用空间收缩高度；菜单关闭或空间充足时还原。
+  // 翻转向下后菜单会伸出 composerStack（overflow:auto）的盒子 —— 配套 CSS 用
+  // :has(._7KE1Ra_menu) 在菜单打开时放开该容器裁剪（见 injectUiPatchCss）。
+  function initPopupRescue(): void {
+    var MENU_SEL = '._7KE1Ra_menu';
+    var FLIP_CLS = 'dsh-popup-flip';
+    var BAR_EDGE = 40;
+    var probeTimer: number | null = null;
+    // 翻转态按菜单元素保存（WeakSet，菜单卸载即回收）：翻转与否只在菜单开起来
+    // 时判定一次。绝不能根据翻转后的 r.top 还原 —— 翻转让它 ≥40，还原又让它
+    // <40，会形成每 200ms 翻转↔复原的震荡（弹层自带抽搐，且导致位置随机）。
+    var flippedMenus = new WeakSet<HTMLElement>();
+
+    function probeMenus(): void {
+      probeTimer = null;
+      var menus = document.querySelectorAll(MENU_SEL);
+      var anyOpen = false;
+      for (var i = 0; i < menus.length; i++) {
+        var menu = menus[i] as HTMLElement;
+        var r = menu.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue; // 未渲染/已关闭
+        anyOpen = true;
+        if (!flippedMenus.has(menu) && r.top < BAR_EDGE) flippedMenus.add(menu);
+        if (flippedMenus.has(menu)) {
+          var trigger = menu.parentElement as HTMLElement | null;
+          var below = trigger ? window.innerHeight - trigger.getBoundingClientRect().bottom - 16 : 240;
+          menu.classList.add(FLIP_CLS);
+          // 下限 80（而非 120）：矮窗口下触发钮本身贴近视口底，过高的下限会让
+          // 菜单底部挤出视口（实测 470px 高时 120 的底超出 12px）。
+          menu.style.maxHeight = String(Math.max(80, Math.min(360, below))) + 'px';
+        } else {
+          menu.classList.remove(FLIP_CLS);
+          menu.style.maxHeight = '';
+        }
+      }
+      // 菜单存续期间低频轮询（内容加载会改变高度/位置）。
+      if (anyOpen) probeTimer = window.setTimeout(probeMenus, 200);
+    }
+
+    function scheduleProbe(): void {
+      if (probeTimer === null) probeMenus();
+    }
+
+    function start(): void {
+      if (!document.body) return;
+      new MutationObserver(scheduleProbe).observe(document.body, { childList: true, subtree: true });
+      window.addEventListener('resize', scheduleProbe, { passive: true });
+      scheduleProbe();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    else start();
+  }
+
   function injectFloatBar(): void {
     if (document.getElementById(FLOAT_BAR_ID)) return;
+    injectUiPatchCss();
     var style = document.createElement('style');
     style.textContent = '\
   #' + FLOAT_BAR_ID + '{position:fixed;top:0;left:0;right:0;height:' + FLOAT_BAR_HEIGHT + 'px;z-index:2147483000;\
@@ -431,6 +494,7 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
   function injectChrome(): void {
     if (FLOAT_MODE) { injectFloatBar(); return; }
     if (document.getElementById(BAR_ID)) return;
+    injectUiPatchCss();
     var style = document.createElement('style');
     style.textContent = '\
 #' + BAR_ID + '{position:fixed;top:0;left:0;right:0;height:' + BAR_HEIGHT + 'px;z-index:2147483000;\
@@ -503,7 +567,14 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
     document.documentElement.setAttribute('data-dsh-title-bar-height', String(BAR_HEIGHT));
 
     var layout = document.createElement('style');
-    layout.textContent = 'body{box-sizing:border-box!important;padding-top:' + BAR_HEIGHT + 'px!important}';
+    layout.textContent = 'body{box-sizing:border-box!important;padding-top:' + BAR_HEIGHT + 'px!important}' +
+      // issue #217：壳自绘标题栏 z-index 极高（2147483000），内核模型下拉、
+      // 优化提示词面板等 fixed/absolute 弹层在视口顶部附近会被标题栏或页内
+      // 高 z 容器盖住/糊掉。对常见弹层形态统一把层级提到内容层之上
+      // （5000，仍低于标题栏）。只提层级不动布局 —— 纯叠加修复。
+      'html[data-dsh-title-bar-height] [role="dialog"]:not([aria-hidden="true"]),' +
+      'html[data-dsh-title-bar-height] [data-floating-ui-portal],' +
+      'html[data-dsh-title-bar-height] [data-radix-popper-content-wrapper]{z-index:5000!important}';
     document.head.appendChild(layout);
 
     var bar = document.createElement('div');
@@ -582,6 +653,8 @@ type BridgePending = { resolve: (v: any) => void; reject: (e: any) => void };
       if (document.visibilityState === 'visible') beat();
     });
   })();
+
+  initPopupRescue();
 })();
 
 // __DSH_MODULES_COMPAT_SHIM__ ---------------------------------------------------

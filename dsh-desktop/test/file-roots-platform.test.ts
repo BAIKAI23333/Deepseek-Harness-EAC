@@ -10,7 +10,7 @@ const { isPathWithinRoots } = require('../lib/desktop/file-roots.js') as {
   isPathWithinRoots(candidate: string, roots: string[], platform?: NodeJS.Platform): boolean;
 };
 
-test('file root authorization rejects a symlink that escapes the session root', () => {
+test('file root authorization rejects a symlink that escapes the session root', (t) => {
   const temp = mkdtempSync(join(tmpdir(), 'dsh-file-root-'));
   try {
     const root = join(temp, 'workspace');
@@ -18,7 +18,18 @@ test('file root authorization rejects a symlink that escapes the session root', 
     mkdirSync(root);
     mkdirSync(outside);
     writeFileSync(join(outside, 'secret.txt'), 'secret');
-    symlinkSync(outside, join(root, 'linked-outside'), 'dir');
+    try {
+      symlinkSync(outside, join(root, 'linked-outside'), 'dir');
+    } catch (e) {
+      // Windows 无管理员/开发者模式时创建符号链接被拒（EPERM），
+      // 语义由 Linux 路径域测试覆盖，环境不允许则跳过，不算失败。
+      const err = e as NodeJS.ErrnoException;
+      if (process.platform === 'win32' && err.code === 'EPERM') {
+        t.skip('symlink requires admin rights or developer mode on Windows');
+        return;
+      }
+      throw e;
+    }
 
     assert.equal(isPathWithinRoots(join(root, 'linked-outside', 'secret.txt'), [root], 'linux'), false);
     assert.equal(isPathWithinRoots(join(root, 'normal.txt'), [root], 'linux'), true);

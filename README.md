@@ -62,6 +62,7 @@
 ### 系统要求
 
 - Windows 10/11（x64）
+- macOS 13+（Apple Silicon / arm64，桌面版）
 - 无需预装 Node.js 或任何其他运行时
 
 ### Windows
@@ -80,6 +81,35 @@
 > - 直接下载上方最新安装包覆盖安装即可；
 > - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
 >   与 `~/.dsh`，升级过程不触碰。
+
+### macOS（Apple Silicon / arm64）
+
+> macOS 桌面版与 Windows/Linux 同源同版本，随 [v5.1.0 Release](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/tag/v5.1.0) 一同发布。
+
+| 文件 | 说明 | 大小 |
+| --- | --- | --- |
+| [安装镜像 .dmg](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.dmg) | 双击挂载后拖入 Applications | ~136 MB |
+| [应用包 .app.zip](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/Deepseek.Harness.EAC_5.1.0_macos-arm64.app.zip) | 解压后直接运行 | ~157 MB |
+| [校验和 SHA256SUMS-macos.txt](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v5.1.0/SHA256SUMS-macos.txt) | macOS 资产 SHA256 | — |
+
+- 桌面配置目录：`~/Library/Application Support/deepseek-harness-eac/`；dsh 数据仍在 `~/.dsh`（与 CLI 共享，会话互通）。
+- 未签名、未公证（个人自用定位）：首次打开若被 Gatekeeper 拦截，右键 →「打开」。
+- 客户端自更新在 macOS v1 暂不提供（上游 Release 暂无 macOS 资产）；dsh agent（内核）更新完整保留。
+
+### Linux（x64）
+
+> Linux 桌面端由 CI（Ubuntu 22.04）持续构建与验证，以独立版本线发布（最近维护版 v4.4.0）。Windows/macOS 走统一版本线（当前 v5.1.0），Linux 并入统一版本线待发布管线就绪后补发。
+
+| 文件 | 说明 |
+| --- | --- |
+| [.deb（Debian/Ubuntu）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | 安装后可从应用菜单启动 |
+| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | 免安装：`chmod +x` 后直接运行 |
+| [.rpm（Fedora/openSUSE）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
+| [.pacman（Arch）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
+
+- 依赖：Tauri 2 + webkit2gtk-4.1（debian 系安装 `libwebkit2gtk-4.1-dev` 等构建依赖见仓库 CI）；AppImage 自带运行时，构建基线 Ubuntu 22.04。
+- 桌面配置目录：`~/.config/deepseek-harness-eac`（XDG）；dsh 数据仍在 `~/.dsh`（与 CLI 共享）。
+- 剪贴板等系统集成依赖桌面环境的 `wl-copy`/`xclip`/`xsel`，通知依赖 `notify-send`；缺失时对应能力自动降级为「外部依赖」，不伪装成功。
 
 ### 首次使用
 
@@ -198,10 +228,12 @@ node make-portable.mjs           # 便携 zip（可选）→ target/release/port
 cd dsh-desktop
 npm install
 npm run fetch-runtime
-npm run dist             # 构建 portable + NSIS 安装包 → dist/
+# 打包（Tauri 三段链，产出入 tauri-shell/target/release/）
+node ../tauri-shell/stage-resources.mjs     # 装配 staged-resources
+cd ../tauri-shell
+npx -y @tauri-apps/cli@2 build              # → bundle/nsis/*-setup.exe（含 sidecar 运行树）
+node make-portable.mjs                      # → portable/*-portable.zip + SHA256SUMS.txt
 ```
-
-> 网络受限时：Electron 镜像 `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'`；打包工具链镜像 `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`。
 
 </details>
 
@@ -244,27 +276,26 @@ node ../update-smoke.js  # 自更新链路冒烟（mock 发布源 + 目录树交
 ### 目录结构
 
 ```
-dsh-desktop/                  # Electron 桌面端
-├── main.js                   # Electron 主进程
+dsh-desktop/                  # Node/TS 后端 + 数据面（Tauri 壳的后端运行时）
 ├── updater.js                # 官方 dsh agent 更新引擎
 ├── client-updater.js         # 客户端本体自更新引擎
 ├── balance.js                # DeepSeek 余额查询
 ├── session-watcher.js        # 会话完成监听
 ├── plugin-guard.js           # 插件保护中心引擎（快照/回滚/体检/修复/守护启动/事故报告）
 ├── profile-module-heal.js    # profile 模块遮蔽自愈（真实目录 + pnpm 链接）
-├── preload.js                # 沙箱预加载
-├── assets/                   # 加载页、更新进度页、图标、皮肤、配套插件
+├── assets/                   # 恢复中心页、手机桥、单源 WS 客户端、图标、皮肤、配套插件
 │   ├── skins/                # 10 款内置 Web UI 皮肤
-│   └── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch
-│                             # 内置社区插件：dsh-webui-market / dsh-tool-vision
-│                             # / dsh-soul-md / dsh-web-mobile-fix
-│                             # （含 vendor 与自包含运行时依赖，随仓库分发）
+│   ├── plugins/              # 桌面壳配套：dsh-balance / dsh-file-changes / dsh-terminal
+│   │                         # / dsh-easy-setup / dsh-skin-switch
+│   │                         # 内置社区插件：dsh-webui-market / dsh-tool-vision
+│   │                         # / dsh-soul-md / dsh-web-mobile-fix
+│   │                         # （含 vendor 与自包含运行时依赖，随仓库分发）
+│   └── ws-jsonrpc-client.js  # 桌面窗 ↔ sidecar 的 WS JSON-RPC 客户端（单源）
 ├── scripts/                  # 构建与开发辅助脚本
-├── build/icon.png            # electron-builder 图标
 ├── vendor/                   # 内置 node.exe / npm CLI（不入库）
-├── electron-builder.yml      # 打包配置
-└── dist/                     # 构建产物（不入库，发布到 Releases）
+└── lib/                      # L2 业务服务层 / 恢复中心 / 扩展宿主（.ts 源，tsc 就地编译）
+tauri-shell/                  # Tauri v2 壳：Rust（main.rs）+ sidecar（server/bridge/phone-bridge）
+│                             # + stage-resources / make-portable 打包链
 openclaw-dsh-bridge/          # 微信桥接插件（可选，研究性质）
 research/                     # 第三方微信/桥接协议调研资料
 ```
@@ -277,52 +308,52 @@ research/                     # 第三方微信/桥接协议调研资料
 
 | 插件名 | 插件说明 |
 | --- | --- |
+| computer-user（提供者：jing-hy） | 读屏 + 鼠标键盘自动化（Codex-style computer use；配 picturereader，纯文本模型可用） |
 | dsh-auto-compact | 自动压缩：接近上下文上限时自动发送 /compact |
-| @deepseek-ai/dsh-balance | 账户余额、费用估算与价格设置 |
+| @deepseek-ai/dsh-balance（提供者：deepseek-ai） | 账户余额、费用估算与价格设置 |
 | dsh-better-sidebar（提供者：omdsh-dev） | VSCode 风格右侧栏，支持资源管理器/编辑器/终端/Git/浏览器 |
 | dsh-change-review | AI 变更审核：自动复查文件改动 |
-| @deepseek-ai/dsh-client-file-changes | 文件视图：会话文件更改追踪与一键还原 |
-| dsh-compact | 请求路径上下文压缩与溢出恢复 |
-| @deepseek-ai/dsh-conversation-tweaks | 隐藏长篇输出 + 会话右侧导航滑轨 |
+| @deepseek-ai/dsh-client-file-changes（提供者：deepseek-ai） | 文件视图：会话文件更改追踪与一键还原 |
+| dsh-compact（提供者：zixin947） | 请求路径上下文压缩与溢出恢复 |
+| @deepseek-ai/dsh-conversation-tweaks（提供者：deepseek-ai） | 隐藏长篇输出 + 会话右侧导航滑轨 |
 | dsh-dafeiyu（提供者：QCYTSN） | 大肥鱼桌面伴侣 |
 | dsh-deep-whale（提供者：Small-tailqwq） | 深海女仆工坊 maid-atelier 皮肤来源 |
 | dsh-dock-settings | Skills 与 MCP 设置管理 |
-| @deepseek-ai/dsh-easy-setup | 快速配置：视觉模型、soul.md、迁移 |
-| @deepseek-ai/dsh-file-changes | 会话文件更改投影 |
-| dsh-file-drop-eac | 拖放文件/文件夹到对话 |
-| @deepseek-ai/dsh-float-window | 会话弹出独立窗口 |
+| @deepseek-ai/dsh-easy-setup（提供者：deepseek-ai） | 快速配置：视觉模型、soul.md、迁移 |
+| @deepseek-ai/dsh-file-changes（提供者：deepseek-ai） | 会话文件更改投影 |
+| dsh-file-drop-eac（提供者：jing-hy） | 拖放文件/文件夹到对话 |
+| @deepseek-ai/dsh-float-window（提供者：deepseek-ai） | 会话弹出独立窗口 |
 | dsh-font-custom | 字体与文字/代码颜色自定义 |
 | dsh-image-paste | 剪贴板图片粘贴发送 |
 | dsh-message-rewind | 消息改写并从此处重新生成 |
 | @vlln/dsh-navbar（提供者：vlln） | 对话节点导航条：user 消息快速跳转 |
 | dsh-offpeak（提供者：christophersmith2737-commits） | DeepSeek 峰谷价格拦截提醒 |
-| @deepseek-ai/dsh-openclaw-bridge | 微信 ClawBot / OpenClaw 桥接 |
+| @deepseek-ai/dsh-openclaw-bridge（提供者：deepseek-ai） | 微信 ClawBot / OpenClaw 桥接 |
 | dsh-pet（提供者：PC2005-cloud） | 页面悬浮桌宠 |
 | dsh-pet-settings | 桌宠设置分区 |
 | dsh-plugin-guard（提供者：lxzy-7） | 插件安装前快照、回滚与启动守护 |
 | dsh-plugin-healthcheck（提供者：chenw2759-wq） | 插件静态体检与风险检查 |
-| @deepseek-ai/dsh-plugin-manager | 插件管理：列出/启停内置插件 |
+| @deepseek-ai/dsh-plugin-manager（提供者：deepseek-ai） | 插件管理：列出/启停内置插件 |
 | dsh-plugin-shield | 插件保护：快照/回滚/体检 |
 | dsh-plugin-wizard | 插件选择向导 |
-| @deepseek-ai/dsh-prompt-custom | 自定义内核提示词 |
-| dsh-session-manager | 会话删除与归档管理 |
+| @deepseek-ai/dsh-prompt-custom（提供者：deepseek-ai） | 自定义内核提示词 |
+| dsh-session-manager（提供者：hkkz9522） | 会话删除与归档管理 |
 | dsh-settings-groups | 设置页高级选项折叠 |
 | dsh-settings-nav-custom | 设置页左侧边栏自定义 |
-| dsh-settings-scroll-fix | 设置面板鼠标滚轮与溢出滚动修复 |
+| dsh-settings-scroll-fix（提供者：says693） | 设置面板鼠标滚轮与溢出滚动修复 |
 | @dsh-external/dsh-side-session（提供者：dsh-external） | 临时会话：不污染主会话的独立追问 |
-| @deepseek-ai/dsh-skin-switch | 内置皮肤切换 |
+| @deepseek-ai/dsh-skin-switch（提供者：deepseek-ai） | 内置皮肤切换 |
 | dsh-soul-md（提供者：Scorp1o117） | soul.md 人设卡注入 |
-| @deepseek-ai/dsh-terminal | 会话内交互式命令行 |
-| @deepseek-ai/dsh-third-party-thinking | 第三方模型思考强度控件 |
+| @deepseek-ai/dsh-terminal（提供者：deepseek-ai） | 会话内交互式命令行 |
+| @deepseek-ai/dsh-third-party-thinking（提供者：deepseek-ai） | 第三方模型思考强度控件 |
 | dsh-tool-vision（提供者：Scorp1o117） | OpenAI 兼容视觉模型图片分析 |
-| dsh-undo-savepoint | 配置快照与撤销/回滚 |
-| dsh-unified-market | 统一插件市场：聚合三源 |
-| dsh-web-plugin-manager（提供者：LX2000WASD） | 插件安装守卫与健康检查入口 |
+| dsh-undo-savepoint（提供者：lire1131） | 配置快照与撤销/回滚 |
+| dsh-unified-market（提供者：jing-hy） | 统一插件市场：聚合三源 |
 | dsh-web-mobile-fix（提供者：AcidGr） | 移动端布局修复 |
+| dsh-web-plugin-manager（提供者：LX2000WASD） | 插件安装守卫与健康检查入口 |
 | dsh-web-ui（提供者：zhu1090093659） | 9 款内置 Web UI 皮肤来源 |
 | dsh-webui-market（提供者：Sanqi-normal） | 社区插件目录与一键安装/卸载 |
-| picturereader | 统一图片理解插件 |
-| computer-user | 读屏 + 鼠标键盘自动化（Codex-style computer use；配 picturereader，纯文本模型可用） |
+| picturereader（提供者：jing-hy） | 统一图片理解插件 |
 
 感谢所有插件提供者对本项目与开源社区的奉献；由于插件数量众多，我们很抱歉，未能逐一统计到所有插件与其来源；如有插件的拥有者看到了自己所做的插件，欢迎您告知我们并添加到致谢名单中，也欢迎添加我们的交流群，以便一同交流、共同进步。
 
@@ -348,6 +379,8 @@ research/                     # 第三方微信/桥接协议调研资料
 ### 贡献者
 
 感谢每一位贡献者：
+
+特别致谢 [@CharlesAQ](https://github.com/CharlesAQ) —— macOS 桌面移植（[PR #234](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/pull/234)）：Tauri 壳 darwin 分支、平台适配层、darwin 资源装配与裁剪、`.app`/`.dmg` 打包配置，让 EAC 首次跑上 Apple Silicon。
 
 <p align="center">
   <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/graphs/contributors">

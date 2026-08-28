@@ -4,7 +4,7 @@
 // 职责：
 //   1. stdio 行分隔 JSON-RPC 分发器（协议与 ping.js 一致，Rust L1 唯一对话面）
 //   2. 挂载 dsh-desktop/lib/desktop/* 全部 13 个模块（ctx 注入按宿主语义提供）
-//   3. 白名单方法注册表 + mod.call 通用逃生舱（白名单模块内具名导出直调）
+//   3. 白名单方法注册表
 //
 // 纪律：stdout 只走协议帧；一切日志/兜底输出走 stderr。
 
@@ -97,6 +97,9 @@ const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'ma
 };
 const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
   startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
+};
+const credentialsHeal = require(path.join(DSH_DESKTOP_ROOT, 'credentials-format-heal.js')) as {
+  healCredentialsVersion(file: string, log: (tag: string, message: string) => void): { changed: boolean };
 };
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
@@ -261,12 +264,49 @@ companionSyncMod.init({
 // settings 兼容层：与 updater.js 的 userData/settings.json 同文件同语义
 // （load 回退 {}，save 2 空格缩进 + 尾换行），端号偏好双壳共享。
 let quitting = false;
+
+// 当前内核 Web 服务地址（手机桥 RPC 转发用）。boot.start / boot.restart
+// 成功后更新，服务停止时清空。
+let currentWebInfo: { webUrl: string; port: number } | null = null;
+
+// 手机连接桥（5.1.1：LAN 配对 + 白名单 RPC + 手机端占位页，见 phone-bridge.ts）。
+const phoneBridgeMod = require('./phone-bridge.js') as {
+  createPhoneBridge(options: {
+    getWebUrl: () => string | null;
+    log: (message: string) => void;
+  }): {
+    start(): Promise<{ url: string; port: number }>;
+    stop(): Promise<void>;
+    status(): { running: boolean; port: number; lanUrl: string; mobileReady: boolean; pairing: { state: string; expiresAt: number | null } };
+    decide(approved: boolean): { ok: boolean; error?: string };
+    disconnect(): { ok: boolean };
+  };
+};
+const phoneBridge = phoneBridgeMod.createPhoneBridge({
+  getWebUrl: () => (currentWebInfo ? currentWebInfo.webUrl : null),
+  log: (m) => say(m),
+});
+function handlePhoneMethod(method: string, p: RpcParams): RpcResult | Promise<RpcResult> {
+  if (method === 'phone.start') return phoneBridge.start().then((r) => ({ ok: true, ...r }));
+  if (method === 'phone.stop') return phoneBridge.stop().then(() => ({ ok: true }));
+  if (method === 'phone.status') return { ok: true, ...phoneBridge.status() };
+  if (method === 'phone.decide') return phoneBridge.decide(p?.approved === true) as RpcResult;
+  if (method === 'phone.disconnect') return phoneBridge.disconnect() as RpcResult;
+  return { ok: false, error: 'unknown phone method' };
+}
+
 const settingsFile = path.join(userDataDir, 'settings.json');
+const { readJsonFile } = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'plugin-copy.js')) as {
+  readJsonFile(file: string): Record<string, unknown> | null;
+};
+const { writeJsonAtomic } = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'atomic-json.js')) as {
+  writeJsonAtomic(file: string, value: unknown): void;
+};
 function loadSettings(): Record<string, unknown> {
-  try { return JSON.parse(fs.readFileSync(settingsFile, 'utf8')) as Record<string, unknown>; } catch { return {}; }
+  return readJsonFile(settingsFile) ?? {};
 }
 function saveSettings(s: Record<string, unknown>): void {
-  try { fs.writeFileSync(settingsFile, JSON.stringify(s, null, 2) + '\n'); } catch (e) { say('保存 settings 失败: ' + String(e)); }
+  try { writeJsonAtomic(settingsFile, s); } catch (e) { say('保存 settings 失败: ' + String(e)); }
 }
 
 /** 无 id 的 JSON-RPC 通知帧（Rust 侧经 WS 广播给页面，并自行订阅壳层事件）。 */
@@ -284,7 +324,10 @@ bootMod.init({
   loadSettings,
   saveSettings,
   isQuitting: () => quitting,
-  onServerDied: (info: unknown) => notify('boot.server-died', info),
+  onServerDied: (info: unknown) => {
+    currentWebInfo = null;
+    notify('boot.server-died', info);
+  },
 });
 
 say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
@@ -293,10 +336,11 @@ say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
 vnextLog.setLogSink(log);
 vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
 
-// 前置文件树准备（= main.js boot() 在 startAndShowGuarded 之前的序列，摘除
-// GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽修复 → 构建
-// 产物回填。boot.start 与重启/恢复中心 retry-boot 共用。
+// 前置文件树准备：旧凭据格式迁移 → 市场排队 → 退役清理 → 配套插件/技能
+// 同步 → 模块遮蔽修复 → 构建产物回填。boot.start 与重启/恢复中心
+// retry-boot 共用。
 async function preBootSync(): Promise<void> {
+  credentialsHeal.healCredentialsVersion(path.join(dshHome, '.credentials.yaml'), log);
   await (marketMod.processPendingMarketOps as () => Promise<void>)();
   (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
   (companionSyncMod.syncCompanionPlugins as () => void)();
@@ -318,6 +362,8 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
       await preBootSync();
       const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
       log('service', 'dsh web 服务已启动: ' + r.webUrl);
+      currentWebInfo = { webUrl: r.webUrl, port: r.port };
+
       notify('boot.web-ready', r);
       return { ok: true, webUrl: r.webUrl, port: r.port };
     }
@@ -329,6 +375,8 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
     const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
     log('service', 'dsh web 服务已重启: ' + r.webUrl);
+    currentWebInfo = { webUrl: r.webUrl, port: r.port };
+
     notify('boot.web-ready', r);
     return { ok: true, webUrl: r.webUrl, port: r.port };
   } catch (e) {
@@ -350,22 +398,6 @@ recoveryCenter.init({
 interface RpcReq { id: number | null; method: string; params?: Record<string, unknown> }
 type RpcResult = Record<string, unknown>;
 type RpcParams = Record<string, unknown> | undefined;
-
-const MODULES_BY_NAME: Record<string, Mod> = {
-  profile: profileMod,
-  'runtime-paths': pathsMod,
-  proc: procMod,
-  'file-roots': fileRootsMod,
-  'guard-box': guardBoxMod,
-  'runtime-patches': runtimePatchesMod,
-  'companion-sync': companionSyncMod,
-  'plugin-ops': pluginOpsMod,
-  market: marketMod,
-};
-
-// 逃生舱白名单：只放纯计算/纯文件类模块；带进程副作用的
-// （shortcuts/junction-patrol/client-update/static-preview）必须走显式方法。
-const CALLABLE = new Set(Object.keys(MODULES_BY_NAME));
 
 const methods: Record<string, (p: RpcParams) => unknown> = {
   'shell.info': (): RpcResult => ({
@@ -437,6 +469,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       throw e;
     }
     rescueIntegration.clearRescueState?.();
+    currentWebInfo = { webUrl: r.webUrl, port: r.port };
+
     notify('boot.web-ready', r);
     startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
     scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
@@ -449,6 +483,12 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     return { ok: true };
   },
   'boot.state': (): RpcResult => (bootMod.state as () => unknown)() as RpcResult,
+  // ---- phone.*（手机连接桥：LAN 配对 + 白名单 RPC + 手机端占位页） ----
+  'phone.start': (p): RpcResult | Promise<RpcResult> => handlePhoneMethod('phone.start', p),
+  'phone.stop': (p): RpcResult | Promise<RpcResult> => handlePhoneMethod('phone.stop', p),
+  'phone.status': (p): RpcResult => handlePhoneMethod('phone.status', p) as RpcResult,
+  'phone.decide': (p): RpcResult => handlePhoneMethod('phone.decide', p) as RpcResult,
+  'phone.disconnect': (p): RpcResult => handlePhoneMethod('phone.disconnect', p) as RpcResult,
   // ---- chrome.init（getInfo；字段集对齐 main.js chrome:init handler） ----
   'chrome.init': (): RpcResult => {
     const s = loadSettings() as {
@@ -484,9 +524,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       staticPort: 0,
     };
   },
-  // 原地重启（= main.js restartWebServiceCore）：无锁窗口内消费市场排队 →
-  // 原地重启（= main.js restartWebServiceCore）：无锁窗口内消费市场排队 →
-  // 同步配套插件 → 修复模块遮蔽 → 恢复保留产物 → 重新拉起。
+  // 原地重启 Web 服务核心：无锁窗口内消费市场排队 → 同步配套插件 →
+  // 修复模块遮蔽 → 恢复保留产物 → 重新拉起。
   'boot.restart': async (): Promise<RpcResult> => restartWebServiceCore(),
   // ---- 恢复中心（vnext-absorb Phase 2）：Rust 壳创建的恢复中心窗口经专用
   // preload（WS JSON-RPC）调用这两个方法；动作分发在 lib/recovery-center。----
@@ -497,14 +536,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
   'rc.close': (): RpcResult => ({ ok: true }),
 };
 
-// P3 渐进收编：尚未在 sidecar 落地的桥方法返回 null（桥/插件侧按「无数据」
-// 降级，与桥断开时行为一致，不炸页面）。每收编一个真实现就从这里删除。
-const PENDING_BRIDGE_METHODS: string[] = [];
-for (const m of PENDING_BRIDGE_METHODS) {
-  methods[m] = (): null => null;
-}
-
-// ---- 真实现面（P3：对齐 main.js 各 ipcMain.handle 语义，去 GUI 化） --------
+// ---- 真实现面（P3：对齐原 Electron 主链路各 ipcMain.handle 语义，去 GUI 化） --------
 const balance = require(path.join(DSH_DESKTOP_ROOT, 'balance.js')) as {
   queryBalance(home: string): Promise<Record<string, unknown> & { prices?: Record<string, unknown> }>;
   readActiveModel(home: string): string;
@@ -1106,13 +1138,6 @@ function respond(msg: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(msg) + '\n');
 }
 
-function modCall(name: string, fn: string, args: unknown[]): unknown {
-  if (!CALLABLE.has(name)) throw new Error('module not callable: ' + name);
-  const f = MODULES_BY_NAME[name]![fn];
-  if (typeof f !== 'function') throw new Error('no export: ' + name + '.' + fn);
-  return (f as (...a: unknown[]) => unknown)(...(Array.isArray(args) ? args : []));
-}
-
 const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line: string) => { void handleLine(line); });
 rl.on('close', () => { void gracefulExit(); });
@@ -1148,11 +1173,6 @@ async function handleLine(line: string): Promise<void> {
     if (fixed) {
       const result = await fixed(params);
       return respond({ jsonrpc: '2.0', id, result: result === undefined ? null : result });
-    }
-    if (method === 'mod.call') {
-      const args = Array.isArray(params && params.args) ? (params!.args as unknown[]) : [];
-      const value = modCall(String(params && params.name), String(params && params.fn), args);
-      return respond({ jsonrpc: '2.0', id, result: { ok: true, value: value === undefined ? null : value } });
     }
     respond({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found: ' + method } });
   } catch (e) {

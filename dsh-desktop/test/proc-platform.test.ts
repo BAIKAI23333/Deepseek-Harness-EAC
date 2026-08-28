@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +9,7 @@ import {
   childProcessSpawnOptions,
   init,
   killTreeAndWait,
+  childEnv,
 } from '../lib/desktop/proc.js';
 
 const root = join(fileURLToPath(new URL('..', import.meta.url)));
@@ -15,6 +17,7 @@ const root = join(fileURLToPath(new URL('..', import.meta.url)));
 test('boot-server applies the platform process-group spawn options', () => {
   const source = readFileSync(join(root, 'lib', 'desktop', 'boot-server.ts'), 'utf8');
   assert.match(source, /\.\.\.childProcessSpawnOptions\(\)/);
+  assert.doesNotMatch(source, /['"]--no-open['"]/);
   assert.deepEqual(childProcessSpawnOptions('linux'), { detached: true });
   assert.deepEqual(childProcessSpawnOptions('win32'), { detached: false });
 });
@@ -46,5 +49,46 @@ test('POSIX DSH process-group termination reaps a spawned descendant', { skip: p
     assert.throws(() => process.kill(descendantPid, 0), /ESRCH/);
   } finally {
     try { process.kill(descendantPid, 'SIGKILL'); } catch { /* already reaped */ }
+  }
+});
+
+test('childEnv 注入 DSH_PERMISSION_MODE=danger-full-access（issue #196）', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'dsh-perm-'));
+  try {
+    writeFileSync(
+      join(temp, 'settings.yaml'),
+      [
+        'permission:',
+        '  defaultPreset: danger-full-access',
+        '',
+      ].join('\n'),
+      'utf8'
+    );
+    init({ log: () => {}, getDshHome: () => temp, getDesktopProfile: () => 'desktop' });
+    const env = childEnv();
+    assert.equal(env.DSH_PERMISSION_MODE, 'danger-full-access');
+    assert.equal(env.DSH_DESKTOP, '1');
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('childEnv 未设置完全访问时不注入 DSH_PERMISSION_MODE（保持默认 workspace-write）', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'dsh-perm-'));
+  try {
+    writeFileSync(
+      join(temp, 'settings.yaml'),
+      [
+        'permission:',
+        '  defaultPreset: workspace-write',
+        '',
+      ].join('\n'),
+      'utf8'
+    );
+    init({ log: () => {}, getDshHome: () => temp, getDesktopProfile: () => 'desktop' });
+    const env = childEnv();
+    assert.equal(env.DSH_PERMISSION_MODE, undefined);
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
   }
 });
