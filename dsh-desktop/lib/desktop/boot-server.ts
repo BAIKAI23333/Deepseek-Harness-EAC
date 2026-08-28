@@ -14,6 +14,7 @@
 
 import fs = require('node:fs');
 import http = require('node:http');
+import os = require('node:os');
 import path = require('node:path');
 import cp = require('node:child_process');
 import type { ChildProcess } from 'node:child_process';
@@ -66,6 +67,25 @@ export function setIsRestarting(v: boolean): void { restartingServer = v; }
 function logsDir(): string { return path.join(ctx.getUserDataDir(), 'logs'); }
 function dshWebLogPath(): string { return path.join(logsDir(), 'dsh-web.log'); }
 
+// 0.1.2 暗雷自愈：内核「全新凭据库创建路径」（如 browser-session grant 首次
+// 持久化）会把顶层 version 写成 YAML 字符串 "1"，而读取路径严格 === 1 拒收
+// → 之后每次启动必然退出码 1（boot.start 失败 → /died 页）。实测：凭据文件
+// 缺失后由内核重建即复现。这里在拉起内核前做文本级自愈：仅把带引号的顶层
+// version 行规整为数字 1，绝不触碰任何密钥记录；失败不阻塞启动。
+function healCredentialsVersion(): void {
+  try {
+    const home = childEnv().DSH_HOME || path.join(os.homedir(), '.dsh');
+    const file = path.join(home, '.credentials.yaml');
+    if (!fs.existsSync(file)) return;
+    const text = fs.readFileSync(file, 'utf8');
+    const fixed = text.replace(/^([ \t]*)version:[ \t]*["']1["'][ \t]*$/m, '$1version: 1');
+    if (fixed !== text) {
+      fs.writeFileSync(file, fixed);
+      ctx.log('dsh', '已自愈 .credentials.yaml 顶层 version 引号（0.1.2 全新建库路径写为字符串、读取严格拒收的写读不对称）');
+    }
+  } catch { /* 自愈失败交由内核报错路径展示 */ }
+}
+
 async function startServer(unsafePortRetries = 4, overlays: string[] = []): Promise<string> {
   // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
   if (serverProc && !serverProc.killed && !ctx.isQuitting()) {
@@ -73,6 +93,7 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
     killTree(serverProc);
     serverProc = null;
   }
+  healCredentialsVersion();
   // 稳定端口（stable-port）：复用 settings.webPort，避免每次 --port 0 换
   // origin 导致 localStorage 偏好丢失；同时避开 Chromium 受限端口。
   const webPort = await chooseStableWebPort({
