@@ -115,9 +115,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
   // schemastery（已加入 app 闭包，见 package.json）。
   { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
-  // VCP 视觉通感协议（dsh-raw-html 0.6.0，plolpl789，MIT）：消息 HTML 渲染
-  // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）+ 渲染引擎前端
-  // 补丁（patch-deps.js 注入 dsh-web-frontend dist）+ 默认开启。bundle 插件：
+  // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：消息 HTML 渲染
+  // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）。EAC 集成通过
+  // conversation.chat.node 的 assistant-step slot 接管，不修改上游压缩 bundle。
+  // bundle 插件：
   // 必须进 profile bundles（BUNDLED_BUILTIN_PLUGINS / DESKTOP_PROFILE_BUNDLES
   // 播种），overlay 行会被 removeBundledRowDuplicates 去重，不可写 patch 行。
   { id: 'dsh-raw-html', name: 'dsh-raw-html', dir: 'dsh-raw-html' },
@@ -271,8 +272,8 @@ export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: stri
   'dsh-session-manager': { npm: 'dsh-session-manager' },
   // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
   'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
-  // GitHub 分发（npm 未发布，tag v0.6.0）：dsh-raw-html。
-  'dsh-raw-html': { github: 'plolpl789/dsh-raw-html' },
+  // dsh-raw-html 是 EAC 托管适配版，不登记上游更新源，避免被原版 bundle
+  // 注入实现覆盖。上游升级必须先移植并通过 EAC slot 集成回归。
 };
 
 // ---------------------------------------------------------------------------

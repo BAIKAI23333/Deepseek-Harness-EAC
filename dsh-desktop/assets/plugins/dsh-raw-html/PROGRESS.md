@@ -1,7 +1,7 @@
 # dsh-raw-html · 项目状态快照（PROGRESS.md）
 
 > 本文件是会话交接文档：任何新会话读到本文件即可恢复全部上下文。
-> 最后更新：2026-08-25（当前版本 0.6.0 · 思考门移除：v4 强制思考是模型边界，插件回归「渲染 + 美学」；协议保留思考最小化/初稿即定稿）。
+> 最后更新：2026-08-28（当前版本 0.6.1 · EAC 托管版已切换到官方 assistant-step slot）。
 > 版本演进 / 审计整改明细一律见 CHANGELOG.md，本文件不再重复记录。
 
 ## 1. 项目是什么
@@ -10,10 +10,10 @@
 让模型输出的 HTML 在聊天中渲染为真实视觉界面（卡片/图表/交互组件），
 支持流式渲染、表情包、安全过滤。插件位于 `G:\AI\H3MINI\dsh-raw-html\`。
 
-架构三部分：
+当前架构三部分：
 - `lib/index.js`（Host 端）：系统提示词注入（VCP 协议说明）+ /fonts 字体服务 + 开关状态持久化
-- `lib/client.js`（浏览器端）：「</>」开关按钮 + `window.__dshInput` 交互桥
-- `patch/patch-frontend.cjs`（核心）：改 dsh-web-frontend 的 dist bundle，注入 HTML 渲染能力
+- `lib/client.js`（浏览器端）：「</>」开关按钮 + `window.__dshInput` 交互桥 + assistant-step slot 接管 + Shadow DOM 渲染/安全过滤
+- `cordis.patch.yml`：把插件 client 注入官方插件注册表；不再修改 dsh-web-frontend dist bundle
 
 ## 2. 当前进度
 
@@ -39,38 +39,33 @@
 | P3-美学系统 | **美学系统 RAG 化（0.5.0）**：`styles/` 按风格分文档知识库（_INDEX + porcelain-data / wire-news / wabi-sabi）+ `examples/` 成品档案（八卦晚报收为首个样本，技法回填 wire-news）+ 注入管线改造——检索指引（必做）→ 命中风格文档 / 未命中走【兜底美学】；克莉丝建议①自检后置（动笔三问+落盘一勾）②惊艳出口（深色渐变+光效合法场合）；协议正文安全/流式铁律 12 条精简为落盘一勾 | ✅ 已写入 · **需重启 DSH 生效** |
 | P3-思考门 | **思考门战役（0.5.5~0.5.16）→ 0.6.0 移除**：agent/request 瀑布 + reasoningEffort 删除 + 关键词分类 + 日志落盘——五层全通（通道/缓存/分类/删除/日志）但 DeepSeek v4 **忽略 thinking:disabled 且无低档 effort**（先生实测 maxTokens=4096 思考吃满正文截断实锤），模型强制思考是能力边界，插件层无法突破。全部代码已移除（lib 578→345 行），协议保留【心流纪律·思考最小化】【初稿即定稿】；未来换支持 effort=off 的模型时参考 CHANGELOG v0.5.5~0.5.16 git 历史恢复 | ✅ 已移除 · 结论入档 |
 
-## 3. 关键文件（改动清单）
+## 3. 当前关键文件（改动清单）
 
-- `patch/patch-frontend.cjs`：**v6 补丁脚本**（锚点 C 注入稳定区模块 + 锚点 A 替换 case"html" 分支）
-- `patch/update-v6-inject.cjs`：**v6 模块增量更新脚本**（bundle 已注入旧模块时整段夹取替换为磁盘最新 v6-inject.js，健康检查+回滚）
-- `patch/v6-inject.js`：**v6 稳定区模块 + P3 数学公式模块**（轻量 HTML 扫描器 + 状态机 + 组装 + 单美元安全判定 + KaTeX 渲染 + **流式公式占位 mathPlaceholder/undecorateMathPlaceholders**，注入 vc() 定义前，挂 window.__vcpStable 与 window.__vcpMath）
-- `lib/index.js`：buildProtocolText 已追加【交互能力】【图片通道】【数学公式】三段（模板字符串，勿用反引号！）；已注册 /fonts 与 **/vendor** 两个静态服务（KaTeX 后备资源）
-- `lib/client.js`：开关按钮 + input 桥；**KaTeX 自备全套注入**（改名版 katex-vd.css + katex.min.js + auto-render.min.js 链式加载——DSH 自带 KaTeX 是延迟加载，消息渲染时可能未就绪导致公式 fallback 普通字体，故自备并改名字体名防冲突）
-- `assets/vendor/`：**KaTeX 资源 + Mermaid 引擎**（katex.min.js/css + auto-render.min.js + 20 字体 + katex-vd.css 改名版 + **mermaid.min.js 11.9.0**，自 VCPChat vendor 抽取；katex-vd.css 的字体名加 _VD 后缀避免与 DSH 自带 KaTeX 的 @font-face 冲突）
-- `tests/stable.test.mjs`：**32 项稳定区帧序列测试**（node:vm 加载 v6-inject.js + jsdom stub，验证元素引用跨帧稳定/动画策略/回退/边界/style 修复/压力场景）
-- `tests/math.test.mjs`：**46 项 P3 数学公式测试**（单美元安全判定/字符扫描/DOM 兜底/终帧挂载钩子/KaTeX 配置/幂等轮询/改名 CSS 正确性）
-- `tests/security.test.mjs`：31 项正则行为测试
-- `tests/bundle.test.mjs`：**29 项 bundle 完整性测试**（含 v6 特征断言 + P3 数学公式特征断言）
-- `tests/smoke.test.mjs`：15 项 jsdom 渲染链路测试
-- `VCP-INTERACTIONS.md`：交互手册；`DESIGN.md`：设计规范；`FRAMING.md`：故事装帧轻提示手册（SVG 顶栏封面，只教方法不写死设计）
+- `lib/index.js`：协议文本、`/fonts` 与 `/vendor` 静态服务、开关状态持久化
+- `lib/client.js`：assistant-step slot 适配、Shadow DOM 卡片渲染、安全过滤、KaTeX/Mermaid/字体加载和 input 桥
+- `cordis.patch.yml`：注册 EAC 托管 client 插件
+- `assets/vendor/`：KaTeX、Mermaid 和颜色引擎静态资源
+- `styles/`、`DESIGN.md`、`EDITORIAL.md`、`FRAMING.md`、`BREATH.md`：运行时美学知识层
+- 仓库 `dsh-desktop/test/raw-html-integration.test.ts`、`raw-html-sanitize.test.ts`：EAC slot 与安全回归
+- 历史 `patch/` 实现已从当前分发树删除，旧测试仅保留在历史变更记录中
 
 ## 4. Bundle 状态
 
-- 已应用补丁版本：**v6.16**（v6.15 全部 + **流式公式占位**：mathPlaceholder 源码层替换 + undecorateMathPlaceholders 解占位 + render 流式路径接入）
-- 位置：`%APPDATA%\npm\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-web-frontend\dist\assets\index-Dqw48FrP.js`
-- 备份：同目录 `.bak-v6u-2026-08-20T08-44-55-075Z`（v6.16 模块更新前）；v5 基线保留
-- 验证：`node --check` 通过；六套测试 **194 项断言全绿**（stable 37 + security 33 + bundle 38 + smoke 15 + math 59 + mermaid 12）；**puppeteer + Edge 真实浏览器 e2e：4/4 图型（流程图/时序图/甘特图/智能字符）渲染成 SVG、无错误、中文正常**（截图存 comfy_output/e2e_mermaid_*.png，8090 可看）
+- 当前版本不修改 `dsh-web-frontend` 压缩 bundle，也不依赖旧版 `window.__vcpStable` /
+  `window.__vcpFast` 注入全局变量。
+- 消息渲染由官方 `conversation.chat.node` / `assistant-step` slot 接管；
+  普通消息复用官方组件，VCP 卡片进入 Shadow DOM。
+- KaTeX、Mermaid、颜色引擎和内置字体从插件自己的 `/vendor`、`/fonts` 服务提供。
 
-## 5. 如何运行测试 / 打补丁
+## 5. 如何运行测试
 
 ```powershell
-# 打补丁（自动健康检查 + 失败回滚；写 %APPDATA% 需 danger-full-access）
-node "G:\AI\H3MINI\dsh-raw-html\patch\patch-frontend.cjs"
-# 跑测试（bundle.test 内部 node --check 需 danger-full-access）
-node "G:\AI\H3MINI\dsh-raw-html\tests\stable.test.mjs"
-node "G:\AI\H3MINI\dsh-raw-html\tests\security.test.mjs"
-node "G:\AI\H3MINI\dsh-raw-html\tests\bundle.test.mjs"
-node "G:\AI\H3MINI\dsh-raw-html\tests\smoke.test.mjs"
+# EAC 项目级测试
+cd dsh-desktop
+node --test test/raw-html-integration.test.ts test/raw-html-sanitize.test.ts
+node --check assets/plugins/dsh-raw-html/lib/client.js
+node --check assets/plugins/dsh-raw-html/lib/index.js
+node assets/plugins/dsh-raw-html/tools/check-deps.cjs
 ```
 
 ## 6. 注意事项（血泪教训）

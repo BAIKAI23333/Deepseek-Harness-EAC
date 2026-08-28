@@ -2,14 +2,17 @@
  * dsh-raw-html —— VCP 视觉通感协议支持（浏览器半侧）。
  *
  * 职责：
- * 1. 在 composer 尾部工具栏（发送按钮旁）注入「</>」按钮：点击弹出设置面板，
+ * 1. 通过官方 conversation.chat.node slot 接管 assistant-step；仅当消息包含
+ *    #vcp-root 且用户开启渲染时，使用隔离 Shadow DOM 渲染，其他内容复用官方
+ *    Assistant 组件。插件渲染异常时由 slot 错误边界自动回退官方组件。
+ * 2. 在 composer 尾部工具栏（发送按钮旁）注入「</>」按钮：点击弹出设置面板，
  *    内含两个独立开关：
- *    - 渲染 HTML：驱动 localStorage['dsh.rawHtml']（前端渲染补丁读取）；
+ *    - 渲染 HTML：驱动 localStorage['dsh.rawHtml']（本插件渲染器读取）；
  *    - 美学注入：驱动 Host 侧美学协议注入（仅渲染开启时可用，置灰即强制关闭）。
  *    切换任一开关后自动强制刷新页面（新状态立即生效、全部消息重渲染）；
  *    面板底部另备「强制刷新页面」按钮，供调试注入代码时手动刷新。
- * 2. 注入 window.__dshInput(text)：VCP 按钮 onclick="input('...')"
- *    经渲染补丁桥接到这里，把文本填入输入框并发送。
+ * 3. 注入 window.__dshInput(text)：VCP 按钮 onclick="input('...')" 经安全属性
+ *    转换后桥接到这里，把文本填入输入框并发送。
  *
  * 本文件为手工维护的 __ModuleLoader__.load bundle（与 dsh-maid-emoji
  * 约定一致），不含 JSX；修改后执行 `node --check lib/client.js` 验证语法，
@@ -20,6 +23,8 @@ window.__ModuleLoader__.load({
   factory: function (require) {
     var module = { exports: {} }
     var exports = module.exports
+    var React = require('react')
+    var h = React.createElement
 
     var RENDER_KEY = 'dsh.rawHtml'
     var AESTHETIC_KEY = 'dsh.rawHtmlAesthetic'
@@ -37,18 +42,16 @@ window.__ModuleLoader__.load({
 
     // ---- 状态 ------------------------------------------------------------
 
-    // v6.35 三态化（先生定调 2026-08-29）：渲染开关与渲染器判定一致——
-    // undefined（从未点过「</>」）= 默认开启；"1" = 开；"0" = 显式关闭。
-    // 旧实现 === '1' 会把「从未设置」当作关闭，与 v6-inject 启动自检默认开启冲突。
+    // 新安装默认关闭；只有用户明确开启后才渲染模型输出的 HTML。
     function isRenderEnabled() {
-      try { return window.localStorage.getItem(RENDER_KEY) !== '0' } catch (e) { return true }
+      try { return window.localStorage.getItem(RENDER_KEY) === '1' } catch (e) { return false }
     }
     function setRenderEnabled(on) {
       try { window.localStorage.setItem(RENDER_KEY, on ? '1' : '0') } catch (e) {}
     }
-    /** 美学开关：无记录默认开启（EAC 内置默认）。显式 '0' 才关闭。 */
+    /** 美学开关：无记录默认关闭。 */
     function isAestheticEnabled() {
-      try { return window.localStorage.getItem(AESTHETIC_KEY) !== '0' } catch (e) { return true }
+      try { return window.localStorage.getItem(AESTHETIC_KEY) === '1' } catch (e) { return false }
     }
     function setAestheticEnabled(on) {
       try { window.localStorage.setItem(AESTHETIC_KEY, on ? '1' : '0') } catch (e) {}
@@ -467,6 +470,368 @@ window.__ModuleLoader__.load({
       loadScriptOnce('dsh-raw-html-color-engine', '/vendor/VCPColorEngine.js', null)
     }
 
+    // ---- EAC assistant-step 渲染适配 -------------------------------------
+    //
+    // 旧实现修改 dsh-web-frontend 的压缩 Markdown bundle。这里改为使用内核
+    // 已公开的 conversation.chat.node keyed slot：保留官方 assistant-step
+    // 组件作为普通内容和故障回退，只接管包含 #vcp-root 的文本块。
+
+    var officialAssistantComponent = null
+    var rawHtmlCardSeq = 0
+    var VCP_ROOT_RE = /<div\b[^>]*\bid\s*=\s*(['"])vcp-root\1[^>]*>/i
+
+    function hasVcpRoot(text) {
+      return typeof text === 'string' && VCP_ROOT_RE.test(text)
+    }
+
+    function unwrapVcpFences(text) {
+      return String(text || '').replace(/```(?:html)?[ \t]*\r?\n([\s\S]*?)```/gi, function (all, body) {
+        return hasVcpRoot(body) ? body : all
+      })
+    }
+
+    function includeTrailingVcpStyles(text, end) {
+      var rest = text.slice(end)
+      var consumed = 0
+      while (true) {
+        var match = /^\s*<style\b[^>]*>[\s\S]*?<\/style\s*>/i.exec(rest.slice(consumed))
+        if (!match) break
+        consumed += match[0].length
+      }
+      return end + consumed
+    }
+
+    function findVcpEnd(text, start) {
+      var token = /<\/?div\b[^>]*>/gi
+      token.lastIndex = start
+      var depth = 0
+      var match
+      while ((match = token.exec(text))) {
+        if (/^<\s*\/div/i.test(match[0])) depth -= 1
+        else if (!/\/\s*>$/.test(match[0])) depth += 1
+        if (depth === 0) return includeTrailingVcpStyles(text, token.lastIndex)
+      }
+      return text.length
+    }
+
+    function splitVcpSegments(text) {
+      var source = unwrapVcpFences(text)
+      var segments = []
+      var cursor = 0
+      while (cursor < source.length) {
+        var rest = source.slice(cursor)
+        var match = VCP_ROOT_RE.exec(rest)
+        if (!match) {
+          if (rest) segments.push({ kind: 'official', text: rest })
+          break
+        }
+        var start = cursor + match.index
+        if (start > cursor) segments.push({ kind: 'official', text: source.slice(cursor, start) })
+        var end = findVcpEnd(source, start)
+        segments.push({ kind: 'vcp', html: source.slice(start, end) })
+        cursor = end
+      }
+      return segments
+    }
+
+    function sanitizeCss(css) {
+      return String(css || '')
+        .replace(/@import\b[^;]*;?/gi, '')
+        .replace(/expression\s*\([^)]*\)/gi, '')
+        .replace(/url\s*\(\s*(['"]?)\s*javascript:[^)]*\)/gi, 'url()')
+        .replace(/(^|[;{])\s*(?:behavior|-moz-binding)\s*:[^;}]*(?=[;}])/gi, '$1')
+        .replace(/(^|[;{])\s*position\s*:\s*(?:fixed|sticky)\s*;?/gi, '$1')
+        .replace(/(^|[;{])\s*content\s*:[^;}]*(?=[;}])/gi, '$1')
+        .replace(/z-index\s*:\s*(-?\d+)\s*;?/gi, function (all, raw) {
+          return Math.abs(Number(raw)) >= 1000 ? '' : all
+        })
+    }
+
+    function isAllowedUrl(value, image) {
+      var raw = String(value || '').trim()
+      if (!raw) return false
+      var lower = raw.toLowerCase()
+      if (lower.indexOf('//') === 0) return false
+      if (lower.charAt(0) === '#' || (lower.charAt(0) === '/' && lower.charAt(1) !== '/')) return true
+      if (/^https?:/i.test(raw)) return true
+      if (!image && /^mailto:/i.test(raw)) return true
+      if (image && /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(raw)) return true
+      return !/^[a-z][a-z0-9+.-]*:/i.test(raw)
+    }
+
+    function sanitizeVcpHtml(rawHtml) {
+      var parser = new window.DOMParser()
+      var doc = parser.parseFromString(String(rawHtml || ''), 'text/html')
+      if (!doc.body || !doc.body.querySelector('[id="vcp-root"]')) return ''
+
+      var blocked = doc.body.querySelectorAll('script,iframe,object,embed,base,meta,link')
+      for (var bi = 0; bi < blocked.length; bi++) blocked[bi].remove()
+
+      var elements = doc.body.querySelectorAll('*')
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i]
+        if (el.localName === 'style') {
+          el.textContent = sanitizeCss(el.textContent)
+          continue
+        }
+        var attrs = Array.prototype.slice.call(el.attributes || [])
+        for (var ai = 0; ai < attrs.length; ai++) {
+          var attr = attrs[ai]
+          var name = attr.name.toLowerCase()
+          var value = attr.value
+          if (name === 'onclick') {
+            var inputMatch = /^input\s*\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?\s*$/.exec(value)
+            if (inputMatch) el.setAttribute('data-vcp-input', inputMatch[2])
+            el.removeAttribute(attr.name)
+            continue
+          }
+          if (/^on/i.test(name) || name === 'srcdoc' || name === 'srcset' || name === 'action' || name === 'formaction') {
+            el.removeAttribute(attr.name)
+            continue
+          }
+          if (name === 'style') {
+            var safeStyle = sanitizeCss(value)
+            if (safeStyle.trim()) el.setAttribute('style', safeStyle)
+            else el.removeAttribute('style')
+            continue
+          }
+          if (name === 'href' || name === 'xlink:href') {
+            if (!isAllowedUrl(value, false)) el.removeAttribute(attr.name)
+            continue
+          }
+          if (name === 'src' || name === 'poster') {
+            if (!isAllowedUrl(value, true)) el.removeAttribute(attr.name)
+          }
+        }
+        if (el.localName === 'a' && el.getAttribute('target') === '_blank') {
+          el.setAttribute('rel', 'noopener noreferrer')
+        }
+      }
+      return doc.body.innerHTML
+    }
+
+    function applyVcpColorVars(root) {
+      var engine = window.__vcpColor || window.VCPColorEngine
+      if (!engine || typeof engine.generate !== 'function') return
+      var nodes = root.querySelectorAll('[data-vcp-preset],[data-vcp-movement],[data-vcp-soul],[data-vcp-accent]')
+      for (var i = 0; i < nodes.length; i++) {
+        var el = nodes[i]
+        try {
+          var opts = {}
+          if (el.dataset.vcpPreset) opts.movement = el.dataset.vcpPreset
+          else if (el.dataset.vcpMovement) opts.movement = el.dataset.vcpMovement
+          if (el.dataset.vcpMode) opts.mode = el.dataset.vcpMode
+          if (el.dataset.vcpAccent) {
+            if (el.dataset.vcpAccent.charAt(0) === '#') opts.accentHex = el.dataset.vcpAccent
+            else opts.accentHue = parseFloat(el.dataset.vcpAccent)
+          }
+          if (el.dataset.vcpSoul) {
+            var soul = el.dataset.vcpSoul.split(',')
+            var soulNames = ['thermalSoul', 'valence', 'arousal', 'entropy']
+            for (var si = 0; si < soulNames.length; si++) {
+              var n = parseFloat(soul[si])
+              if (!isNaN(n)) opts[soulNames[si]] = n
+            }
+          }
+          var palette = engine.generate(opts)
+          var hex = palette && palette.hex ? palette.hex : {}
+          for (var key in hex) {
+            if (!Object.prototype.hasOwnProperty.call(hex, key)) continue
+            var kebab = key.replace(/[A-Z]/g, function (m) { return '-' + m.toLowerCase() })
+            el.style.setProperty('--vcp-' + kebab, hex[key])
+          }
+        } catch (e) {}
+      }
+    }
+
+    function hydrateVcpCard(root, streaming) {
+      applyVcpColorVars(root)
+      if (streaming) return
+      try {
+        if (typeof window.renderMathInElement === 'function') {
+          window.renderMathInElement(root, {
+            delimiters: [
+              { left: '$$', right: '$$', display: true },
+              { left: '\\[', right: '\\]', display: true },
+              { left: '\\(', right: '\\)', display: false },
+            ],
+            ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+            throwOnError: false,
+          })
+        }
+      } catch (e) {}
+      try {
+        if (!window.mermaid || typeof window.mermaid.run !== 'function') return
+        var codeNodes = root.querySelectorAll('pre > code.language-mermaid')
+        for (var i = 0; i < codeNodes.length; i++) {
+          var code = codeNodes[i]
+          var box = document.createElement('div')
+          box.className = 'mermaid'
+          box.textContent = code.textContent
+          code.parentNode.replaceWith(box)
+        }
+        var diagrams = Array.prototype.slice.call(root.querySelectorAll('.mermaid:not([data-processed])'))
+        if (diagrams.length) window.mermaid.run({ nodes: diagrams }).catch(function () {})
+      } catch (e) {}
+    }
+
+    var VCP_SHADOW_BASE =
+      '<style data-eac-vcp-base>' +
+      ':host{display:block;min-width:0;max-width:100%;isolation:isolate;overflow:auto;overscroll-behavior:contain;}' +
+      '*,*::before,*::after{box-sizing:border-box;}' +
+      '[id="vcp-root"]{max-width:100%;overflow-wrap:anywhere;}' +
+      'img,svg,video,canvas{max-width:100%;height:auto;}' +
+      'button,[data-vcp-input]{font:inherit;}' +
+      '</style>' +
+      '<link rel="stylesheet" href="/vendor/katex-vd.css">'
+
+    function RawHtmlCard(props) {
+      var hostRef = React.useRef(null)
+      var cardIdRef = React.useRef(null)
+      if (cardIdRef.current === null) {
+        rawHtmlCardSeq += 1
+        cardIdRef.current = 'dsh-vcp-card-' + rawHtmlCardSeq
+      }
+      var sanitized = React.useMemo(function () {
+        return sanitizeVcpHtml(props.html)
+      }, [props.html])
+
+      React.useLayoutEffect(function () {
+        var host = hostRef.current
+        if (!host || !sanitized) return undefined
+        var shadow = host.shadowRoot || host.attachShadow({ mode: 'open' })
+        shadow.innerHTML = VCP_SHADOW_BASE + sanitized
+        var click = function (event) {
+          var path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target]
+          for (var i = 0; i < path.length; i++) {
+            var node = path[i]
+            if (!node || !node.getAttribute) continue
+            var text = node.getAttribute('data-vcp-input')
+            if (text !== null) {
+              event.preventDefault()
+              event.stopPropagation()
+              if (typeof window.__dshInput === 'function') window.__dshInput(text)
+              return
+            }
+          }
+        }
+        shadow.addEventListener('click', click)
+        var timer = window.setTimeout(function () { hydrateVcpCard(shadow, props.streaming) }, 0)
+        return function () {
+          window.clearTimeout(timer)
+          shadow.removeEventListener('click', click)
+        }
+      }, [sanitized, props.streaming])
+
+      if (!sanitized) {
+        return h('pre', { className: 'dsh-vcp-invalid' }, props.html)
+      }
+      return h('div', {
+        ref: hostRef,
+        id: cardIdRef.current,
+        className: 'dsh-vcp-shadow-host',
+        'data-vcp-card-host': 'true',
+      })
+    }
+
+    function cloneAssistantProps(props, blocks, status) {
+      var data = Object.assign({}, props.node.data, { blocks: blocks })
+      if (status) data.status = status
+      return Object.assign({}, props, {
+        node: Object.assign({}, props.node, { data: data }),
+      })
+    }
+
+    function RawHtmlAssistant(props) {
+      if (!officialAssistantComponent || !isRenderEnabled()) {
+        return officialAssistantComponent ? h(officialAssistantComponent, props) : null
+      }
+      var data = props.node && props.node.data
+      var blocks = data && Array.isArray(data.blocks) ? data.blocks : []
+      var descriptors = []
+      var officialBlocks = []
+      var foundVcp = false
+
+      function flushOfficial() {
+        if (!officialBlocks.length) return
+        descriptors.push({ kind: 'official', blocks: officialBlocks })
+        officialBlocks = []
+      }
+
+      for (var bi = 0; bi < blocks.length; bi++) {
+        var block = blocks[bi]
+        if (!block || block.kind !== 'text' || !hasVcpRoot(block.text)) {
+          officialBlocks.push(block)
+          continue
+        }
+        var parts = splitVcpSegments(block.text)
+        for (var pi = 0; pi < parts.length; pi++) {
+          var part = parts[pi]
+          if (part.kind === 'official') {
+            if (part.text) officialBlocks.push(Object.assign({}, block, { text: part.text }))
+          } else {
+            foundVcp = true
+            flushOfficial()
+            descriptors.push({ kind: 'vcp', html: part.html })
+          }
+        }
+      }
+      flushOfficial()
+      if (!foundVcp) return h(officialAssistantComponent, props)
+
+      return h('div', { className: 'dsh-vcp-assistant', 'data-vcp-assistant': 'true' },
+        descriptors.map(function (item, index) {
+          if (item.kind === 'vcp') {
+            return h(RawHtmlCard, {
+              key: 'vcp-' + index,
+              html: item.html,
+              streaming: data.status === 'running',
+            })
+          }
+          var status = data.status
+          if (status === 'interrupted' && index !== descriptors.length - 1) status = 'settled'
+          return h(officialAssistantComponent,
+            Object.assign({ key: 'official-' + index }, cloneAssistantProps(props, item.blocks, status)))
+        }))
+    }
+
+    function isReactComponentType(component) {
+      if (typeof component === 'function' || typeof component === 'string') return true
+      // React.memo() / React.forwardRef() return object component types.
+      return component !== null && typeof component === 'object'
+    }
+
+    function registerAssistantRenderer(ctx) {
+      if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return
+      ctx.slots.inject('conversation.chat.node', function () {
+        var entries = typeof ctx.slots.entries === 'function'
+          ? ctx.slots.entries('conversation.chat.node')
+          : []
+        var official = null
+        for (var i = 0; i < entries.length; i++) {
+          var entry = entries[i]
+          if (entry && entry.options && entry.options.key === 'assistant-step' && entry.component !== RawHtmlAssistant) {
+            official = entry
+            break
+          }
+        }
+        if (!official || !isReactComponentType(official.component)) {
+          console.warn('[dsh-raw-html] 未找到官方 assistant-step 渲染器，保持官方界面')
+          return function () {}
+        }
+        officialAssistantComponent = official.component
+        return ctx.slots.register({
+          name: 'conversation.chat.node',
+          key: 'assistant-step',
+          // Keyed slots reject duplicate key+priority cells; the lowest priority wins.
+          priority: -1,
+          // StoredEntry keeps locale beside options; inheriting options.locale leaves
+          // the official Assistant component without its required `t` prop.
+          locale: typeof official.locale === 'string' ? official.locale : 'conversation',
+        }, RawHtmlAssistant)
+      })
+    }
+
     // ---- 卡片下载：hover 浮出「⤓ 下载 HTML」按钮 ----------------------------
     // 需求：渲染出的 VCP 卡片（装帧小说 / 图表 / 卡片）可下载为【自包含 HTML】存档。
     // 实现要点：
@@ -647,6 +1012,15 @@ window.__ModuleLoader__.load({
     function initDownload() {
       if (dlInitDone) return
       dlInitDone = true
+      function cardFromEvent(ev) {
+        var path = typeof ev.composedPath === 'function' ? ev.composedPath() : [ev.target]
+        for (var i = 0; i < path.length; i++) {
+          var node = path[i]
+          if (!node || !node.matches) continue
+          if (node.matches('[id="vcp-root"],[id^="vcp-msg-"]')) return node
+        }
+        return null
+      }
       document.addEventListener('mouseover', function (ev) {
         var t = ev.target
         if (!t || !t.closest) return
@@ -654,7 +1028,7 @@ window.__ModuleLoader__.load({
           if (dlHideTimer) window.clearTimeout(dlHideTimer)
           return
         }
-        var card = t.closest('[id="vcp-root"],[id^="vcp-msg-"]')
+        var card = cardFromEvent(ev) || t.closest('[id="vcp-root"],[id^="vcp-msg-"]')
         if (card) showDlFor(card)
       })
       document.addEventListener('mouseout', function (ev) {
@@ -665,7 +1039,7 @@ window.__ModuleLoader__.load({
           if (dlBtn && (rt === dlBtn || dlBtn.contains(rt))) return
           if (rt.closest('[id="vcp-root"],[id^="vcp-msg-"]') === dlCard) return
         }
-        if (t.closest('[id="vcp-root"],[id^="vcp-msg-"]')) scheduleDlHide()
+        if (cardFromEvent(ev) || t.closest('[id="vcp-root"],[id^="vcp-msg-"]')) scheduleDlHide()
       })
     }
 
@@ -1260,7 +1634,7 @@ window.__ModuleLoader__.load({
       row.className = 'aes-row'
       var inp = document.createElement('input')
       inp.className = 'aes-input'
-      inp.placeholder = 'G:\\AI\\H3MINI\\美学包'
+      inp.placeholder = 'D:\\我的字体（留空则仅内置精选字体）'
       var addBtn = document.createElement('button')
       addBtn.className = 'aes-btn'
       addBtn.textContent = '挂载'
@@ -1284,7 +1658,7 @@ window.__ModuleLoader__.load({
       tmpDiv.style.marginTop = '4px'
       foot.appendChild(tmpDiv)
       function updateRoots() {
-        rootsDiv.textContent = data.extraRoots && data.extraRoots.length ? '已挂载：' + data.extraRoots.join(' · ') : '已挂载：无（默认 I:\\字体 + 内置自动服务）'
+        rootsDiv.textContent = data.extraRoots && data.extraRoots.length ? '已挂载：' + data.extraRoots.join(' · ') : '已挂载：无（默认仅内置精选字体）'
       }
       addBtn.addEventListener('click', function () {
         var p = (inp.value || '').trim()
@@ -2077,8 +2451,12 @@ window.__ModuleLoader__.load({
       // 旧版单开关状态迁移（仅一次）
       migrateState()
 
-      // 暴露 input 桥（渲染补丁的 onclick 处理器调用）
+      // 暴露 input 桥（隔离渲染器把受控 onclick 转成 data-vcp-input 后调用）
       window.__dshInput = sendText
+
+      // 通过官方 keyed slot 接管 assistant-step。普通消息始终复用官方组件；
+      // raw-html 条目崩溃时，slot 错误边界会自动回退到被遮蔽的官方条目。
+      registerAssistantRenderer(ctx)
 
       // 卡片 hover 下载：全局单例浮动按钮 + 事件委托（不插 React DOM）
       initDownload()
@@ -2116,7 +2494,16 @@ window.__ModuleLoader__.load({
       })
     }
 
+    // 安全过滤函数导出：供 EAC 项目级测试（test/raw-html-sanitize.test.ts）在
+    // Node/jsdom 中直接验证渲染安全模型，避免依赖已废弃的 bundle 注入引擎。
+    exports.sanitizeVcpHtml = sanitizeVcpHtml
+    exports.sanitizeCss = sanitizeCss
+    exports.isAllowedUrl = isAllowedUrl
+    exports.hasVcpRoot = hasVcpRoot
+    exports.registerAssistantRenderer = registerAssistantRenderer
+
     exports.apply = apply
+    exports.inject = ['slots']
     return module.exports
   },
 })

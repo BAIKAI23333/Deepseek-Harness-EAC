@@ -56,6 +56,7 @@ const { migrateManagedCompactPresets } = require('./compact-preset-migrate');
 const { buildErrorDetail } = require('./error-detail');
 const { SessionWatcher, scanZstdFrames } = require('./session-watcher');
 const { isEncodingMismatch, healSessionEncodingConflicts } = require('./session-encoding-heal');
+const { healCredentialsVersion } = require('./credentials-format-heal');
 const { patchSessionManage } = require('./scripts/patch-session-manage');
 const { togglePluginInPatch, removePluginFromPatch, hasEntryId } = require('./scripts/plugin-manager-patch');
 const { collectPluginRows } = require('./plugin-manager-state');
@@ -713,10 +714,8 @@ async function startServer(unsafePortRetries = 4, overlays = []) {
       .flatMap((p) => ['--patch', p]);
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
     // 硬编码别名，不接受父级 --profile）；app 入口由 profile bundles 决定，
-    // --host/--no-open/--port 等透传给该 app。已实机冒烟验证 web-desktop 可启动。
-    // --no-open：web-app 内核插件的 openBrowser 默认 true，就绪后会用系统默认
-    // 浏览器再开一次本端口 URL；壳已有自己的窗口，必须关掉这个行为。
-    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--no-open', '--port', String(webPort), ...patchArgs], {
+    // --host/--port 透传给该 app。已实机冒烟验证 web-desktop 可启动。
+    const proc = spawn(nodeBin, ['--use-system-ca', bin, '--profile', desktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs], {
       cwd: userDataDir,
       env: childEnv(),
       windowsHide: true,
@@ -1155,6 +1154,15 @@ function showRescuePage() {
 // 合并后的 { applied }，均未命中返回 false（走原失败链路）。
 async function bootRescuePreRetry(errText) {
   const applied = [];
+  // credentials-local treats an unquoted YAML number as invalid metadata.
+  // Repair only this narrow shape after a failed boot; secrets stay untouched.
+  try {
+    const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+    const healed = healCredentialsVersion(path.join(home, '.credentials.yaml'), log);
+    if (healed.changed) applied.push('credentials.yaml version 格式自愈');
+  } catch (err) {
+    log('credentials-heal', 'preRetry 凭据格式自愈失败: ' + String((err && err.message) || err));
+  }
   // 1) 会话编码冲突（Issue #77）：归档相反格式的遗留日志文件（数据无损）。
   try {
     let text = String(errText || '');

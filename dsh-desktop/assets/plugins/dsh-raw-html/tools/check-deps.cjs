@@ -47,7 +47,7 @@ function depName(spec) {
 }
 
 let ok = true
-const files = ['lib/index.js', 'lib/client.js', 'patch/patch-frontend.cjs', 'tools/check-deps.cjs']
+const files = ['lib/index.js', 'lib/client.js', 'tools/check-deps.cjs']
 for (const rel of files) {
   const full = path.join(ROOT, rel)
   if (!fs.existsSync(full)) continue

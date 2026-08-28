@@ -133,6 +133,18 @@
             Smoke = @()
         },
         @{
+            Name = 'plugin-copy'
+            Domain = 'plugins'
+            Pattern = '^dsh-desktop/lib/plugin-copy\.(ts|js)$'
+            Reference = 'references/dsh-plugins.md'
+            Level = 'full'
+            Tests = @(
+                'test/companion-copy-integrity.test.ts',
+                'test/plugin-copy-stamp.test.ts'
+            )
+            Smoke = @()
+        },
+        @{
             Name = 'plugin-ops'
             Domain = 'plugins'
             Pattern = 'plugin-ops\.(ts|js)$|plugin-manager-state|scripts/onboarding|scripts/plugin-manager-patch'
@@ -157,6 +169,19 @@
                 'test/companion-copy-integrity.test.ts',
                 'test/plugin-slot-registration.test.ts',
                 'test/onboarding-selection.test.ts'
+            )
+            Smoke = @('node tauri-shell/stage-resources.mjs')
+        },
+        @{
+            Name = 'desktop-package-manifest'
+            Domain = 'updates-packaging'
+            Pattern = '^dsh-desktop/package\.json$'
+            Reference = 'references/updates-and-packaging.md'
+            Level = 'package'
+            Tests = @(
+                'test/bundled-files.test.ts',
+                'test/raw-html-integration.test.ts',
+                'test/raw-html-sanitize.test.ts'
             )
             Smoke = @('node tauri-shell/stage-resources.mjs')
         },

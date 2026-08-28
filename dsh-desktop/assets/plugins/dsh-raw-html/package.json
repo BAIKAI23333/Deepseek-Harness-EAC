@@ -1,7 +1,7 @@
 {
   "name": "dsh-raw-html",
-  "version": "0.6.0",
-  "description": "VCP 视觉通感协议规范插件：消息 HTML 渲染开关 + vcp-fast 缓存/增量加速渲染引擎 + 内置 7 款开源精选字体 + 设计规范注入（任何电脑/agent 即插即用）",
+  "version": "0.6.1",
+  "description": "EAC 托管的 VCP 视觉通感插件：通过官方 conversation slot 隔离渲染 HTML，并提供字体、美学和设计规范能力",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -24,12 +24,8 @@
   "files": [
     "lib/*.js",
     "assets",
-    "patch/*.js",
-    "patch/*.cjs",
     "tools/*.cjs",
     "tools/*.py",
-    "tests/*.mjs",
-    "tests/*.cjs",
     "docs",
     "cordis.patch.yml",
     "DESIGN.md",
@@ -52,6 +48,7 @@
       "inject": [
         "react",
         "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-ui-slots"
       ],

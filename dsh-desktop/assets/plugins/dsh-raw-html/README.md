@@ -1,5 +1,13 @@
 # dsh-raw-html · VCP 视觉通感协议规范插件
 
+> EAC 集成说明（2026-08-27）：当前内置版通过
+> `conversation.chat.node` 的 `assistant-step` slot 渲染，不再修改
+> `dsh-web-frontend` 压缩 bundle。新安装默认关闭 HTML 与美学开关，
+> 由用户主动开启。
+>
+> 时间说明：本目录保留的上游草稿和历史记录中有 `2026-08-29`
+> 的未来日期标签，仅作为原始记录保留，不代表该日期的事项已经发生或验收。
+
 在 DeepSeek Harness Web GUI 中实现 **VCP（Visual-Synesthesia，视觉通感）协议**：
 消息里的 HTML 从「一坨源码」变成真正渲染的界面，并让 agent 按一套**可维护的设计规范**输出。
 
@@ -18,10 +26,9 @@
 ![效果图 4](docs/images/banner-4.jpg)
 ![效果图 5](docs/images/banner-5.jpg)
 
-## 📣 近期更新（v0.6.0 · 补丁 v6.38）
+## 📣 近期更新（EAC v0.6.1）
 
-- **自愈层 v6.37/v6.38（2026-08-29）**：卡片渲染撕裂根治——CommonMark 块级标签不能打断段落（文字+换行+`<div>` 撕裂）与卡片内部空行拆分问题，`fixVcpBlank` 补空行/压缩空行，整卡回归单一 htmlFlow（稳定测试 105 断言全绿）。
-- **消息主体渲染器 VCP 接管（2026-08-29）**：主 markdown 渲染器接入 VCP 渲染，消息卡片从此真正渲染为界面（此前官方策略是当源码文本显示）。
+- **EAC slot 集成（2026-08-27）**：仅识别 `#vcp-root` 内容，其他消息复用官方 Assistant 渲染器；VCP 卡片在 Shadow DOM 内隔离样式和事件，插件异常由 slot 错误边界回退官方渲染。
 - 早期更新（v0.3.0 · 2026-08-24）：
 
 - **修复（2026-08-24）**：适配新版前端 **0.1.0-rc.8 / 0.1.1-rc.x**（压缩器改名 Xu/jd 的新锚点组，自动探测、旧版兼容）；消除 schemastery 静态依赖导致的启动「模块找不到」故障（动态加载 + 降级，缺依赖也能正常启动）。
@@ -35,23 +42,22 @@
 
 ## 版本
 
-- **插件版本**：`package.json` 的 `version`（当前 **0.6.0**），随 `dsh plugin` 升级。
-- **补丁代号**：`patch/` 注入模块的演进代号（当前 **v6 · 子版本 v6.38**），由 `install-v6.cjs` 应用到前端 bundle，二者独立演进。前端兼容 **0.0.1-rc.5 ~ 0.1.0-rc.7** 与 **0.1.0-rc.8 / 0.1.1-rc.x** 两代压缩形态（vc/hp 与 Xu/jd 自动探测适配）。
+- **插件版本**：`package.json` 的 `version`（当前 **0.6.1**），由 EAC 内置资源管理。
+- **渲染集成**：通过 `conversation.chat.node` 的 `assistant-step` slot 接管，不再使用 `patch/` 修改前端 bundle。
 - 详细变更见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 组成
 
 | 部件 | 位置 | 作用 |
 |---|---|---|
-| 万能安装器 | `patch/install-v6.cjs` | **推荐**：自动探测 dist bundle，任意历史状态 → v6 全量补丁（幂等 + 备份回滚 + `node --check` 健康检查）；锚点不匹配时安全中止，不破坏环境 |
-| 稳定区渲染模块 | `patch/v6-inject.js` | 注入 dist bundle 的增量渲染引擎：容器感知块级缓存、流式尾巴占位、KaTeX 公式、Mermaid 查看器；`onclick="input('...')"` 桥接为真实交互；安全过滤 script/iframe/object/embed、on* 事件与 javascript: 协议 |
-| **vcp-fast 加速引擎** | `patch/v6-inject.js` | 容器感知块级增量：已闭合块缓存（元素引用跨帧不变 → React 跳过 diff → 动画真循环），只重渲染尾巴；实测缓存命中 **1200~6800 倍**、增量 **12 倍** 提速 |
+| 渲染接管 | `lib/client.js` | 通过官方 `conversation.chat.node`/`assistant-step` slot 接管：仅当消息含 `#vcp-root` 且用户开启时，用 Shadow DOM 隔离渲染；普通消息与渲染异常自动回退官方组件。不再修改 `dsh-web-frontend` bundle |
+| 安全过滤 | `lib/client.js` | `sanitizeVcpHtml`/`sanitizeCss`/`isAllowedUrl`：拦截 script/iframe/object/embed 等标签、`on*` 事件与 javascript: 协议；`onclick="input('...')"` 白名单桥接 |
 | 插件（Host 半侧） | `lib/index.js` | 渲染/美学双开关状态（**落盘持久化**）+ 系统提示词分层注入（结构铁律必注入 + 美学工具包可选）+ `/fonts` 字体服务（**内置精选 + 外置大库双源**）+ 知识层共享（协议附带本机 DESIGN.md 路径，任何 agent 可读） |
 | 插件（浏览器半侧） | `lib/client.js` | composer 发送按钮旁注入「</>」按钮（点击弹出设置面板，渲染/美学双开关，主题令牌适配深/浅色）+ 暴露 `window.__dshInput`（VCP 按钮 → 填框发送） |
 | **内置精选字体** | `assets/fonts/` | **7 款开源字体（woff2 子集，共约 7.6MB）随插件分发**——文楷/文楷细/马善政楷书/思源黑/思源细黑/思源粗黑/GreatVibes 花体，全部 OFL 授权，任何电脑装上即可用，无需任何配置 |
 | 设计系统文档 | `DESIGN.md` | 完整规范库：字体清单/色板/中文排版/安全铁律（知识层，agent 可按需读取） |
-| 回归测试 | `tests/` | 六套断言（stable 47 + security 43 + bundle + smoke + math + mermaid，共 200+ 项）：帧序列 / 安全过滤 / bundle 完整性（改引擎后必跑） |
-| 性能基准 | `patch/vcp-fast-bench.cjs` | domino 真实 DOM 解析环境对比新旧路径耗时与提速倍数（自动下载依赖，零安装） |
+| 安全回归测试 | 仓库 `dsh-desktop/test/raw-html-sanitize.test.ts` | EAC 项目级安全测试：在新渲染路径（jsdom）上验证标签/事件/URL/CSS 过滤，取代已移除的 bundle 注入引擎测试 |
+| 内置契约测试 | 仓库 `dsh-desktop/test/raw-html-integration.test.ts` | 校验 slot 接管、opt-in、不注入 bundle、不被上游更新源覆盖 |
 | 子集化工具 | `tools/subset_fonts.py` | 维护者用：把新字体裁剪为常用字子集 + woff2 压缩（需 Python + fonttools + brotli） |
 
 ## 文档地图（一规则一权威）
@@ -70,36 +76,28 @@
 
 **铁律定位**：`vcp-root 禁止空行` 权威在 DESIGN.md §4；交互 / 安全白名单权威在 VCP-INTERACTIONS.md。新增规则先判断归属，只写进权威源，别处挂指针。
 
-## 安装（任意 DSH 环境）
+## 安装
 
-**推荐：万能安装器**（任意历史状态 → v6 全量补丁，幂等 + 备份回滚 + `node --check` 健康检查）：
+### EAC 内置（推荐）
+
+已内置在 `dsh-desktop/assets/plugins/dsh-raw-html/`，随客户端同步到 profile 并默认启用；HTML 渲染与美学注入为 **opt-in**（用户主动开启后才生效）。无需手动打补丁——渲染通过官方 `conversation.chat.node` slot 接管，不修改 `dsh-web-frontend` bundle。
+
+### 独立安装（其他 DSH 环境）
 
 ```powershell
-# 1. 打补丁（v6 稳定区模块 + HTML 渲染 + 安全过滤，一条命令全量到位）
-node "本插件路径\patch\install-v6.cjs"
-
-# 2. 安装插件（即插即用；卸载用 dsh plugin --profile web remove dsh-raw-html）
 dsh plugin --profile web add "本插件路径"
-
-# 3. 重启 dsh 服务，然后刷新浏览器页面（缓存较旧时 Ctrl+F5）
 ```
 
-探测失败时手动指定 bundle 路径：
+无需补丁脚本；卸载用 `dsh plugin --profile web remove dsh-raw-html`。
 
-```powershell
-node "...\patch\install-v6.cjs" "C:\...\dsh-web-frontend\dist\assets\index-*.js"
-```
+## 渲染集成（EAC 官方 slot）
 
-> 历史脚本（v1/v2 时代）`patch/install.cjs`、`patch/patch-frontend.cjs`、`patch/upgrade-patch.cjs` 仍保留在源仓库供参考，日常安装请使用 `install-v6.cjs`。
+本插件通过 DSH 官方 `conversation.chat.node` 的 `assistant-step` slot 接管消息渲染：
 
-## vcp-fast 加速引擎
-
-在 v1 渲染补丁基础上新增的「缓存 + 增量」双引擎（`window.__vcpFast`）：
-
-- **精确缓存**：HTML 字符串未变时，直接返回缓存的 React 元素引用——React 对引用相同的元素跳过整个子树 reconciliation。历史消息滚动 / 切会话 / React 重渲染 → 零重建。
-- **增量追加**：内容 = 旧内容 + 追加段，且旧内容以闭合标签结尾时，稳定部分引用不变，只解析渲染新增段。
-- **安全边界**：仅非流式 + 开关开启时生效；旧值未闭合或内容重写时自动回退全量；缓存上限 200 条自动清理；onclick 桥接与 script/iframe 过滤能力不变。
-- **验证**：DevTools console 可见 `[vcp-fast] HIT/BUILD` 日志（每 2 秒节流）；基准数字见 `patch/vcp-fast-bench.cjs`（真实 DOM 解析环境实测：缓存命中约 1200~6800 倍、增量约 12 倍提速）。
+- 普通消息复用官方 Assistant 组件。
+- 仅当消息包含 `<div id="vcp-root">` 且用户开启 HTML 渲染时，才用 Shadow DOM 隔离渲染并接入 KaTeX / Mermaid / 内置字体。
+- 渲染异常或开关关闭时自动回退官方组件。
+- 不再修改 `dsh-web-frontend` 压缩 bundle，也不依赖注入全局变量（旧版 v6-inject 引擎已移除）。
 
 ## ⚠️ 常见坑：vcp-root 内部禁止空行（重要！）
 
@@ -117,7 +115,7 @@ node "...\patch\install-v6.cjs" "C:\...\dsh-web-frontend\dist\assets\index-*.js"
 ## 配置
 
 - **内置精选字体**（推荐）：7 款开源字体随插件分发（全部 OFL 授权），装上即用，**零配置**。
-- **外置大库**（可选）：默认 `I:\字体`。其他电脑可把字体库目录配置到
+- **外置大库**（可选）：默认为空，仅使用内置精选字体。其他电脑可把字体库目录配置到
   「设置 → 插件 → raw-html → fontsRoot」（或直接修改 `lib/index.js` 里的默认值）。
   没有外置大库也能用：内置 7 款开源字体 + 系统字体兜底。
 - **开关状态**：`渲染 HTML` 与 `美学注入` 两个独立开关，持久化在 `~/.dsh/dsh-raw-html-state.json`，服务重启后自动恢复；渲染关闭时美学自动强制关闭。
@@ -134,8 +132,8 @@ node "...\patch\install-v6.cjs" "C:\...\dsh-web-frontend\dist\assets\index-*.js"
 
 - 每次修改后：`node --check lib/client.js && node --check lib/index.js` 验语法；
   client 改动刷新即生效；host 改动需重启 dsh 服务。
-- `dsh` 升级会覆盖被打补丁的 dist 文件 → 重跑 `patch/install-v6.cjs` 即可
-  （幂等；锚点找不到会中止且不写坏文件；备份在 `*.bak-installv6-<时间戳>`）。
+- `dsh` 升级后不需要修改 dist 文件。若官方 `assistant-step` slot 契约变化，
+  EAC 会保持官方渲染并在控制台报告未找到适配入口；升级时通过 EAC 集成测试确认。
 - **依赖声明铁律**（2026-08-19 崩溃事件教训）：`import` 的每一个第三方包
   **必须显式声明**在 package.json（dependencies 或 peerDependencies）——
   依赖解析靠运行环境存量 node_modules 碰运气 = 把生命线交给风浪。
@@ -146,16 +144,14 @@ node "...\patch\install-v6.cjs" "C:\...\dsh-web-frontend\dist\assets\index-*.js"
 - 想扩充内置字体 → 编辑 `tools/subset_fonts.py` 的 FONTS 清单 + 跑一次
   （需 Python + fonttools + brotli），自动输出 woff2 子集到 `assets/fonts/`。
 
-## 恢复（撤销补丁）
+## 恢复
 
-```powershell
-# 把补丁自动生成的备份改回原名（如 index-*.js.bak-xxx → index-*.js），再移除插件：
-dsh plugin --profile web remove dsh-raw-html
-```
+关闭「渲染 HTML」即可立即回到官方 Markdown 渲染。插件渲染组件发生异常时，
+DSH slot 错误边界也会自动放弃该组件并回退官方 `assistant-step`。
 
 ## 安全提示
 
-开启后，模型输出中的 HTML 会被渲染为界面。补丁做了脚本/事件/危险协议过滤
-（React 元素渲染天然不执行 script；事件只放开 `onclick="input('...')"` 受控通道；
-`script/iframe/object/embed` 与 `javascript:` 协议丢弃），但样式与外部图片仍然可达——
+开启后，模型输出中的 HTML 会被渲染为界面。Shadow DOM 渲染器会过滤脚本、
+事件属性和危险协议，只把 `onclick="input('...')"` 转成受控输入桥；
+`script/iframe/object/embed` 与 `javascript:` 协议会被丢弃，但外部图片仍然可达——
 请只对可信模型开启。

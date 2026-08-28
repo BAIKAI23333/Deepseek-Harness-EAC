@@ -77,6 +77,7 @@ build/*
 /lib/desktop/boot-server.js
 /stream-write-guard.js
 /session-encoding-heal.js
+/credentials-format-heal.js
 /builtin-collision.js
 /koffi-preflight.js
 /balance.js

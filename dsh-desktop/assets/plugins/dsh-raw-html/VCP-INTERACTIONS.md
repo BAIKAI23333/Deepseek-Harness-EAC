@@ -109,7 +109,8 @@
 
 > 模型在 vcp-root 内输出 `<pre class="language-mermaid">…</pre>`，渲染层自动：
 > 白底框体 + 蓝灰线条 + 石墨文字 + 右上角工具栏（− / 100% / ＋ / 适应）。
-> 渲染逻辑见 patch/v6-inject.js 的 mermaid 模块；测试 tests/mermaid.test.mjs + e2e-mermaid*.cjs。
+> 渲染逻辑见 `lib/client.js` 的 `hydrateVcpCard`；EAC 集成与安全回归见仓库
+> `dsh-desktop/test/raw-html-integration.test.ts` 和 `raw-html-sanitize.test.ts`。
 
 ### 7.1 基础用法（三种高频图型）
 
@@ -162,4 +163,5 @@
 
 ---
 
-*维护：本文件与 `patch/v6-inject.js`、`tests/` 配套，改动渲染能力时同步更新。*
+*维护：本文件与 `lib/client.js`、仓库 `dsh-desktop/test/raw-html-*.test.ts` 配套，
+改动渲染能力时同步更新。*

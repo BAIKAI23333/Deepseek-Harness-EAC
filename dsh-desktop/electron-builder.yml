@@ -45,6 +45,7 @@ files:
   - compact-preset-migrate.js
   - error-detail.js
   - bundle-integrity.js
+  - credentials-format-heal.js
   - stable-port.js
   - stream-write-guard.js
   - koffi-preflight.js

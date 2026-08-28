@@ -17,11 +17,12 @@
  * 3. 知识层共享：协议文本动态附带本机插件 DESIGN.md 的路径，任何 agent
  *    需要更精细的规范细节时可主动读取该文件——同一份设计库全 agent 共享。
  * 4. 提供 /fonts 字体服务：把「字体根目录」（**可配置**，settings 命名空间
- *    raw-html.fontsRoot，默认 I:\字体）映射为 HTTP 资源，前端 #vcp-root
- *    容器可通过 @font-face 引用任意字体。
+ *    raw-html.fontsRoot，默认空 → 仅内置精选字体）映射为 HTTP 资源，前端
+ *    #vcp-root 容器可通过 @font-face 引用任意字体。
  *
- * 浏览器侧的渲染能力由前端补丁（patch/patch-frontend.cjs）提供，
- * 开关同时以 localStorage['dsh.rawHtml'] 驱动渲染（无需经 Host）。
+ * 浏览器侧通过 EAC 官方 conversation.chat.node slot 接管 assistant-step，
+ * 不修改 dsh-web-frontend 压缩产物。开关同时以
+ * localStorage['dsh.rawHtml'] 驱动渲染（无需经 Host）。
  */
 
 import { spawn } from 'node:child_process'
@@ -64,8 +65,10 @@ const BUILTIN_VENDOR = path.join(PLUGIN_DIR, 'assets', 'vendor')
 
 /** 插件配置命名空间（可在 设置→插件 中修改）。 */
 const NS = 'raw-html'
-/** fontsRoot 默认值（配置 schema 不可用时的降级值，亦作为 schema 默认值）。 */
-const DEFAULT_FONTS_ROOT = 'I:\\字体'
+/** fontsRoot 默认值（配置 schema 不可用时的降级值，亦作为 schema 默认值）。
+ *  默认空：仅使用插件内置精选字体（assets/fonts，7 款 OFL），不依赖任何本机
+ *  目录；用户可在设置中配置自己的字体库路径。 */
+const DEFAULT_FONTS_ROOT = ''
 
 /** 尝试加载配置 schema（零静态依赖）。
  *  schemastery 缺失时返回 null → 跳过配置注册、fontsRoot 恒用默认值，
@@ -80,7 +83,7 @@ async function tryLoadConfigSchema() {
       fontRoots: z
         .array(z.string())
         .default([])
-        .description('外置字体库路径列表：粘贴文件夹绝对路径（如 G:\\AI\\H3MINI\\美学包），把字体文件放进去后刷新即用。可视化风格库/色板/字体绿勾查看器：聊天输入框旁「</>」按钮 → 美学系统 ▸'),
+        .description('外置字体库路径列表：粘贴文件夹绝对路径（例如 D:\\我的字体），把字体文件放进去后刷新即用。留空则只使用插件内置精选字体。可视化风格库/色板/字体绿勾查看器：聊天输入框旁「</>」按钮 → 美学系统 ▸'),
     })
   } catch {
     return null
@@ -539,9 +542,9 @@ function apply(ctx) {
     }
   })()
 
-  /** 当前开关状态：render（渲染）、aesthetic（美学注入），默认开启（EAC 内置）；持久化恢复。 */
-  let render = true
-  let aesthetic = true
+  /** 当前开关状态：render（渲染）、aesthetic（美学注入），默认关闭；持久化恢复。 */
+  let render = false
+  let aesthetic = false
   void (async () => {
     try {
       const raw = await fs.readFile(STATE_FILE, 'utf8')

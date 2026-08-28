@@ -1,8 +1,20 @@
 # CHANGELOG
 
-本文件记录插件版本（`package.json` 的 `version`）与补丁代号（`patch/*` 注入模块）两条线的演进。
+本文件记录插件版本（`package.json` 的 `version`）与历史实现演进。
+旧版 `patch/*` 注入模块仅作为历史记录保留，当前 EAC 版本通过官方 slot 渲染。
 
-## 0.6.0（当前）
+> 时间校验（2026-08-28）：下文保留的 `2026-08-29` 条目来自上游草稿或
+> 未来日期标签，不作为本次 EAC 发布的已完成事实。
+
+## 0.6.1（EAC 托管版）
+
+- **EAC 集成重构（2026-08-27）**：移除发布链对
+  `dsh-web-frontend` 压缩 bundle 的注入，改用官方
+  `conversation.chat.node`/`assistant-step` slot；普通消息复用官方组件，
+  `#vcp-root` 使用 Shadow DOM 隔离渲染，异常自动回退官方条目。新安装默认关闭，
+  上游自动更新源停用，避免 EAC 托管适配被侵入式原版覆盖。
+
+## 0.6.0（历史）
 
 - **修复·风格卡片主标题单行省略——长名字不再换行成两行（蓝汐 · 2026-08-27 · 先生 UI 细节点名）**：先生指出美学面板风格卡片的主标题（风格名称）长时会换行成两行、且未贴左。根因：`.aes-style-name` 是普通 flex 项，无 `nowrap`/`overflow` 处理——名字超出 flex 剩余宽度即折行（slug 占右端，name 被挤压换行）。修复：`.aes-style-name` 加 `flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`（单行 + 超长省略号截断，永远一行、靠左），`.aes-style-slug` 加 `flex:none`（固定右端不被挤压）；head 布局不变（左 padding 52px 仍为锁定徽标让位、右 56px 为操作按钮让位）。node --check 通过。重启 DSH + 刷新生效。
 
