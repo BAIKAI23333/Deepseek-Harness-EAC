@@ -127,6 +127,8 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     let settled = false;
     let handedOff = false; // 受限端口重启：本实例的退出不再影响外层 Promise
     let bootTimer: NodeJS.Timeout | null = null;
+    // 0.1.2：stdout 就绪行携带的一次性 token URL（HTTP 探测胜出时的兜底值）。
+    let probeFallbackUrl = '';
     const output = createStreamWriteGuard(out, {
       onError: (err) => ctx.log('warn', 'dsh web 日志流异常: ' + String((err && (err as Error).message) || err)),
     });
@@ -171,6 +173,9 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
             ctx.saveSettings(settings);
           }
         } catch { /* URL 解析失败时忽略 */ }
+        // 0.1.2：就绪行带一次性 token。记录给 HTTP 探测胜出路径兜底用
+        //（finish 与探测是竞争关系，谁先到都会带上有 token 的 URL）。
+        probeFallbackUrl = m[1]!;
         finish(null, m[1]!);
       }
     };
@@ -187,20 +192,40 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     });
     // HTTP 就绪探测与 stdout 就绪行并行竞争 —— 就绪行被管道缓冲吞掉或格式
     // 变化时不再白白等满 bootTimer（「启动 60 秒超时」的主要假阳性来源）。
+    // 内核 0.1.2 起 Web UI 首屏带一次性 token 鉴权：裸 `/` 在服务就绪后返回
+    // 401，只证明端口活着、不证明可用。探测改打免鉴权的静态资源
+    // favicon.svg。探测胜出时【不再立即返回】：token 只存在于 stdout 就绪行
+    //（探测时行通常还没打印），再等一小窗口拿带 token 的 URL；窗口内没等到
+    // 就绪行才回退裸 origin（rc.2 语义，兼容无鉴权老内核）。
     if (restrictedPortOf(`http://127.0.0.1:${opts.expectedPort}`) === 0) {
       const probeUrl = `http://127.0.0.1:${opts.expectedPort}`;
       void (async () => {
         while (!settled) {
           const ok = await new Promise<boolean>((res) => {
-            const req = http.get(probeUrl + '/', { timeout: 2500 }, (r) => {
+            const req = http.get(probeUrl + '/favicon.svg', { timeout: 2500 }, (r) => {
               r.resume();
               res(!!r.statusCode && r.statusCode < 500);
             });
             req.on('error', () => res(false));
             req.on('timeout', () => { req.destroy(); res(false); });
           }).catch(() => false);
-          if (ok) { finish(null, probeUrl); return; }
-          await new Promise((r) => setTimeout(r, 350));
+          if (!ok) {
+            await new Promise((r) => setTimeout(r, 350));
+            continue;
+          }
+          // 探测就绪：给 stdout 就绪行（带 token）最多 30 秒补到窗口。就绪行
+          // 通常随端口就绪毫秒级到达；曾只等 5 秒，慢盘/杀毒软件拖慢 stdout
+          // 管道时窗口内拿不到 token，回退裸 origin 就是 401 白屏且无从诊断。
+          for (let i = 0; i < 300 && !settled && !probeFallbackUrl; i += 1) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          if (!settled) {
+            if (!probeFallbackUrl) {
+              ctx.log('dsh', 'HTTP 探测就绪但 30 秒内未收到带 token 的就绪行，回退裸 origin（0.1.2 内核下将 401，需查 dsh-web.log 的就绪行）');
+            }
+            finish(null, probeFallbackUrl || probeUrl);
+          }
+          return;
         }
       })();
     }
@@ -229,9 +254,12 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
 
 function waitUntilUp(url: string, timeoutMs = 120000): Promise<string> {
   const started = Date.now();
+  // 0.1.2 起 URL 可能带 ?token= 查询串：探测路径必须走 URL 拼接而非字符串
+  // 追加（`url + '/'` 会把路径插到 query 前）。探测用免鉴权静态资源。
+  const probeTarget = new URL('favicon.svg', url).href;
   return new Promise<string>((resolve, reject) => {
     const tick = () => {
-      const req = http.get(url + '/', { timeout: 3000 }, (res) => {
+      const req = http.get(probeTarget, { timeout: 3000 }, (res) => {
         res.resume();
         if (res.statusCode && res.statusCode < 500) resolve(url);
         else retry();

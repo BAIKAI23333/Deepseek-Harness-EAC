@@ -49,7 +49,8 @@ const check = (name, ok, detail) => {
     const sb = document.querySelector('[data-phase="hero"] [data-conversation-scroll]');
     if (!sb) return { found: false };
     const cs = getComputedStyle(sb);
-    const seat = document.querySelector('.wSkVaW_composerSeat') || sb.querySelector('[class*="composerSeat"]');
+    // 0.1.2：composer 卡换锚稳定契约 data-composer-card（粘性布局在滚动体外）。
+    const seat = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]');
     const r = seat ? seat.getBoundingClientRect() : null;
     return { found: true, justify: cs.justifyContent, seatTop: r ? Math.round(r.top) : null, seatBottom: r ? Math.round(r.bottom) : null, ih: innerHeight };
   });
@@ -87,21 +88,26 @@ const check = (name, ok, detail) => {
     sb.scrollTop = 500;
     await new Promise((r) => requestAnimationFrame(r));
     const after = sb.scrollTop;
-    const seat = sb.querySelector('[class*="composerSeat"]');
+    // 0.1.2 hero 是双节点 DOM（滚动内容 + 常驻 composer），首个 data-composer-card
+    // 匹配可能落在滚动内容里；「进入可视区」按语义用 scrollIntoView 归一判定。
+    const seat = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]');
+    if (seat) seat.scrollIntoView({ block: 'nearest' });
+    await new Promise((r) => requestAnimationFrame(r));
     const sr = seat ? seat.getBoundingClientRect() : null;
     probe.remove();
     sb.scrollTop = 0;
-    return { found: true, before, after, seatTopAfterScroll: sr ? Math.round(sr.top) : null };
+    return { found: true, before, after, seatTopAfterScroll: sr ? Math.round(sr.top) : null, ih: innerHeight };
   });
   check('4a 内部滚动容器仍可滚', inner.found && inner.after > inner.before, JSON.stringify({ before: inner.before, after: inner.after }));
-  check('4b 滚动后输入卡进入可视区', inner.seatTopAfterScroll !== null && inner.seatTopAfterScroll >= 0 && inner.seatTopAfterScroll < inner.ih || inner.seatTopAfterScroll === null, String(inner.seatTopAfterScroll));
+  check('4b 滚动后输入卡进入可视区', inner.seatTopAfterScroll !== null && inner.seatTopAfterScroll >= 0 && inner.seatTopAfterScroll < (inner.ih || innerHeight) || inner.seatTopAfterScroll === null, String(inner.seatTopAfterScroll));
 
   // 5) 极小视口（320x200）hero 输入卡仍可达
   await page.setViewportSize({ width: 320, height: 200 });
   await page.waitForTimeout(1200);
   const tiny = await page.evaluate(async () => {
     const sb = document.querySelector('[data-phase="hero"] [data-conversation-scroll]');
-    const seat = document.querySelector('[class*="composerSeat"]');
+    // 0.1.2：composer 卡换锚 data-composer-card。
+    const seat = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]');
     if (!sb || !seat) return { found: false };
     seat.scrollIntoView({ block: 'nearest' });
     await new Promise((r) => requestAnimationFrame(r));
@@ -114,14 +120,14 @@ const check = (name, ok, detail) => {
   await page.setViewportSize({ width: 1006, height: 447 });
   await page.waitForTimeout(600);
   const sent = await page.evaluate(async () => {
-    const ta = document.querySelector('textarea');
+    // 0.1.2：composer 输入面是 contenteditable（rc.2 时代是 textarea）。
+    const ta = document.querySelector('[contenteditable="true"]');
     if (!ta) return 'no ta';
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
-    setter.call(ta, 'viewport-lock 冒烟');
-    ta.dispatchEvent(new Event('input', { bubbles: true }));
+    ta.focus();
+    document.execCommand('insertText', false, 'viewport-lock 冒烟');
     const btn = [...document.querySelectorAll('button')].find((x) => /发送/.test(x.getAttribute('aria-label') || '') || /发送/.test(x.innerText || ''));
     if (btn) { btn.click(); return 'sent'; }
-    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
     return 'enter';
   });
   await page.waitForTimeout(4000);

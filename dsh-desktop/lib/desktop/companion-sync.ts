@@ -107,9 +107,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // 读屏 + 鼠标键盘自动化（Codex-style computer use，配 picturereader；纯本地）。
   { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
-  // 语音识别（仅 STT）：本地 sherpa-onnx SenseVoice + 自定义唤醒词 + 多轮交互，
-  // 识别文本回填输入框草稿。模型首次启动下载到 ~/.dsh/models/dsh-stt/。
-  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
   // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
   // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
@@ -430,6 +427,11 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 按用户要求移除「普通/高级」分栏（nav-custom 是该分栏唯一写入者，
   // 见 test/settings-groups-standdown.test.ts 的单写者契约改判）。
   { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom' },
+  // 5.3.0：按用户要求移除内置「语音转文字」插件（本地 sherpa-onnx ASR 模型
+  // ~1.1G 占空间，不再随包分发/安装）。老 profile 的 patch 行/包副本由退役
+  // 清理兜底；已下载的 ~/.dsh/models/dsh-stt/ 模型缓存由安装包 PREINSTALL
+  // 与本机清理回收。
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -759,6 +761,19 @@ function ensurePluginHostDeps(profileDirP: string): void {
       patch = healedPet.patch;
       changed = true;
       ctx.log('boot', '已修复 profile patch 中缺 config 的 dsh-pet 行（v3 存量坏行）');
+    }
+    // 内核 0.1.2 隐私开关：官方 deepseek 适配器随请求上报活动插件包名/版本
+    // （plugin-package-inventory-deepseek，默认 enabled: true）。桌面端默认
+    // 关闭。该行在 dsh-base bundle 层已存在（overlay 不能再 insert —— 会
+    // duplicate loader entry id 拖垮插件树），config 覆盖必须在 bundle 装载
+    // 前由 --patch overlay 语义达成：本函数写「编辑型」覆盖行（- id + config，
+    // 不在 - insert 列表内 = 对既有行改 config，cordis.patch 的标准编辑语义）。
+    // 幂等：已有编辑行则跳过。
+    if (!/^- id: plugin-package-inventory-deepseek\n\s+name: '@deepseek-ai\/dsh-plugin-package-inventory-deepseek'\n\s+config:\n\s+enabled: false/m.test(patch)) {
+      const privacyRow = '- id: plugin-package-inventory-deepseek\n  name: \'@deepseek-ai/dsh-plugin-package-inventory-deepseek\'\n  config:\n    enabled: false\n';
+      patch = patch.replace(/\s*$/, '\n') + privacyRow;
+      changed = true;
+      ctx.log('boot', '已默认关闭内核插件名单上报（0.1.2 隐私开关，编辑型覆盖行）');
     }
     // 市场安装（dsh plugin add）会把插件登记进 package.json 的
     // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
