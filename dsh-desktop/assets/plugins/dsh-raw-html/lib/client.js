@@ -36,6 +36,8 @@ window.__ModuleLoader__.load({
     var hostRpc = null
     /** 延迟刷新定时器（防连点：后一次切换重置前一次）。 */
     var reloadTimer = null
+    /** AgentTeams 团队模式（会话级；「更多模式」菜单行驱动，见 createPanel）。 */
+    var teamsModeOn = false
     /** 面板内两个开关行的刷新回调（面板打开时挂载，关闭时清空）。 */
     var renderRowRefresh = null
     var aestheticRowRefresh = null
@@ -150,68 +152,61 @@ window.__ModuleLoader__.load({
     // ---- 「</>」按钮 + 设置面板（自 B 移植 · 2026-08-24）-------------------
     // 主题令牌（跟随皮肤）：--dsw-alias-* 为 DSH 设计系统别名层，各皮肤都会映射——
     // 按钮/面板自动契合用户切换的深色/浅色主题，看起来像原生 DSH 控件。
-    var STYLE_OFF =
-      'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
-      'border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:999px;' +
-      'background:var(--dsw-alias-button-tool-bar-fill,rgba(84,85,87,.5));color:var(--dsw-alias-label-secondary,#555);font-size:12px;' +
-      'font-family:inherit;cursor:pointer;white-space:nowrap;margin:0 6px;' +
-      'transition:all .15s ease;'
-    var STYLE_ON =
-      'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
-      'border:1px solid var(--dsw-alias-brand-primary,transparent);border-radius:999px;' +
-      'background:var(--dsw-alias-button-primary-fill,#0d1f33);' +
-      'color:var(--dsw-alias-label-primary-inverted,#fff);font-size:12px;font-family:inherit;cursor:pointer;' +
-      'white-space:nowrap;margin:0 6px;font-weight:600;' +
-      'transition:all .15s ease;'
-    // 渲染开启但美学关闭：用 dimmed 主色，示意「纯净渲染」
-    var STYLE_PURE =
-      'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
-      'border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:999px;' +
-      'background:var(--dsw-alias-button-primary-dimmed,rgba(0,0,0,.08));color:var(--dsw-alias-label-primary,#111);font-size:12px;' +
-      'font-family:inherit;cursor:pointer;white-space:nowrap;margin:0 6px;' +
-      'transition:all .15s ease;'
-
-    function buttonLabel() {
-      if (!isRenderEnabled()) return '</> OFF'
-      return isAestheticEnabled() ? '</> ON' : '</> 渲染'
-    }
-
-    function refreshButton(btn) {
-      if (!btn) btn = document.getElementById(BTN_ID)
-      if (!btn) return
-      var render = isRenderEnabled()
-      btn.setAttribute('aria-pressed', render ? 'true' : 'false')
-      btn.textContent = buttonLabel()
-      btn.style.cssText = render ? (isAestheticEnabled() ? STYLE_ON : STYLE_PURE) : STYLE_OFF
-    }
-
     function createButton() {
       var btn = document.createElement('button')
       btn.id = BTN_ID
       btn.type = 'button'
       btn.setAttribute('aria-haspopup', 'true')
-      btn.title = 'VCP 渲染设置：点击打开面板，可分别开关「渲染 HTML」与「美学注入」（切换后自动强制刷新）'
+      btn.title = '更多模式：AgentTeams 团队模式 / HTML 渲染与美学（渲染类开关切换后自动强制刷新）'
+      btn.textContent = '模式'
+      btn.style.cssText =
+        'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:999px;' +
+        'background:var(--dsw-alias-button-tool-bar-fill,rgba(84,85,87,.5));color:var(--dsw-alias-label-secondary,#555);font-size:12px;' +
+        'font-family:inherit;cursor:pointer;white-space:nowrap;margin:0;flex:none;' +
+        'transition:all .15s ease;'
       btn.addEventListener('click', function (e) {
         e.stopPropagation()
         togglePanel(btn)
       })
-      refreshButton(btn)
       return btn
     }
 
-    function ensureButton() {
-      if (document.getElementById(BTN_ID)) return true
-      var composer = findComposer()
-      if (!composer) return false
-      var host = findTrailing(composer)
-      if (!host) return false
-      host.appendChild(createButton())
-      return true
+    /** 「更多模式」芯片挂载点：conversation.input.right 槽（order 4.5 →
+     *  优化提示词按钮左边；列表按 order 升序渲染）。组件按会话挂载，
+     *  每个会话拿到独立芯片；teamsMode 会话级状态随之复位。 */
+    function registerModesChip(ctx) {
+      if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return
+      ctx.slots.inject('conversation.input.right', function () {
+        return ctx.slots.register({
+          name: 'conversation.input.right',
+          key: 'raw-html-modes',
+          id: 'raw-html-modes',
+          order: 4.5,
+        }, ModesChip)
+      })
     }
 
-    // 面板内状态变化：刷新按钮 + 面板开关行 + 上报 Host
+    function ModesChip() {
+      var ref = React.useRef(null)
+      React.useEffect(function () {
+        var el = ref.current
+        if (!el) return
+        teamsModeOn = false // 会话级状态：切换会话即复位
+        var btn = document.getElementById(BTN_ID)
+        if (btn && btn.parentNode) btn.parentNode.removeChild(btn)
+        btn = createButton()
+        el.appendChild(btn)
+        return function () { if (btn.parentNode === el) el.removeChild(btn) }
+      }, [])
+      return h('div', {
+        ref: ref,
+        style: { display: 'inline-flex', alignItems: 'center', margin: '0 6px', flex: 'none' },
+      })
+    }
+
+    // 面板内状态变化：刷新面板开关行 + 上报 Host
     function onChange() {
-      refreshButton()
       if (renderRowRefresh) renderRowRefresh()
       if (aestheticRowRefresh) aestheticRowRefresh()
       syncHostState(hostRpc, isRenderEnabled(), isAestheticEnabled())
@@ -283,12 +278,53 @@ window.__ModuleLoader__.load({
         'border-radius:var(--dsl-web-radius,12px);box-shadow:0 12px 34px rgba(0,0,0,.28);' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#111);'
       var title = document.createElement('div')
-      title.textContent = 'VCP 渲染设置'
+      title.textContent = '更多模式'
       title.style.cssText = 'font-size:11px;letter-spacing:.14em;color:var(--dsw-alias-label-secondary,#555);margin:0 2px 8px;'
       panel.appendChild(title)
 
+      // AgentTeams 团队模式行（会话级开关）：开 = 发送 /agent-teams 激活；
+      // 关 = 发送归档指令。与渲染类开关不同：发消息驱动，不刷新页面。
+      var teamsRow = document.createElement('div')
+      teamsRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:8px 2px;'
+      var teamsLeft = document.createElement('div')
+      teamsLeft.style.cssText = 'flex:1;min-width:0;'
+      var teamsName = document.createElement('div')
+      teamsName.textContent = 'AgentTeams 团队模式'
+      teamsName.style.cssText = 'font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#111);line-height:1.4;'
+      var teamsDesc = document.createElement('div')
+      teamsDesc.textContent = '本会话进入多智能体协作（队长 / 子代理 / 任务 DAG）。开启发送 /agent-teams 激活；关闭发送归档指令。'
+      teamsDesc.style.cssText = 'font-size:11px;color:var(--dsw-alias-label-tertiary,#666);line-height:1.45;margin-top:2px;'
+      teamsLeft.appendChild(teamsName)
+      teamsLeft.appendChild(teamsDesc)
+      var teamsSw = document.createElement('button')
+      teamsSw.type = 'button'
+      function refreshTeamsRow() {
+        teamsSw.textContent = teamsModeOn ? 'ON' : 'OFF'
+        teamsSw.style.cssText =
+          'min-width:44px;height:24px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:600;flex:none;cursor:pointer;' +
+          (teamsModeOn
+            ? 'background:var(--dsw-alias-button-primary-fill,#0d1f33);color:var(--dsw-alias-label-primary-inverted,#fff);border:1px solid var(--dsw-alias-brand-primary,transparent);'
+            : 'background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,#555);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));')
+      }
+      teamsSw.addEventListener('click', function () {
+        teamsModeOn = !teamsModeOn
+        refreshTeamsRow()
+        sendText(teamsModeOn
+          ? '/agent-teams'
+          : '结束并归档当前 AgentTeams 团队。')
+        window.setTimeout(closePanel, 200) // 让 sendText 的自动点击先落，再收起菜单
+      })
+      teamsRow.appendChild(teamsLeft)
+      teamsRow.appendChild(teamsSw)
+      refreshTeamsRow()
+      panel.appendChild(teamsRow)
+
+      var teamsDivider = document.createElement('div')
+      teamsDivider.style.cssText = 'height:1px;background:var(--dsw-alias-border-l1,rgba(0,0,0,.08));margin:6px 0;'
+      panel.appendChild(teamsDivider)
+
       var hint = document.createElement('div')
-      hint.textContent = '切换任一开关将自动强制刷新页面，立即以新状态重渲染全部消息'
+      hint.textContent = '渲染类开关切换后自动强制刷新页面；团队模式开关即时发消息，不刷新'
       hint.style.cssText = 'font-size:10px;line-height:1.45;color:var(--dsw-alias-label-tertiary,#777);margin:0 2px 8px;'
       panel.appendChild(hint)
 
@@ -2476,20 +2512,12 @@ window.__ModuleLoader__.load({
       // 不再回退系统黑体（先生 2026-08-27 实测：此前仅面板打开时才注册）
       ensureGlobalFonts(ctx)
 
-      // 启动：等 composer 出现后挂按钮
-      function boot() {
-        if (ensureButton()) return
-        window.setTimeout(boot, 400)
-      }
-      boot()
+      // 「更多模式」芯片：conversation.input.right 槽（order 4.5 → 优化提示词
+      // 左边；槽渲染随 composer zone 出现，hero 与会话内均显示）。原 send 键
+      // 尾部 DOM 注入 + MutationObserver 补挂机制整体退役。
+      registerModesChip(ctx)
 
-      // React 重渲染会移除注入节点：用 MutationObserver 补回
-      var mo = new window.MutationObserver(function () {
-        if (!document.getElementById(BTN_ID)) ensureButton()
-      })
-      mo.observe(document.body, { childList: true, subtree: true })
       window.addEventListener('pagehide', function () {
-        mo.disconnect()
         closePanel()
       })
     }

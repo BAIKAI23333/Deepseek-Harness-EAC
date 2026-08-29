@@ -115,6 +115,13 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
   入口**（0.1.13-eac.2：composer dock 新增「AgentTeams」按钮，会话内输入框下方，
   点击自动填入 `/agent-teams`——原版没建团前对话里什么都不显示，入口不可发现）。
   verify-phone-pair P10 随分区撤除改查「增强功能」内 AgentTeams 卡。
+  **「更多模式」合并入口（用户二次反馈）**：raw-html 0.6.2 把 `</>` 芯片改造为
+  「模式」芯片并从 send 键尾部 DOM 注入改为挂 `conversation.input.right` 槽
+  （order 4.5 → 优化提示词按钮左边；槽列表按 (priority, order) 升序，slots
+  运行时源码实证），菜单 = AgentTeams 团队模式开关（开=发 `/agent-teams` 激活、
+  关=发归档指令，发消息驱动不刷新）+ 渲染 HTML + 美学注入 + 原面板全功能
+  （强制刷新/美学系统查看器）。agent-teams 0.1.13-eac.3 撤 dock 按钮（入口
+  已并入）。契约测试版本钉随升（0.6.2）。
 
 ### 结构优化
 

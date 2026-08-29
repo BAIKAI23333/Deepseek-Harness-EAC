@@ -1,6 +1,6 @@
 {
   "name": "dsh-raw-html",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "EAC 托管的 VCP 视觉通感插件：通过官方 conversation slot 隔离渲染 HTML，并提供字体、美学和设计规范能力",
   "keywords": [
     "deepseek",

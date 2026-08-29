@@ -2129,30 +2129,6 @@ window.__ModuleLoader__.load({
 		* in-conversation team card. The card's activity button re-opens a folded
 		* monitor via a window event — the recovery path for an old session.
 		*/
-		/** 对话框可见入口：composer dock 的「AgentTeams」按钮 → 填入 /agent-teams。 */
-		function fillAgentTeamsCommand() {
-			var composer = document.querySelector('[data-composer-card]');
-			var ta = composer && (composer.querySelector('textarea') || composer.querySelector('[contenteditable="true"]'));
-			if (!ta) return;
-			var proto = ta.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
-			var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-			setter.call(ta, '/agent-teams ');
-			ta.dispatchEvent(new window.Event('input', { bubbles: true }));
-			ta.focus();
-		}
-		function AgentTeamsDockButton() {
-			return (0, react_jsx_runtime.jsx)('button', {
-				type: 'button',
-				title: 'AgentTeams 多智能体团队：点击填入 /agent-teams，补一个目标后回车建团',
-				onClick: function () { fillAgentTeamsCommand(); },
-				style: {
-					display: 'inline-flex', alignItems: 'center', gap: 4, height: 26, padding: '0 10px',
-					margin: 0, border: '1px solid var(--dsw-alias-border-l2, rgba(127,127,127,.35))', borderRadius: 13,
-					background: 'transparent', color: 'var(--dsw-alias-label-secondary, inherit)',
-					fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none',
-				},
-			}, 'AgentTeams');
-		}
 		function apply(ctx) {
 			ctx.effect(() => ctx.locale.register(AGENT_TEAMS_LOCALE_NAMESPACE, {
 				zh,
@@ -2193,15 +2169,9 @@ window.__ModuleLoader__.load({
 				locale: AGENT_TEAMS_LOCALE_NAMESPACE,
 				inject: () => ({ openMember })
 			}, AgentTeamsCard));
-			// 对话框可见入口（composer dock）：没建团前对话里原本什么都不显示，
-			// 一个可点的「AgentTeams」按钮让功能可被发现（点击填入 /agent-teams）。
-			ctx.slots.inject("conversation.composer.dock", function () {
-				return ctx.slots.register({
-					name: "conversation.composer.dock",
-					id: "agent-teams-dock",
-					order: 85
-				}, AgentTeamsDockButton);
-			});
+			// 对话框可见入口已并入 dsh-raw-html 的「更多模式」菜单
+			// （conversation.input.right 槽「模式」芯片 → AgentTeams 团队模式行），
+			// 本插件不再重复挂 composer dock 按钮。
 		}
 		//#endregion
 		exports.apply = apply;
