@@ -195,10 +195,10 @@ const check = (name, ok, detail) => { console.log(`${ok ? '✔' : '✖'} ${name}
       if (!opened) return { opened: false };
       await wait(1200);
       const side = document.body.innerText;
-      return { opened: true, hasBalance: side.includes('余额'), hasTeams: side.includes('多智能体协作团队') };
+      return { opened: true, hasBalance: side.includes('余额'), hasTeams: side.includes('AgentTeams') };
     })()`);
     check('P9 设置侧边栏含「余额」入口', nav && nav.opened === true && nav.hasBalance === true, JSON.stringify(nav));
-    check('P10 设置侧边栏含「多智能体协作团队」入口', nav && nav.opened === true && nav.hasTeams === true, JSON.stringify(nav));
+    check('P10 设置「增强功能」含 AgentTeams 开关（5.3.1 起默认启用，独立分区已撤）', nav && nav.opened === true && nav.hasTeams === true, JSON.stringify(nav));
 
     console.log(failures === 0 ? '\n[pair] PASS' : `\n[pair] FAIL (${failures})`);
     client.close();

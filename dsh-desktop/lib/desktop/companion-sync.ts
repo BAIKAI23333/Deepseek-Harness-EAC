@@ -193,8 +193,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 默认关闭：用户到「设置 → 插件 → 管理」或「增强功能」分区自行启用（需 DEEPSEEK_API_KEY 凭据）。
   { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget', disabled: true },
   // 多智能体团队协作（NanmiCoder/dsh-agent-teams，MIT）：队长 + 子代理成员 +
-  // 依赖感知任务 DAG + 活动面板。默认关闭，由用户自行决定是否开启。
-  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams', disabled: true },
+  // 依赖感知任务 DAG + 活动面板。5.3.1 起默认启用（EAC 适配版；对话框
+  // composer dock 有可见入口，设置「增强功能」分区保留停用开关）。
+  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams' },
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
