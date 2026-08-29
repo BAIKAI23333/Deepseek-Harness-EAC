@@ -98,9 +98,10 @@ const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'ma
 const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
   startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
 };
-const credentialsHeal = require(path.join(DSH_DESKTOP_ROOT, 'credentials-format-heal.js')) as {
-  healCredentialsVersion(file: string, log: (tag: string, message: string) => void): { changed: boolean };
-};
+// 旧 credentials-format-heal（versioned→flat 反向迁移）已删除：0.1.2 内核
+// credentials-local 只认 version:1 + refs:/records: 版式，扁平版式会被拒启
+//（"uses the pre-release flat layout"）。正向自愈见 boot-server 的
+// healCredentialsVersion（引号 version 规整 + 扁平→versioned 迁移）。
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
 const desktopProfileFn = profileMod.desktopProfile as () => string;
@@ -340,7 +341,7 @@ vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir
 // 同步 → 模块遮蔽修复 → 构建产物回填。boot.start 与重启/恢复中心
 // retry-boot 共用。
 async function preBootSync(): Promise<void> {
-  credentialsHeal.healCredentialsVersion(path.join(dshHome, '.credentials.yaml'), log);
+  // （旧 credentials-format-heal 反向迁移已删除，见文件头部说明）
   await (marketMod.processPendingMarketOps as () => Promise<void>)();
   (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
   (companionSyncMod.syncCompanionPlugins as () => void)();

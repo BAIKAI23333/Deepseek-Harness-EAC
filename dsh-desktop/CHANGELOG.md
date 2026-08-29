@@ -268,6 +268,17 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
   inject`（每次启动 1-2 次，随后自愈，follow/page 均正常）。与
   loader v2 签名同类（官方 UI 走 vite 不经过该路径故未发现），等
   upstream 修复，不做高风险内核锚定补丁。
+- **凭据版式自愈（两形态）+ 反向迁移退役**：0.1.2 credentials-local
+  只认 `version: 1 + refs:/records:` 版式，两种历史形态会被拒启且
+  每次启动必死（退出码 1 → /died 页）：a) 全新建库路径把顶层
+  version 写成 YAML 字符串 "1"（读取严格 ===1 拒收，实测凭据文件
+  缺失重建即复现）；b) rc.2 时代扁平文件（"pre-release flat
+  layout"）。boot-server 的 healCredentialsVersion 升级为启动前文本
+  级自愈：引号 version 规整 + 扁平标量条目收进 refs:（records: 块
+  原样留根，密钥值零触碰）。同时删除旧的 credentials-format-heal
+  （sidecar preBootSync 调用）—— 它按旧内核语义把 versioned 文件
+  **打回扁平**，与 0.1.2 完全相反，正是「升级后启动卡死在正在启动
+  服务」的元凶（正向自愈接管其职责）。
 
 ## 5.2.0（本版：手机控制整体替换为喵丝滑 + 文档级滚动根治）· 2026-08-28
 

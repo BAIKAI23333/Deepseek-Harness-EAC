@@ -67,21 +67,41 @@ export function setIsRestarting(v: boolean): void { restartingServer = v; }
 function logsDir(): string { return path.join(ctx.getUserDataDir(), 'logs'); }
 function dshWebLogPath(): string { return path.join(logsDir(), 'dsh-web.log'); }
 
-// 0.1.2 暗雷自愈：内核「全新凭据库创建路径」（如 browser-session grant 首次
-// 持久化）会把顶层 version 写成 YAML 字符串 "1"，而读取路径严格 === 1 拒收
-// → 之后每次启动必然退出码 1（boot.start 失败 → /died 页）。实测：凭据文件
-// 缺失后由内核重建即复现。这里在拉起内核前做文本级自愈：仅把带引号的顶层
-// version 行规整为数字 1，绝不触碰任何密钥记录；失败不阻塞启动。
+// 0.1.2 暗雷自愈（凭据版式）：内核 credentials-local 只认 version:1 +
+// refs:/records: 版式，两种历史形态会被拒启 → 每次启动必死（/died 页）：
+//   a) 全新建库路径把顶层 version 写成 YAML 字符串 "1"（读取严格 ===1）；
+//   b) rc.2 时代的扁平文件（顶层直接放标量凭据，"pre-release flat layout"）。
+// 这里在拉起内核前做文本级自愈：a) 引号 version 规整为数字；b) 扁平文件的
+// 标量顶层条目收进 refs:、records: 块原样保留在根（语义对齐内核
+// renderFlatLayoutMigration，且绝不触碰任何密钥值）；形态看不懂就不动，
+// 交内核报错路径展示。失败不阻塞启动。
 function healCredentialsVersion(): void {
   try {
     const home = childEnv().DSH_HOME || path.join(os.homedir(), '.dsh');
     const file = path.join(home, '.credentials.yaml');
     if (!fs.existsSync(file)) return;
     const text = fs.readFileSync(file, 'utf8');
-    const fixed = text.replace(/^([ \t]*)version:[ \t]*["']1["'][ \t]*$/m, '$1version: 1');
+    let fixed = text.replace(/^([ \t]*)version:[ \t]*["']1["'][ \t]*$/m, '$1version: 1');
+    if (!/^([ \t]*)version:[ \t]*\S/m.test(fixed)) {
+      const scalar: string[] = [];
+      const rest: string[] = [];
+      let inRecords = false;
+      let recognizable = true;
+      for (const line of fixed.split('\n')) {
+        if (/^records:[ \t]*$/.test(line)) { inRecords = true; rest.push(line); continue; }
+        if (inRecords) { rest.push(line); continue; }
+        if (/^[A-Za-z_][A-Za-z0-9_-]*:[ \t]*\S[ \t]*$/.test(line)) { scalar.push(line); continue; }
+        if (line.trim() === '') continue;
+        recognizable = false;
+        break;
+      }
+      if (recognizable && scalar.length > 0) {
+        fixed = 'version: 1\nrefs:\n' + scalar.map((l) => '  ' + l).join('\n') + '\n' + rest.join('\n').replace(/\n*$/, '\n');
+      }
+    }
     if (fixed !== text) {
       fs.writeFileSync(file, fixed);
-      ctx.log('dsh', '已自愈 .credentials.yaml 顶层 version 引号（0.1.2 全新建库路径写为字符串、读取严格拒收的写读不对称）');
+      ctx.log('dsh', '已自愈 .credentials.yaml 版式（0.1.2 只认 version:1 + refs:/records:；引号 version 或 rc.2 扁平文件会被拒启）');
     }
   } catch { /* 自愈失败交由内核报错路径展示 */ }
 }
