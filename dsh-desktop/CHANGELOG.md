@@ -44,6 +44,53 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
+## 5.3.2（本版：删除对话 0.1.2 内核适配根治 + 同类旧 API 面清理 + PR #251 合并）· 2026-08-29
+
+### 删除对话「操作失败: Cannot read properties of undefined (reading 'workspace')」根治
+
+- 根因：内核 0.1.2 typert RPC 换血后 `connection` 服务不再暴露 `api` 门面
+  （rc.2 的 `connection.api.workspace` 随 dsh-host-apiproxy 一并移除），
+  `dsh-session-manager` 插件仍走旧路径 → 读 undefined 的 `.workspace` 报错。
+- `dsh-session-manager`：删除/恢复改走 0.1.2 的 `workspaces` 服务命令层
+  （`ctx.workspaces.deleteSession/unarchiveSession`，失败抛错语义归一），
+  保留旧内核 unary 信封路径兜底（按方法存在性探测）。运行中会话拒绝提示
+  依旧生效（新错误消息含 `session-running`，`/running|live/` 命中）。
+
+### 同类旧 API 面排查与修复
+
+- `dsh-better-sidebar`（client.js + client-registry.js）：子代理实时行轮询的
+  `connection.api.subagents.history` 已不存在（remotes 注册表无 history 方法），
+  改走 `session.follow` 的 subagent 地址开一次快照（maxMessages=12 服务端截尾，
+  取首帧即弃流）；chunk 投影记录过滤后再喂 `lastActivity`。此前该功能静默失效。
+- 皮肤 `trading` / `ths`：`connection.api.workspace.list` 同源报错/静默降级，
+  改读 `workspaces` 服务快照（ths 的 codeKline RPC 现内核不存在，保持无数据
+  不显示假值）。
+- `dsh-offpeak`：`apiProxy` 服务已随内核移除 → inject 回调永不触发，定时任务
+  与 HTTP 路由全灭。改注入 `sessionController`（cordis 服务名 = typert
+  serviceKey），`executeTask` 直调 `controller.prompt({requestId, sessionId,
+  mode:"queue", content})`，成功 `{accepted:true}` / 失败 TypertRemoteFailure
+  语义适配。
+
+### 运行守卫补位（补丁脚本升级）
+
+- `scripts/patch-session-manage.js`：0.1.2 落点里 `dshDesktopSessionRunning`
+  Map 只读不写（rc.2 的 `agent/status` 维护监听随 dsh-host-apiproxy 消失），
+  运行中会话删除守卫失效。在 workspace controller 的 `WorkspaceFeed` 构造器
+  （app ctx，与 session controller 同一作用域语义）补挂 `agent/status` 监听；
+  upgradeRules 通道对已打补丁文件生效，`skipIf` 防重复叠加，双跑幂等验证通过。
+
+### PR #251 合并（Windows 菜单外链与日志导出修复）
+
+- 外链/反馈改用 `ShellExecuteW`（Unicode 路径安全，绕开 `cmd start` 退出码 1）；
+  菜单动作返回结构化 `{ok,error}`。
+- 日志导出改 Node `archiver` 直打包（中文/空格/OneDrive 重定向桌面路径不再依赖
+  PowerShell `Compress-Archive`），失败回退 `userDataDir/diagnostics-exports`，
+  完成后路径经菜单 toast 反馈、不再自动打开目录。
+- 冲突解决：保留 5.3.1 的恢复中心注释语义，并入 `createLogsArchive` /
+  `resolveLogsExportDir`；merge 90d0a042。
+- 测试 723 → 727（新增 Windows 原生打开、中文/空格路径导出回归、桥层结构化
+  错误断言），717 过 0 挂 10 skip 全绿。
+
 ## 5.3.1（本版：全库精简 + 十二处真 bug 根治 + 内核版本钉防漂移）· 2026-08-29
 
 ### 死代码清除（~1,100 行，行为零变更）
