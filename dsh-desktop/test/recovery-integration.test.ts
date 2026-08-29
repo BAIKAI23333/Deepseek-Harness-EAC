@@ -5,7 +5,8 @@
 //     （WebView2 → sidecar 的 log.renderer-heartbeat）；
 //   - 恢复中心窗口桥（assets/recovery-center-preload.js）暴露 rc.action/rc.close；
 //   - 恢复中心动作分发（lib/recovery-center/register.ts）覆盖导出诊断日志等；
-//   - 恢复中心页面（assets/recovery.html）必须存在。
+//   - 恢复中心页面（assets/recovery-center.html）必须存在（旧 Electron 版
+//     assets/recovery.html 已随壳退役删除，由 main.rs 内联救援页接替）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,5 +56,5 @@ test('unclean previous-run 判定尊重 clean-exit 与 PID 边界（保留原纯
 });
 
 test('恢复中心页面存在', () => {
-  assert.ok(existsSync(join(ROOT, 'assets', 'recovery.html')), 'assets/recovery.html missing');
+  assert.ok(existsSync(join(ROOT, 'assets', 'recovery-center.html')), 'assets/recovery-center.html missing');
 });

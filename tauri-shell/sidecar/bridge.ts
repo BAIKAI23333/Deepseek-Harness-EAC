@@ -395,13 +395,27 @@
     tag.textContent = '\
   html[data-dsh-title-bar-height] #root,\
   html[data-dsh-title-bar-height] #root > div[data-slot="root"] > div > div:nth-child(2){transition:none!important}\
+  /* 0.1.2 起 CSS Modules 哈希前缀随内核版本漂移（.wSkVaW_*→.FArfia_*，\
+     ._7KE1Ra_menu→.ra1x4W_menu，已从安装闭包 bundle 实核），旧哈希选择器\
+     全部换锚稳定契约 data-phase/data-conversation-scroll（不随构建漂移），\
+     旧哈希仅作回滚内核场景的兜底保留。 */\
+  html[data-dsh-title-bar-height] [data-phase=hero] [data-conversation-scroll]{justify-content:flex-start!important}\
+  html[data-dsh-title-bar-height] [data-phase=hero] [data-conversation-scroll] > *{margin-block:auto!important}\
   html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody{justify-content:flex-start!important}\
   html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody > *{margin-block:auto!important}\
-  html[data-dsh-title-bar-height] ._7KE1Ra_menu{z-index:5100!important}\
-  html[data-dsh-title-bar-height] ._7KE1Ra_menu.dsh-popup-flip{top:calc(100% + 8px)!important;bottom:auto!important}\
-  html[data-dsh-title-bar-height] .wSkVaW_composerStack:has(._7KE1Ra_menu){overflow:visible!important}\
+  html[data-dsh-title-bar-height] ._7KE1Ra_menu,\
+  html[data-dsh-title-bar-height] .ra1x4W_menu{z-index:5100!important}\
+  html[data-dsh-title-bar-height] ._7KE1Ra_menu.dsh-popup-flip,\
+  html[data-dsh-title-bar-height] .ra1x4W_menu.dsh-popup-flip{top:calc(100% + 8px)!important;bottom:auto!important}\
+  html[data-dsh-title-bar-height] [class*=composerStack]:has(._7KE1Ra_menu),\
+  html[data-dsh-title-bar-height] [class*=composerStack]:has(.ra1x4W_menu){overflow:visible!important}\
+  html[data-dsh-title-bar-height] [data-phase=hero] [data-conversation-scroll]{overflow-x:hidden!important}\
   html[data-dsh-title-bar-height] .wSkVaW_root[data-phase=hero] .wSkVaW_scrollBody{overflow-x:hidden!important}\
-  html[data-dsh-title-bar-height] body{overflow-x:hidden!important}';
+  html[data-dsh-title-bar-height] body{overflow-x:hidden!important}\
+  /* 0.1.2 设置弹窗滚动防御（结构性选择器不随哈希类漂移）：左栏滚到边界后剩余滚动量链到外层/右栏滚动锚定微移，用户感知为「滑左栏右边跟着小幅滑动」；弹窗层挡链 + 两栏禁链 + 禁滚动锚定 */\
+  [role=dialog]{overscroll-behavior:contain!important}\
+  [role=dialog] [class*=navList],[role=dialog] [class*=options]{overscroll-behavior:contain!important;overflow-anchor:none!important}\
+  [role=dialog] [class*=panel],[role=dialog] [class*=overlay]{overscroll-behavior:contain!important}';
     document.head.appendChild(tag);
   }
 
@@ -409,9 +423,10 @@
   // 页或矮窗口里顶部会越出滚动容器/视口被切。探到菜单顶部进入玻璃栏区（<40px）
   // 就翻转向下展开，并按触发钮下方可用空间收缩高度；菜单关闭或空间充足时还原。
   // 翻转向下后菜单会伸出 composerStack（overflow:auto）的盒子 —— 配套 CSS 用
-  // :has(._7KE1Ra_menu) 在菜单打开时放开该容器裁剪（见 injectUiPatchCss）。
+  // :has(...) 在菜单打开时放开该容器裁剪（见 injectUiPatchCss）。
+  // 0.1.2 菜单哈希类 ._7KE1Ra_menu→.ra1x4W_menu（已实核安装闭包），双锚并留。
   function initPopupRescue(): void {
-    var MENU_SEL = '._7KE1Ra_menu';
+    var MENU_SEL = '._7KE1Ra_menu, .ra1x4W_menu';
     var FLIP_CLS = 'dsh-popup-flip';
     var BAR_EDGE = 40;
     var probeTimer: number | null = null;
@@ -601,8 +616,9 @@
     menuEl = bar.querySelector('.dch-menu') as HTMLElement | null;
     statusEl = bar.querySelector('.dch-status') as HTMLElement | null;
 
-    var left = bar.querySelector('.dch-left');
-    if (left) armDrag(left);
+    // 只 arm bar 一层：.dch-left 是 bar 子元素，mousedown 会冒泡到 bar；
+    // 两层各自持有 lastClick 闭包会让左半栏双击 toggle 两次（净零）= 双击
+    // 最大化失效 + 每次按下多发一次拖拽事件（浮窗栏 L476 是正确单层样板）。
     armDrag(bar);
     var minBtn = bar.querySelector('[data-act="min"]');
     if (minBtn) minBtn.addEventListener('click', function () { dshDesktop.windowControls.minimize(); });
@@ -667,10 +683,76 @@
 // __ModuleLoader__ 赋值并包装 create()，把返回的 ClientModuleSystem 按旧
 // 契约补发到全局（对齐旧内核 dsh-client-web AppWebEntry 的
 // globalThis.__DSH_MODULES__ = this.modules）。任何一步异常都只空转，不阻断页面引导。
+//
+// 0.1.2 扩展：client bundle 的注册工厂签名从 (require, ctx) 收敛为单参
+// (require)（ClientBundleRegistration 官方契约）。旧式插件（含大量第三方）
+// 的 factory 期望第二参数 ctx = 注入对象表（键为包名）。这里同时包装
+// load()：读页面 __DSH_BOOT__ 图中该 id 的 inject 名单，把工厂改写为
+// (require) => origFactory(require, buildLegacyCtx(...))，其中注入对象
+// 经 require(包名) 从模块表物化（inject 行先于此行到达，物化顺序有保证；
+// 缺失的注入名留 undefined——对齐旧内核对缺失注入的实际表现）。
 (function () {
   try {
     var w = window as any;
     var loader: any;
+    // 旧名 → 新包面映射（0.1.2 拆包）：client-runtime 的职责移入
+    // ui-settings/client（SettingsScope 系）与 client-store；locale 不变。
+    // require 走旧名会 miss 模块表，这里换成等价新名。
+    var LEGACY_SPECIFIER_MAP: Record<string, string> = {
+      '@deepseek-ai/dsh-client-runtime': '@deepseek-ai/dsh-client-ui-settings/client',
+      '@deepseek-ai/dsh-client-runtime/client': '@deepseek-ai/dsh-client-ui-settings/client',
+    };
+    function resolveLegacySpec(spec: string): string {
+      return Object.prototype.hasOwnProperty.call(LEGACY_SPECIFIER_MAP, spec) ? LEGACY_SPECIFIER_MAP[spec]! : spec;
+    }
+    function injectListOf(id: string): string[] {
+      try {
+        var boot = w.__DSH_BOOT__;
+        var entries = boot && Array.isArray(boot.entries) ? boot.entries : [];
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i] && entries[i].id === id && Array.isArray(entries[i].inject)) return entries[i].inject;
+        }
+      } catch (e) { /* 无图按无注入处理 */ }
+      return [];
+    }
+    function wrapLegacyFactory(id: string, factory: (a: any, b: any) => unknown): (req: (s: string) => unknown) => unknown {
+      return function (require: (spec: string) => unknown) {
+        var injects = injectListOf(id);
+        var ctx: Record<string, unknown> = {};
+        for (var i = 0; i < injects.length; i++) {
+          var name = injects[i]!;
+          try { ctx[name] = require(resolveLegacySpec(name)); }
+          catch (e) { ctx[name] = undefined; /* 缺失注入与旧内核表现一致 */ }
+        }
+        return factory(require, ctx);
+      };
+    }
+    /** 旧式双参工厂兼容：包装目标的 load()（queue/live 两代对象通用；幂等）。
+     * 幂等标记记录“已包装的 load 函数”，create() 内核替换 load 后可再次
+     * 调用本函数给新 load 补包装（对象同一、load 引用不同）。 */
+    function armLegacyFactoryShim(target: any): void {
+      if (!target || typeof target.load !== 'function') return;
+      if (target.__dshLegacyFactoryLoad === target.load) return;
+      target.__dshLegacyFactoryLoad = target.load;
+      var origLoad = target.load;
+      target.load = function (this: any, registration: { id?: unknown; factory?: unknown }) {
+        try {
+          var id = registration && typeof registration.id === 'string' ? registration.id : '';
+          var factory = registration && typeof registration.factory === 'function' ? registration.factory : null;
+          if (id && factory && factory.length >= 2) {
+            // 形参个数 ≥2 = 旧式 (require, ctx)。新式单参工厂不包装
+            // （包装无害但白建 ctx；以最小干预为准）。
+            var wrapped = wrapLegacyFactory(id, factory as (a: any, b: any) => unknown);
+            registration = { id: id, factory: wrapped } as { id: string; factory: unknown };
+          }
+        } catch (e) { /* 包装失败按原样注册 */ }
+        return origLoad.call(this, registration);
+      };
+    }
+    // 内核安装 loader 的方式两代不同：rc.2 是普通赋值（触发 setter），0.1.2
+    // 是 Object.defineProperty 数据属性（不触发 setter，但 configurable）。
+    // 因此先用 setter 拦截赋值路径，再强制重定义为 accessor 兜住 defineProperty
+    // 路径——重定义本身会把内核写入的数据属性转走 getter/setter。
     Object.defineProperty(window, '__ModuleLoader__', {
       configurable: true,
       get: function () { return loader; },
@@ -686,10 +768,43 @@
                 w.__DSH_MODULES__ = mods;
               }
             } catch (e) { /* 垫片不阻断引导 */ }
+            // 0.1.2 的 create() 会把 window.__ModuleLoader__ 整体替换为
+            // live 对象（load → this.register 闭包），先行包装会在替换后丢
+            // 失。这里对替换后的新 loader 再包一次 load（幂等标记防重）。
+            try {
+              armLegacyFactoryShim(w.__ModuleLoader__);
+            } catch (e) { /* 垫片不阻断引导 */ }
             return mods;
           };
+          armLegacyFactoryShim(v);
         }
       }
     });
+    // 兜底：若内核随后以 defineProperty 数据属性安装 loader，上面那条覆盖
+    // 不了它（defineProperty 同名 configurable 属性直接替换描述符）。这里
+    // 再声明一次 accessor，把之后任何 defineProperty 语义转为 set 调用。
+    // （defineProperty 到 accessor 属性：仅当新描述符本身也是 accessor 时
+    // 生效；数据属性会覆盖。故 0.1.2 需要在内核 bootstrap 之后、批次脚本
+    // 之前重包 —— 见下方 MutationObserver 延迟重包。）
+    try {
+      var rearm = function () {
+        try {
+          var cur = w.__ModuleLoader__;
+          if (cur && typeof cur.create === 'function' && !cur.__dshModulesShim) {
+            // 内核已装好 loader 且未过垫片：手动过一遍 setter 逻辑。
+            var setter = Object.getOwnPropertyDescriptor(window, '__ModuleLoader__')?.set;
+            if (setter) setter.call(window, cur);
+            else loader = cur;
+          }
+        } catch (e) { /* 空转 */ }
+      };
+      // 内核 bootstrap 脚本在 head 内联（先于本脚本之后的所有外链脚本），
+      // 但本注入脚本是 init-script（先于一切页面脚本）。 MutationObserver
+      // 等 head 里 loader 装好后立刻重包；只观察一次属性就绪即断开。
+      var obs = new MutationObserver(function () {
+        if (w.__ModuleLoader__) { obs.disconnect(); rearm(); }
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) { /* 空转 */ }
   } catch (e) { /* 已存在不可重定义的同名属性时放弃垫片 */ }
 })();

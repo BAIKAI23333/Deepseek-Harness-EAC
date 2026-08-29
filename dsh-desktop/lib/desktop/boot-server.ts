@@ -14,6 +14,7 @@
 
 import fs = require('node:fs');
 import http = require('node:http');
+import os = require('node:os');
 import path = require('node:path');
 import cp = require('node:child_process');
 import type { ChildProcess } from 'node:child_process';
@@ -66,6 +67,42 @@ export function setIsRestarting(v: boolean): void { restartingServer = v; }
 function logsDir(): string { return path.join(ctx.getUserDataDir(), 'logs'); }
 function dshWebLogPath(): string { return path.join(logsDir(), 'dsh-web.log'); }
 
+// 0.1.2 暗雷自愈（凭据版式）：当前 credentials-local 要求顶层
+// version 为 YAML 字符串 "1"，且使用 refs:/records: 版式。旧版桌面端会把
+// version 改成数字 1，导致每次启动都被严格校验拒绝。这里在拉起内核前规范
+// version 的 YAML 标量类型，并保留可识别的旧版扁平格式迁移；形态看不懂则不动，
+// 交由内核报错路径展示。失败不阻塞启动。
+function healCredentialsVersion(): void {
+  try {
+    const home = childEnv().DSH_HOME || path.join(os.homedir(), '.dsh');
+    const file = path.join(home, '.credentials.yaml');
+    if (!fs.existsSync(file)) return;
+    const text = fs.readFileSync(file, 'utf8');
+    let fixed = text.replace(/^([ \t]*)version:[ \t]*(?:1|['"]1['"])[ \t]*$/m, '$1version: "1"');
+    if (!/^([ \t]*)version:[ \t]*\S/m.test(fixed)) {
+      const scalar: string[] = [];
+      const rest: string[] = [];
+      let inRecords = false;
+      let recognizable = true;
+      for (const line of fixed.split('\n')) {
+        if (/^records:[ \t]*$/.test(line)) { inRecords = true; rest.push(line); continue; }
+        if (inRecords) { rest.push(line); continue; }
+        if (/^[A-Za-z_][A-Za-z0-9_-]*:[ \t]*\S[ \t]*$/.test(line)) { scalar.push(line); continue; }
+        if (line.trim() === '') continue;
+        recognizable = false;
+        break;
+      }
+      if (recognizable && scalar.length > 0) {
+        fixed = 'version: "1"\nrefs:\n' + scalar.map((l) => '  ' + l).join('\n') + '\n' + rest.join('\n').replace(/\n*$/, '\n');
+      }
+    }
+    if (fixed !== text) {
+      fs.writeFileSync(file, fixed);
+      ctx.log('dsh', '已自愈 .credentials.yaml 版式（credentials-local 要求 version: "1" + refs:/records:）');
+    }
+  } catch { /* 自愈失败交由内核报错路径展示 */ }
+}
+
 async function startServer(unsafePortRetries = 4, overlays: string[] = []): Promise<string> {
   // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
   if (serverProc && !serverProc.killed && !ctx.isQuitting()) {
@@ -73,6 +110,7 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
     killTree(serverProc);
     serverProc = null;
   }
+  healCredentialsVersion();
   // 稳定端口（stable-port）：复用 settings.webPort，避免每次 --port 0 换
   // origin 导致 localStorage 偏好丢失；同时避开 Chromium 受限端口。
   const webPort = await chooseStableWebPort({
@@ -95,9 +133,11 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
       .flatMap((p) => ['--patch', p]);
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
     // 硬编码别名，不接受父级 --profile）；--host/--port 透传给该 app。
+    // --no-open：内核 openBrowser 默认 true 会每轮启动弹一个系统浏览器标签
+    //（5.1.0 批次修过，5.3.0 重写 boot-server 时丢失回归）。
     const proc = cp.spawn(
       nodeBin,
-      ['--use-system-ca', bin, '--profile', ctx.getDesktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), ...patchArgs],
+      ['--use-system-ca', bin, '--profile', ctx.getDesktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), '--no-open', ...patchArgs],
       {
         ...childProcessSpawnOptions(),
         cwd: ctx.getUserDataDir(),
@@ -127,6 +167,8 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     let settled = false;
     let handedOff = false; // 受限端口重启：本实例的退出不再影响外层 Promise
     let bootTimer: NodeJS.Timeout | null = null;
+    // 0.1.2：stdout 就绪行携带的一次性 token URL（HTTP 探测胜出时的兜底值）。
+    let probeFallbackUrl = '';
     const output = createStreamWriteGuard(out, {
       onError: (err) => ctx.log('warn', 'dsh web 日志流异常: ' + String((err && (err as Error).message) || err)),
     });
@@ -141,10 +183,16 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
       }
       if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
     };
+    // 跨 chunk 行缓冲：就绪行（含一次性 token URL）若被管道分块截断，按块
+    // split 会两半都匹配失败 → token 永久丢失（HTTP 探测超时后 401 白屏）。
+    // 只处理完整行，尾段不完整行滚入下一块。
+    let lineBuf = '';
     const onData = (chunk: Buffer) => {
       output.write(chunk);
-      const text = chunk.toString();
-      for (const line of text.split(/\r?\n/)) {
+      lineBuf += chunk.toString();
+      const lines = lineBuf.split(/\r?\n/);
+      lineBuf = lines.pop()!;
+      for (const line of lines) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
         if (!m) continue;
         const blocked = restrictedPortOf(m[1]!);
@@ -171,6 +219,9 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
             ctx.saveSettings(settings);
           }
         } catch { /* URL 解析失败时忽略 */ }
+        // 0.1.2：就绪行带一次性 token。记录给 HTTP 探测胜出路径兜底用
+        //（finish 与探测是竞争关系，谁先到都会带上有 token 的 URL）。
+        probeFallbackUrl = m[1]!;
         finish(null, m[1]!);
       }
     };
@@ -187,20 +238,40 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     });
     // HTTP 就绪探测与 stdout 就绪行并行竞争 —— 就绪行被管道缓冲吞掉或格式
     // 变化时不再白白等满 bootTimer（「启动 60 秒超时」的主要假阳性来源）。
+    // 内核 0.1.2 起 Web UI 首屏带一次性 token 鉴权：裸 `/` 在服务就绪后返回
+    // 401，只证明端口活着、不证明可用。探测改打免鉴权的静态资源
+    // favicon.svg。探测胜出时【不再立即返回】：token 只存在于 stdout 就绪行
+    //（探测时行通常还没打印），再等一小窗口拿带 token 的 URL；窗口内没等到
+    // 就绪行才回退裸 origin（rc.2 语义，兼容无鉴权老内核）。
     if (restrictedPortOf(`http://127.0.0.1:${opts.expectedPort}`) === 0) {
       const probeUrl = `http://127.0.0.1:${opts.expectedPort}`;
       void (async () => {
         while (!settled) {
           const ok = await new Promise<boolean>((res) => {
-            const req = http.get(probeUrl + '/', { timeout: 2500 }, (r) => {
+            const req = http.get(probeUrl + '/favicon.svg', { timeout: 2500 }, (r) => {
               r.resume();
               res(!!r.statusCode && r.statusCode < 500);
             });
             req.on('error', () => res(false));
             req.on('timeout', () => { req.destroy(); res(false); });
           }).catch(() => false);
-          if (ok) { finish(null, probeUrl); return; }
-          await new Promise((r) => setTimeout(r, 350));
+          if (!ok) {
+            await new Promise((r) => setTimeout(r, 350));
+            continue;
+          }
+          // 探测就绪：给 stdout 就绪行（带 token）最多 30 秒补到窗口。就绪行
+          // 通常随端口就绪毫秒级到达；曾只等 5 秒，慢盘/杀毒软件拖慢 stdout
+          // 管道时窗口内拿不到 token，回退裸 origin 就是 401 白屏且无从诊断。
+          for (let i = 0; i < 300 && !settled && !probeFallbackUrl; i += 1) {
+            await new Promise((r) => setTimeout(r, 100));
+          }
+          if (!settled) {
+            if (!probeFallbackUrl) {
+              ctx.log('dsh', 'HTTP 探测就绪但 30 秒内未收到带 token 的就绪行，回退裸 origin（0.1.2 内核下将 401，需查 dsh-web.log 的就绪行）');
+            }
+            finish(null, probeFallbackUrl || probeUrl);
+          }
+          return;
         }
       })();
     }
@@ -229,9 +300,12 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
 
 function waitUntilUp(url: string, timeoutMs = 120000): Promise<string> {
   const started = Date.now();
+  // 0.1.2 起 URL 可能带 ?token= 查询串：探测路径必须走 URL 拼接而非字符串
+  // 追加（`url + '/'` 会把路径插到 query 前）。探测用免鉴权静态资源。
+  const probeTarget = new URL('favicon.svg', url).href;
   return new Promise<string>((resolve, reject) => {
     const tick = () => {
-      const req = http.get(url + '/', { timeout: 3000 }, (res) => {
+      const req = http.get(probeTarget, { timeout: 3000 }, (res) => {
         res.resume();
         if (res.statusCode && res.statusCode < 500) resolve(url);
         else retry();

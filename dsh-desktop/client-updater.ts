@@ -34,21 +34,11 @@ import cp = require('node:child_process');
 import updater = require('./updater');
 const { compareVersions } = updater;
 
-// Electron 主进程下优先用 net 模块（Chromium 网络栈）发请求：走系统代理
-// 与系统 CA 信任库。用户网络里 Node https 常见的两类硬伤它都能正确处理：
-//   ① 企业/网关 MITM 证书不在 Node 内置 Mozilla CA 列表 —— 报
-//      "unable to verify the first certificate"，检查更新直接失败；
-//   ② 系统代理（如 127.0.0.1:7890）Node https 根本不读，直连 GitHub
-//      超时。纯 Node 环境（单测）下 electron 不可用，自动回落 node https。
-let electronNet: any = null;
-try {
-  const electron = require('electron');
-  if (electron && typeof electron.net === 'object' && typeof electron.net.request === 'function') {
-    electronNet = electron.net;
-  }
-} catch { /* plain node (tests): fall back to node https */ }
+// （历史备注：Electron 主进程时代曾优先用 electron.net —— Chromium 网络栈
+// 走系统代理与系统 CA，规避企业 MITM 证书与系统代理两类 Node https 硬伤；
+// Tauri 化后 electron 模块永不可得，该路径已整体退役。）
 
-/** 统一取响应头字段（net 与 http 的 header 值类型不一致，可能是数组）。 */
+/** 统一取响应头字段（http 与 https 的 header 值类型不一致，可能是数组）。 */
 function headerValue(headers: Record<string, unknown> | null | undefined, name: string): unknown {
   const v = headers && headers[name];
   return Array.isArray(v) ? v[0] : v;
@@ -244,39 +234,12 @@ interface ResponseBundle {
   stream: any;
 }
 
-/**
- * 统一的"取响应"原语：resolve { status, headers, stream }。
- * electron.net 路径自动跟随重定向（含跨域）、自动走系统代理与系统 CA；
- * node https 回退路径手动跟随重定向（≤5 次）。timeoutMs 只约束到响应头
- * 到达（TTFB），响应体由调用方各自控制。
- */
+// Electron 时代的 electron.net 路径已随壳退役删除（原走 Chromium 网络栈：
+// 系统代理 + 系统 CA，Tauri 产品里 electron 模块永远不存在），统一 node
+// https：手动跟随重定向（≤5 次）。timeoutMs 只约束到响应头到达（TTFB），
+// 响应体由调用方各自控制。
 function getResponse(url: string, { headers = {}, timeoutMs = 20000, redirects = 0 }: { headers?: Record<string, unknown>; timeoutMs?: number; redirects?: number } = {}): Promise<ResponseBundle> {
   if (redirects > 5) return Promise.reject(new Error('重定向次数过多'));
-  if (electronNet) {
-    return new Promise((resolve, reject) => {
-      let req: any;
-      try {
-        req = electronNet.request({ url, redirect: 'follow' });
-      } catch (err) {
-        return reject(err);
-      }
-      for (const [k, v] of Object.entries({ 'User-Agent': 'DSH-Desktop', ...headers })) {
-        try { req.setHeader(k, v); } catch { /* 无效头名等，忽略 */ }
-      }
-      const timer = setTimeout(() => {
-        try { req.destroy(new Error('请求超时')); } catch { /* already destroyed */ }
-      }, timeoutMs);
-      req.on('response', (res: any) => {
-        clearTimeout(timer);
-        resolve({ status: res.statusCode, headers: res.headers, stream: res });
-      });
-      req.on('error', (err: unknown) => {
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      });
-      req.end();
-    });
-  }
   return new Promise((resolve, reject) => {
     // 自定义镜像（DSH_DESKTOP_RELEASE_API）与单测允许 http:// 端点
     const lib = (url.startsWith('http:') ? http : https) as unknown as typeof http;
@@ -584,19 +547,34 @@ async function downloadWithSourceSwitch(urls: string[], dest: string, { onProgre
 
 async function concatFiles(sources: string[], dest: string): Promise<void> {
   const out = fs.createWriteStream(dest);
-  for (const s of sources) {
+  // 写侧 error 监听必须在拷贝循环之前挂上：pipe 不转发写错误，ENOSPC/EIO
+  // 若在此处无监听会以 uncaught exception 直接杀掉进程（磁盘压力场景恰是
+  // 本函数存在的理由）。每段拷贝的 promise 同时监听读写两侧错误，保证必
+  // 定settle；失败时销毁写流并清掉半成品 dest。
+  let writeErr: Error | null = null;
+  out.on('error', (err) => { if (!writeErr) writeErr = err; });
+  try {
+    for (const s of sources) {
+      await new Promise<void>((res, rej) => {
+        const rs = fs.createReadStream(s);
+        const onWriteErr = (err: Error) => { try { rs.destroy(); } catch { /* noop */ } rej(err); };
+        out.once('error', onWriteErr);
+        rs.on('error', rej);
+        rs.on('end', () => { out.off('error', onWriteErr); res(); });
+        rs.pipe(out, { end: false });
+      });
+      if (writeErr) throw writeErr;
+      fs.rmSync(s, { force: true });
+    }
     await new Promise<void>((res, rej) => {
-      const rs = fs.createReadStream(s);
-      rs.on('error', rej);
-      rs.on('end', res);
-      rs.pipe(out, { end: false });
+      out.on('error', rej);
+      out.end(res);
     });
-    fs.rmSync(s, { force: true });
+  } catch (err) {
+    try { out.destroy(); } catch { /* already destroyed */ }
+    try { fs.rmSync(dest, { force: true }); } catch { /* best effort */ }
+    throw err;
   }
-  await new Promise<void>((res, rej) => {
-    out.on('error', rej);
-    out.end(res);
-  });
 }
 
 // --- SHA-256 内容校验（V4）--------------------------------------------------
@@ -1267,4 +1245,4 @@ function applyUpdate(ctx: UpdateCtx, pending: PendingUpdate, opts?: ApplyUpdateO
   return script;
 }
 
-export = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isPortable, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls, DEFAULT_REPOS };
+export = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls };

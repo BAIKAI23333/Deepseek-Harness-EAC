@@ -1,10 +1,10 @@
 'use strict';
 
-// rescue-agent.js — 崩溃救援代理（纯函数核心，零 electron 依赖）
+// rescue-agent.js — 崩溃救援代理（纯函数核心，无壳依赖）
 //
 // 背景：dsh web 服务器把插件跑在同一个进程里，插件崩溃 = 整个 agent 停摆。
-// 桌面壳（Electron 主进程）永远存活，是唯一能在「服务器死后」继续工作的
-// 位置。本模块为壳层提供救援能力：
+// 桌面壳（Tauri main.rs + sidecar）永远存活，是唯一能在「服务器死后」继续
+// 工作的位置。本模块为壳层提供救援能力：
 //
 //   · collectDiagnosis —— 聚合事故报告 / 日志尾部 / profile 配置面 / 快照 /
 //     插件清单，产出「发送内容清单」（用户确认）与发给 AI 的诊断 payload；
@@ -23,7 +23,7 @@
 //     { ok:false, error } 而不是 throw；
 //   · 日志尾部读取走 seek 只读（大文件不整读、不常驻内存）；
 //   · 网络调用带连接+响应双超时与响应大小上限，失败降级为手动模式；
-//   · 一切修复动作由 main.js 注入执行器完成，本模块只做校验与分发。
+//   · 一切修复动作由 rescue-integration.ts 注入执行器完成，本模块只做校验与分发。
 
 import fs = require('node:fs');
 import path = require('node:path');
@@ -594,7 +594,7 @@ async function runAutoRepair({ diagnose, analyze, execute, retry, fallback, maxR
 }
 
 // ── 白名单分发（applySuggestion，副作用经 exec 注入）──────────────────
-// exec(suggestion) 由 main.js 提供，返回 { ok, result?, error?, restartRequired? }。
+// exec(suggestion) 由 rescue-integration.ts 提供，返回 { ok, result?, error?, restartRequired? }。
 async function applySuggestion(suggestion: any, exec: (s: ValidSuggestion) => Promise<any>, log: (section: string, message: string) => void = () => {}): Promise<{ ok: boolean; error?: string; result?: unknown; restartRequired?: boolean }> {
   const v = validateSuggestion(suggestion);
   if (!v.ok) return { ok: false, error: v.error! };
@@ -734,7 +734,6 @@ function chatCompletions({ apiKey, model, messages, timeoutMs, baseUrl, httpFn }
 
 export = {
   DEFAULT_OPTS,
-  ACTION_SPEC,
   readTail,
   collectDiagnosis,
   filterDiagnosisPayload,

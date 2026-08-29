@@ -53,7 +53,7 @@ export interface PhoneStatus {
   lanUrl: string;
   mobileReady: boolean;
   pairing: {
-    state: 'idle' | 'waiting' | 'approved' | 'expired';
+    state: 'idle' | 'waiting' | 'approved' | 'rejected' | 'expired';
     expiresAt: number | null;
   };
 }
@@ -145,7 +145,8 @@ function pairingWaitPage(): string {
     'var poll=function(){',
     "fetch('/api/pair-state?token='+encodeURIComponent(location.search.match(/[?&]token=([^&]+)/)[1]))",
     ".then(function(r){return r.json()})",
-    ".then(function(s){if(s.state==='approved'){location.href='/'}else if(s.state==='expired'){",
+    ".then(function(s){if(s.state==='approved'){location.href='/'}else if(s.state==='rejected'){",
+    "document.getElementById('st').textContent='配对被拒绝，请在电脑端重新发起配对。'}else if(s.state==='expired'){",
     "document.getElementById('st').textContent='配对已过期，请在电脑端重新发起配对。'}})",
     ".catch(function(){})",
     '};',
@@ -180,9 +181,10 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
     };
   }
 
-  function currentPairingState(): 'idle' | 'waiting' | 'approved' | 'expired' {
+  function currentPairingState(): 'idle' | 'waiting' | 'approved' | 'rejected' | 'expired' {
     if (!server || pairing === null) return 'idle';
     if (pairing.decided === true) return 'approved';
+    if (pairing.decided === false) return 'rejected';
     if (Date.now() > pairing.expiresAt) return 'expired';
     return 'waiting';
   }
@@ -266,6 +268,10 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             json(res, 409, { error: 'no pending pairing' });
             return;
           }
+          // 读 body 会 await 让出事件循环：期间 stop()/disconnect() 可能轮换
+          // token（pairing 换成新对象）。先捕获本请求看到的对象，写回前复核
+          // 身份，避免把决定落在别人刚扫到的新 token 上（TOCTOU）。
+          const pending = pairing;
           const chunks: Buffer[] = [];
           for await (const chunk of req) chunks.push(chunk as Buffer);
           let body: { approved?: unknown };
@@ -275,9 +281,13 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             json(res, 400, { error: 'invalid json body' });
             return;
           }
-          pairing.decided = body.approved === true;
-          log(`phone bridge: pairing ${pairing.decided ? 'approved' : 'rejected'} by desktop`);
-          json(res, 200, { ok: true, approved: pairing.decided });
+          if (pairing !== pending || pending.decided !== null) {
+            json(res, 409, { error: 'no pending pairing' });
+            return;
+          }
+          pending.decided = body.approved === true;
+          log(`phone bridge: pairing ${pending.decided ? 'approved' : 'rejected'} by desktop`);
+          json(res, 200, { ok: true, approved: pending.decided });
           return;
         }
         rotatePairing();
@@ -306,6 +316,10 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           headers: proxyHeaders(req, upstream.origin),
         },
         (up: http.IncomingMessage) => {
+          // 上游响应流中途出错（服务重启/连接重置）：三个分支都挂同一兜底，
+          // 否则缓冲分支 end 永不触发（请求挂死 + 缓冲内存滞留）、pipe 分支
+          // 半开连接悬挂。destroy res 连带清掉 gzip/缓冲链。
+          up.on('error', () => { try { res.destroy(); } catch { /* noop */ } });
           const contentType = String(up.headers['content-type'] ?? '');
           const wantsGzip = (req.headers['accept-encoding'] ?? '').includes('gzip');
           const isUnaryJson =
@@ -367,7 +381,9 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
     start(): Promise<{ url: string; port: number }> {
       if (server !== null) {
         const pending = pairing;
-        if (!pending) rotatePairing();
+        // 幂等重入也轮换失效 token：过期/已决定的旧 pairing 再返回旧二维码，
+        // 手机只会看到过期页。重开「连接手机」应拿到新 token。
+        if (!pending || pending.decided !== null || Date.now() > pending.expiresAt) rotatePairing();
         return Promise.resolve({ url: lanUrl + '/pair?token=' + (pairing?.token ?? ''), port });
       }
       rotatePairing();

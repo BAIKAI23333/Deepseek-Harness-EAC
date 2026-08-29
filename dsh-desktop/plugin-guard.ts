@@ -99,7 +99,7 @@ interface GuardApi {
   lastGoodSnapshot(): SnapshotMeta | null;
   healthCheck(): { at: string; profile: string; findings: Finding[] };
   repair(findings?: Finding[]): { applied: string[] };
-  repairJunctions(): { repaired: string[]; unknown: string[] };
+  repairJunctions(): { repaired: string[]; unknown: string[]; pruned: string[] };
   junctionFindings(): Finding[];
   reportIncident(title: string, detail: string): { ok: boolean; file?: string; error?: string };
   listIncidents(): { id: string; title: string }[];
@@ -519,13 +519,14 @@ function createGuard(opts: GuardOpts): GuardApi {
   // 一跑，桌面的模块解析就被换血（版本错位 / npx 缓存被清后悬空）。
   // 这里以 dshBin() 推导闭包根，逐个纠正指向；闭包里不存在的名字（原生
   // 新版才有的包）保留原样并报告。
-  function repairJunctions(): { repaired: string[]; unknown: string[] } {
+  function repairJunctions(): { repaired: string[]; unknown: string[]; pruned: string[] } {
     const repaired: string[] = [];
     const unknown: string[] = [];
+    const pruned: string[] = [];
     try {
       const fallbackDir = path.join(home(), 'profiles', 'node_modules');
       const expected = expectedClosureRoot();
-      if (!expected || !fs.existsSync(fallbackDir)) return { repaired, unknown };
+      if (!expected || !fs.existsSync(fallbackDir)) return { repaired, unknown, pruned };
       fs.mkdirSync(fallbackDir, { recursive: true });
       const expRoot = safeRealpath(expected) || expected;
       const norm = (p: string) => String(p).replace(/\//g, '\\').toLowerCase();
@@ -542,7 +543,21 @@ function createGuard(opts: GuardOpts): GuardApi {
         if (good) continue;
         const want = path.join(expRoot, rel);
         if (!fs.existsSync(path.join(want, 'package.json'))) {
-          unknown.push(full);
+          // 闭包里没有这个名字:目标还活着（原生新版 CLI 才有的包）→ 保留原
+          // 指向；目标已死（升级/卸载遗留的悬空链，如 0.1.2 升级后残留的
+          // 104 条指向已卸载 Electron 目录的死链 —— 内核 heal 只增链不清理，
+          // 永不可能自愈）→ 剪除。悬空链对任何一方都不可解析，只会让模块
+          // 解析反复撞 ENOENT。
+          if (!fs.existsSync(real)) {
+            try {
+              removeLink(link);
+              pruned.push(full);
+            } catch (err) {
+              log('guard', `剪除悬空共享模块 ${full} 失败: ` + (err as Error).message);
+            }
+          } else {
+            unknown.push(full);
+          }
           continue;
         }
         try {
@@ -556,13 +571,16 @@ function createGuard(opts: GuardOpts): GuardApi {
       if (repaired.length) {
         log('guard', '已把 ' + repaired.length + ' 个共享模块指回客户端闭包');
       }
+      if (pruned.length) {
+        log('guard', '已剪除 ' + pruned.length + ' 条悬空共享模块死链（目标已不存在）');
+      }
       if (unknown.length) {
         log('guard', '闭包中不存在的共享模块（保留原指向）: ' + unknown.slice(0, 10).join(', '));
       }
     } catch (err) {
       log('guard', 'junction 归属修复失败: ' + (err as Error).message);
     }
-    return { repaired, unknown };
+    return { repaired, unknown, pruned };
   }
 
   // ── 事故报告（plugin-guard 的 incident）──────────────────────────────
@@ -804,4 +822,4 @@ function createGuard(opts: GuardOpts): GuardApi {
   };
 }
 
-export = { createGuard, GUARD_FILES };
+export = { createGuard };

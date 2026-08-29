@@ -98,15 +98,20 @@ const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'ma
 const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
   startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
 };
-const credentialsHeal = require(path.join(DSH_DESKTOP_ROOT, 'credentials-format-heal.js')) as {
-  healCredentialsVersion(file: string, log: (tag: string, message: string) => void): { changed: boolean };
-};
+// 旧 credentials-format-heal（versioned→flat 反向迁移）已删除：0.1.2 内核
+// credentials-local 只认 version:1 + refs:/records: 版式，扁平版式会被拒启
+//（"uses the pre-release flat layout"）。正向自愈见 boot-server 的
+// healCredentialsVersion（引号 version 规整 + 扁平→versioned 迁移）。
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
 const desktopProfileFn = profileMod.desktopProfile as () => string;
 const showBoxFallback = async (opts: Record<string, unknown>) => {
   say('[dialog] ' + String((opts && opts.title) || '') + ': ' + String((opts && opts.message) || ''));
-  return { response: 0 };
+  // 无头兜底答 cancelId（fail-closed）：绝不自动应答「立即更新/立即重启」，
+  // 否则周期检查会无人值守地杀服务换 exe 退出（5.3.0 前的隐性自动更新）。
+  // 纯提示框（['确定']）没有 cancelId 也不分支读 response，回 0 占位。
+  const cancelId = opts && (opts.cancelId as number);
+  return { response: Number.isInteger(cancelId) ? cancelId : 0 };
 };
 const notifyFallback = (n: { title: string; body: string }): void => {
   say('[notify] ' + n.title + ': ' + n.body);
@@ -340,7 +345,7 @@ vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir
 // 同步 → 模块遮蔽修复 → 构建产物回填。boot.start 与重启/恢复中心
 // retry-boot 共用。
 async function preBootSync(): Promise<void> {
-  credentialsHeal.healCredentialsVersion(path.join(dshHome, '.credentials.yaml'), log);
+  // （旧 credentials-format-heal 反向迁移已删除，见文件头部说明）
   await (marketMod.processPendingMarketOps as () => Promise<void>)();
   (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
   (companionSyncMod.syncCompanionPlugins as () => void)();
@@ -527,6 +532,9 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
   // 原地重启 Web 服务核心：无锁窗口内消费市场排队 → 同步配套插件 →
   // 修复模块遮蔽 → 恢复保留产物 → 重新拉起。
   'boot.restart': async (): Promise<RpcResult> => restartWebServiceCore(),
+  // bridge.ts 的 restartService() 调 service.restart（此前无注册 → -32601 被插件
+  // 静默吞掉，「重启服务后生效」实际不重启）：与 boot.restart 同一核心。
+  'service.restart': async (): Promise<RpcResult> => restartWebServiceCore(),
   // ---- 恢复中心（vnext-absorb Phase 2）：Rust 壳创建的恢复中心窗口经专用
   // preload（WS JSON-RPC）调用这两个方法；动作分发在 lib/recovery-center。----
   'rc.action': async (p): Promise<RpcResult> => {
@@ -722,7 +730,7 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
           else results.push({ path: fp, status: 'conflict' });
         } else {
           if (content !== null && content.includes(newText)) {
-            fs.writeFileSync(fp, content.replace(newText, oldText), 'utf8');
+            fs.writeFileSync(fp, content.replace(newText, () => oldText), 'utf8');
             results.push({ path: fp, status: 'reverted' });
           } else if (content !== null && content === oldText) {
             results.push({ path: fp, status: 'skipped' });

@@ -11,10 +11,7 @@ window.__ModuleLoader__.load({
     const ROOT_ATTR = 'data-dssf-settings-root'
     const SCROLL_ATTR = 'data-dssf-scrollable'
     const FLEX_ATTR = 'data-dssf-flex-min-height'
-    const SETTINGS_LABELS = [
-      '设置', '基础', '通用', '模型', '供应商', '插件', '外观',
-      'settings', 'general', 'models', 'providers', 'plugins', 'appearance',
-    ]
+    const SETTINGS_SLOT_PREFIX = 'settings.'
 
     const STYLE_TEXT = [
       `[${SCROLL_ATTR}="true"] {`,
@@ -51,17 +48,22 @@ window.__ModuleLoader__.load({
       return style.display !== 'none' && style.visibility !== 'hidden'
     }
 
-    function normalizedText(element) {
-      return String(element.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase()
+    function isSettingsDialog(element) {
+      if (!isElement(element)) return false
+      const role = String(element.getAttribute('role') || '').toLowerCase()
+      if (role !== 'dialog') return false
+      const ariaModal = String(element.getAttribute('aria-modal') || '').toLowerCase()
+      if (ariaModal !== 'true') return false
+      return hasSettingsSlotDescendant(element)
     }
 
-    function settingsSignalCount(element) {
-      const text = normalizedText(element)
-      let count = 0
-      for (const label of SETTINGS_LABELS) {
-        if (text.includes(label)) count += 1
+    function hasSettingsSlotDescendant(element) {
+      if (!isElement(element)) return false
+      try {
+        return element.querySelector(`[data-slot^="${SETTINGS_SLOT_PREFIX}"]`) !== null
+      } catch {
+        return false
       }
-      return count
     }
 
     // 会话列骨架的稳定契约（内核 data-* 属性，非构建哈希）：设置弹层是
@@ -86,16 +88,9 @@ window.__ModuleLoader__.load({
       let current = seed
       for (let depth = 0; isElement(current) && depth < 9; depth += 1) {
         if (current === document.body || current === document.documentElement) break
+        if (isSettingsDialog(current)) return current
         const rect = rectOf(current)
-        const role = String(current.getAttribute('role') || '').toLowerCase()
-        // dialog 分支同样要求不含会话树：浮层形态的"设置根"绝不含
-        // 会话骨架，含之即为种子失真（与下方 250x180 分支同一判定）。
-        if (role === 'dialog' && rect.width >= 200 && rect.height >= 150 && settingsSignalCount(current) >= 1 && !containsConversationTree(current)) return current
-        if (rect.width >= 250 && rect.height >= 180 && settingsSignalCount(current) >= 2) {
-          // 含会话树的大框（整页框架/中心列）不是设置浮层：hero 首页的
-          // "设置"按钮等词表命中会把公共祖先爬到这里，误标会话区。
-          if (!containsConversationTree(current)) return current
-        }
+        if (rect.width >= 250 && rect.height >= 180 && hasSettingsSlotDescendant(current)) return current
         current = current.parentElement
       }
       return null
@@ -113,32 +108,46 @@ window.__ModuleLoader__.load({
 
     function discoverSettingsRoots() {
       const seeds = []
-      const selectors = [
-        '[data-dsh-settings-root]',
-        '[data-slot^="settings."]',
-        '[aria-label*="设置"]',
-        '[aria-label*="Settings"]',
-        '[role="dialog"]',
-      ]
-      for (const selector of selectors) {
-        try {
-          seeds.push(...document.querySelectorAll(selector))
-        } catch {
-          // Ignore unsupported selectors in older Chromium builds.
+      const seen = new Set()
+
+      const tryPush = (elements) => {
+        if (!elements) return
+        if (!elements[Symbol.iterator]) elements = [elements]
+        for (const el of elements) {
+          if (!seen.has(el)) {
+            seen.add(el)
+            seeds.push(el)
+          }
         }
       }
 
-      const navigationSignals = []
-      for (const element of document.querySelectorAll('button, a, [role="tab"], [role="menuitem"], nav a, nav button')) {
-        const text = normalizedText(element)
-        if (text.length <= 32 && SETTINGS_LABELS.some(label => text.includes(label)) && isVisible(element)) {
-          navigationSignals.push(element)
+      // Layer 1: Plugin custom marks (backward compat)
+      try { tryPush(document.querySelectorAll('[data-dsh-settings-root]')) } catch {}
+
+      // Layer 2: DSH official settings slot containers
+      try { tryPush(document.querySelectorAll(`[data-slot^="${SETTINGS_SLOT_PREFIX}"]`)) } catch {}
+
+      // Layer 3: Settings dialog (role + aria-modal + must contain settings slot descendant)
+      try {
+        for (const el of document.querySelectorAll('div[role="dialog"][aria-modal="true"]')) {
+          if (hasSettingsSlotDescendant(el)) tryPush([el])
         }
-      }
-      if (navigationSignals.length >= 1) {
-        const ancestor = commonAncestor(navigationSignals)
-        if (ancestor !== null) seeds.push(ancestor)
-      }
+      } catch {}
+
+      // Layer 4: Settings trigger button region (fallback)
+      try {
+        for (const btn of document.querySelectorAll('button[aria-haspopup="dialog"]')) {
+          try {
+            const slotAncestor = btn.closest(`[data-slot^="${SETTINGS_SLOT_PREFIX}"]`)
+              || btn.closest('[data-slot="sidebar.settings"]')
+            if (slotAncestor) tryPush([slotAncestor])
+          } catch {}
+        }
+      } catch {}
+
+      // Layer 5: aria-label fallback
+      try { tryPush(document.querySelectorAll('[aria-label*="设置"]')) } catch {}
+      try { tryPush(document.querySelectorAll('[aria-label*="Settings"]')) } catch {}
 
       const roots = []
       for (const seed of seeds) {
@@ -234,9 +243,21 @@ window.__ModuleLoader__.load({
         for (const element of nextSet) element.setAttribute(attribute, 'true')
       }
 
+      // 修复节流:0.1.2 内核浮层(floating-ui 等)每帧写 inline style,旧版
+      // 每个 mutation 批次都排一帧全量重扫(getComputedStyle 走查),对话流式
+      // 输出期间形成修复风暴拖垮主线程 —— 全局高延迟的元凶之一。这里把修复
+      // 频率封顶 ≈6.7/s:间隔不足时 rAF 空转到下个窗口,单句柄,dispose 不变。
+      const REPAIR_MIN_MS = 150
+      let lastRepairAt = 0
       const repair = () => {
         animationFrame = 0
         if (disposed) return
+        const elapsed = Date.now() - lastRepairAt
+        if (elapsed < REPAIR_MIN_MS) {
+          animationFrame = window.requestAnimationFrame(repair)
+          return
+        }
+        lastRepairAt = Date.now()
 
         const nextRoots = new Set(discoverSettingsRoots())
         const nextScrollables = new Set()
@@ -285,10 +306,11 @@ window.__ModuleLoader__.load({
         if (root === undefined) return
 
         const delta = wheelDeltaPixels(event)
-        let target = path.find(node => isElement(node) && markedScrollables.has(node) && canScroll(node, delta))
-        if (target === undefined) {
-          target = [...markedScrollables].find(node => root.contains(node) && canScroll(node, delta))
-        }
+        // 只滚动光标路径上的标记容器,绝不做"兜底重定向":设置弹层里左右两栏
+        // 是兄弟滚动容器,原生滚动链只走祖先不会走到兄弟;旧版在左栏滚到底后
+        // 把剩余滚动量手动转嫁给右栏(约 100px/格),用户感知为「滑左栏右边
+        // 跟着小幅滑动」。左栏到底就该停,剩余量交给 overscroll-behavior:contain。
+        const target = path.find(node => isElement(node) && markedScrollables.has(node) && canScroll(node, delta))
         if (target === undefined) return
 
         event.preventDefault()
@@ -300,7 +322,9 @@ window.__ModuleLoader__.load({
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+        // 不监听 style:浮层定位每帧写 inline style,是变更洪水的源头;
+        // 滚动容器的出现/消失由 childList 与 class/hidden 变化覆盖。
+        attributeFilter: ['class', 'hidden', 'aria-hidden'],
       })
       document.addEventListener('wheel', onWheel, { capture: true, passive: false })
       window.addEventListener('resize', scheduleRepair)

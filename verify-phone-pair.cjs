@@ -4,7 +4,8 @@
 //  2) phoneBridge.start() → LAN /pair?token= 200（配对等待页，不再 403/白块）
 //  3) desktop decide(true) → /api/pair-state approved + 下发 dsh_mobile cookie
 //  4) / 未配对 401 门页；配对后 / 返回完整内核 Web UI（5.2 代理版，非占位页）
-//  5) /api 代理往返真内核（client-request 信封 session.list）+ 喵丝滑 /pending 路由可达
+//  5) 经桥 WS 透传挂上内核 0.1.2 remote.mux（101 升级；旧扁平 /api RPC 已随
+//     dsh-host-apiproxy 移除）+ 喵丝滑 /pending 路由可达
 //  6) 顺带抽查：设置侧边栏出现「余额」「多智能体协作团队」入口（尽力而为）
 // 用法: node verify-phone-pair.cjs [exePath]
 const { spawn } = require('node:child_process');
@@ -144,10 +145,32 @@ const check = (name, ok, detail) => { console.log(`${ok ? '✔' : '✖'} ${name}
     const home = await httpReq(`http://127.0.0.1:${port}/`, { cookie: 'dsh_mobile=1' });
     check('P6b 配对后 / 返回完整内核页面', home.status === 200 && /id="root"|DeepSeek Harness/.test(home.raw), 'len=' + home.raw.length);
 
-    // 6) /api 代理往返真内核（client-request 信封，内核按 server-response 应答）
-    const envelope = { type: 'client-request', rpcId: 'e2e-' + Date.now(), method: 'session.list', payload: {} };
-    const rpc = await httpReq(`http://127.0.0.1:${port}/api/session.list`, { method: 'POST', body: envelope, cookie: 'dsh_mobile=1' });
-    check('P7 /api 代理往返真内核成功', rpc.status === 200 && /server-response|session/.test(rpc.raw), 'status=' + rpc.status + ' body=' + String(rpc.raw).slice(0, 120));
+    // 6) 经桥 WS 透传挂上内核 0.1.2 typert 传输面（remote.mux）：
+    //    rc.2 时代的扁平 HTTP RPC（/api/session.list 信封）已随 dsh-host-apiproxy
+    //    移除，0.1.2 的 API 全走 /api/remote.mux WebSocket —— 桥能完成 101
+    //    升级即证明 Host/Cookie/流式透传对 API 面成立。
+    const mux = await new Promise((resolve) => {
+      const url = new URL(`http://127.0.0.1:${port}/api/remote.mux`);
+      const key = Buffer.from(Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).toString('base64').slice(0, 22) + '==';
+      const req = http.request(
+        {
+          hostname: url.hostname, port: url.port, path: url.pathname,
+          headers: {
+            connection: 'Upgrade', upgrade: 'websocket',
+            'sec-websocket-version': 13, 'sec-websocket-key': key,
+            cookie: 'dsh_mobile=1',
+          },
+          timeout: 8000,
+        },
+        (res) => { res.resume(); resolve({ upgrade: false, status: res.statusCode || 0 }); },
+      );
+      req.on('upgrade', (res) => { res.resume(); resolve({ upgrade: true, status: res.statusCode || 0 }); });
+      req.on('response', (res) => { res.resume(); resolve({ upgrade: false, status: res.statusCode || 0 }); });
+      req.on('error', (e) => resolve({ upgrade: false, status: 0, error: String(e && e.message).slice(0, 80) }));
+      req.on('timeout', () => { req.destroy(); resolve({ upgrade: false, status: 0, error: 'timeout' }); });
+      req.end();
+    });
+    check('P7 经桥 WS 透传挂上内核 remote.mux（101 升级）', mux.upgrade === true, JSON.stringify(mux));
     // 喵丝滑 host 路由（5.2 内置）经代理可达
     const pending = await httpReq(`http://127.0.0.1:${port}/plugins/meow-smooth/pending`, { cookie: 'dsh_mobile=1' });
     check('P7b 喵丝滑 /pending 路由经代理可达', pending.status === 200 && /hostVersion/.test(pending.raw), 'status=' + pending.status);

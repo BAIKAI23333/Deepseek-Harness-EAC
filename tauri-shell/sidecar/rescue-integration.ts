@@ -298,7 +298,9 @@ export async function createLogsArchive(
   });
 }
 
+// 恢复中心「导出日志」（原 assets/recovery.html 语义，旧页已退役）：
 // 日志内容由 L2 打包；打开文件或目录仍由 L1 的原生动作负责。
+main
 async function exportLogs(): Promise<Record<string, unknown>> {
   try {
     const logsDir = path.join(H.userDataDir, 'logs');

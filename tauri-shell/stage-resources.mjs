@@ -34,7 +34,7 @@ const ROOT_FILES = [
   'balance.js', 'session-watcher.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js',
-  'bundle-integrity.js', 'credentials-format-heal.js', 'stable-port.js', 'stream-write-guard.js',
+  'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js',
   'shortcut-maintenance.js',
   'host-bootstrap.js',
 ];
@@ -288,10 +288,22 @@ if (existsSync(path.join(dd, 'vendor', 'npm'))) {
   cpSync(path.join(dd, 'vendor', 'npm'), path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
 }
 
+// 内核 tarball 缓存（0.1.2 起内核不在 npm registry 上：package.json 的
+// 依赖/overrides 全部指向 file:vendor/kernel/<version>/*.tgz）。staged 树的
+// npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
+const kernelCache = path.join(dd, 'vendor', 'kernel');
+if (existsSync(kernelCache)) {
+  cpSync(kernelCache, path.join(staged, 'dsh-desktop', 'vendor', 'kernel'), { recursive: true });
+  rmSync(path.join(staged, 'dsh-desktop', 'vendor', 'kernel', '.build'), { recursive: true, force: true });
+  console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
+} else {
+  throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
+}
+
 console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
 if (!keepStagedNm) {
-  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
+  execSync('npm ci --omit=dev --ignore-scripts --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
 }
 
 if (targetPlatform === 'linux') {

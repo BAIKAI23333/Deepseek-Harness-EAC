@@ -955,7 +955,10 @@ export async function updatePack(id: string, args: { zipPath?: string; manifest?
       if (old.managed && !newRefs.includes(old.ref)) {
         if (refCount(reg, id, old.pkg || old.ref) === 0) {
           ctx.log('feature-pack', '更新移除不再引用插件: ' + (old.pkg || old.ref));
-          removePlugin(old, profile);
+          // 必须 await：removePlugin 可能抛文件锁错误（EPERM/EBUSY），floating
+          // promise 会变成 unhandled rejection 直接杀掉 sidecar；且不串行的话
+          // 会与下面的 dsh plugin add 并发改同一 profile。
+          await removePlugin(old, profile);
         }
       }
     }
