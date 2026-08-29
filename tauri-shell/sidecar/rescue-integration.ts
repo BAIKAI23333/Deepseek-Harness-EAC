@@ -5,6 +5,7 @@
 
 import path = require('node:path');
 import fs = require('node:fs');
+import os = require('node:os');
 import cp = require('node:child_process');
 
 export interface RescueHost {
@@ -207,53 +208,113 @@ async function rescueExecuteSuggestion(s: { action: string; params: Record<strin
 
 let rescueBusy = false;
 
-/** 平台化诊断 zip 命令（纯函数，便于跨平台测试）。
- * 说明：darwin 的 ditto 归档 logs 目录本体，与 Windows `logs\*` 的内容级
- * 打包存在目录层级差异——对诊断用途无影响；ditto 为 macOS 内置零依赖。 */
+type ArchiverLike = {
+  directory(source: string, destination: false): ArchiverLike;
+  finalize(): Promise<void> | void;
+  on(event: string, listener: (error: Error) => void): ArchiverLike;
+  pipe(output: NodeJS.WritableStream): NodeJS.WritableStream;
+};
+
+export function resolveLogsExportDir(
+  env: NodeJS.ProcessEnv,
+  homeDir: string,
+  fallbackDir: string,
+): string {
+  const candidates = [
+    env.DSH_LOG_EXPORT_DIR,
+    env.OneDriveConsumer && path.join(env.OneDriveConsumer, 'Desktop'),
+    env.OneDriveCommercial && path.join(env.OneDriveCommercial, 'Desktop'),
+    env.OneDrive && path.join(env.OneDrive, 'Desktop'),
+    path.join(homeDir, 'Desktop'),
+  ].filter((candidate): candidate is string => !!candidate);
+  return candidates.find((candidate) => {
+    try { return fs.statSync(candidate).isDirectory(); } catch { return false; }
+  }) || fallbackDir;
+}
+
+/** macOS 保留系统 ditto；其他平台使用 Node archiver，避免 shell 路径解析。 */
 export function buildZipCommand(
   platform: NodeJS.Platform,
   logsDir: string,
   zip: string,
-): { program: string; args: string[] } {
-  if (platform === 'darwin') {
-    return { program: 'ditto', args: ['-c', '-k', logsDir, zip] };
-  }
-  return {
-    program: 'powershell',
-    args: ['-NoProfile', '-Command',
-      `Compress-Archive -Path "${logsDir}\\*" -DestinationPath "${zip}" -Force`],
-  };
+): { program: string; args: string[] } | null {
+  return platform === 'darwin'
+    ? { program: 'ditto', args: ['-c', '-k', logsDir, zip] }
+    : null;
 }
 
-// 恢复中心「导出日志」（原 assets/recovery.html 语义，旧页已退役）：打包到桌面并打开目录。
+// 恢复中心「导出日志」（原 assets/recovery.html 语义，旧页已退役）：由 L2 用
+// Node archiver 直接打包（macOS 保留 ditto），不再经 shell 解析路径；目标
+// 桌面（OneDrive 重定向感知），失败回退 userDataDir/diagnostics-exports。
+// 完成后路径经菜单 toast 反馈，不再自动打开目录（打开属 L1 原生动作）。
+async function runArchiveCommand(command: { program: string; args: string[] }): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = cp.spawn(command.program, command.args, { windowsHide: true, stdio: 'ignore' });
+    child.once('error', reject);
+    child.once('exit', (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${command.program} failed (${signal || `exit ${String(code)}`})`));
+    });
+  });
+}
+
+export async function createLogsArchive(
+  logsDir: string,
+  zipPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  const command = buildZipCommand(platform, logsDir, zipPath);
+  if (command) {
+    fs.mkdirSync(path.dirname(zipPath), { recursive: true });
+    try {
+      await runArchiveCommand(command);
+      if (!fs.existsSync(zipPath)) throw new Error(`${command.program} did not create archive`);
+    } catch (error) {
+      try { fs.rmSync(zipPath, { force: true }); } catch {}
+      throw error;
+    }
+    return;
+  }
+  const archiverPath = require.resolve('archiver', { paths: [DSH_DESKTOP_ROOT] });
+  const archiverFactory = require(archiverPath) as (format: 'zip', options: Record<string, unknown>) => ArchiverLike;
+  fs.mkdirSync(path.dirname(zipPath), { recursive: true });
+  await new Promise<void>((resolve, reject) => {
+    const output = fs.createWriteStream(zipPath);
+    const archive = archiverFactory('zip', { zlib: { level: 9 } });
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (error) {
+        try { output.destroy(); } catch {}
+        try { fs.rmSync(zipPath, { force: true }); } catch {}
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    output.on('close', () => finish());
+    output.on('error', (error) => finish(error));
+    archive.on('error', (error) => finish(error));
+    archive.pipe(output);
+    archive.directory(logsDir, false);
+    Promise.resolve(archive.finalize()).catch((error: Error) => finish(error));
+  });
+}
 async function exportLogs(): Promise<Record<string, unknown>> {
   try {
     const logsDir = path.join(H.userDataDir, 'logs');
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const zip = path.join(os_home_desktop(), 'dsh-eac-logs-' + stamp + '.zip');
     if (!fs.existsSync(logsDir)) return { ok: false, error: '日志目录不存在' };
-    const cmd = buildZipCommand(process.platform, logsDir, zip);
-    await new Promise<void>((resolve) => {
-      const ps = cp.spawn(cmd.program, cmd.args, { windowsHide: true, stdio: 'ignore' });
-      ps.on('exit', () => resolve());
-      ps.on('error', () => resolve());
-    });
-    if (!fs.existsSync(zip)) return { ok: false, error: '打包失败' };
-    if (process.platform === 'darwin') {
-      cp.exec(`open "${path.dirname(zip).replace(/"/g, '')}"`, () => {});
-    } else {
-      cp.exec(`start "" "${path.dirname(zip).replace(/"/g, '')}"`, { windowsHide: true }, () => {});
-    }
+    const fallbackDir = path.join(H.userDataDir, 'diagnostics-exports');
+    const outDir = resolveLogsExportDir(process.env, os.homedir(), fallbackDir);
+    const zip = path.join(outDir, 'dsh-eac-logs-' + stamp + '.zip');
+    await createLogsArchive(logsDir, zip);
     H.log('rescue', '日志已导出: ' + zip);
     return { ok: true, path: zip };
   } catch (err) {
     return { ok: false, error: String(((err as Error).message) || err) };
   }
-}
-
-function os_home_desktop(): string {
-  const home = process.env.USERPROFILE || path.join('C:', 'Users', 'Public');
-  return path.join(home, 'Desktop');
 }
 
 /** 救援方法面（rescue 系列 / safe-mode / recovery 系列）—— server.ts 侧 Object.assign 进 methods。 */

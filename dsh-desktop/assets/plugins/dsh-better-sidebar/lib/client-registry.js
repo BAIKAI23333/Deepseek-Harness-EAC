@@ -4778,12 +4778,24 @@ window.__ModuleLoader__.load({
 				const controller = new AbortController();
 				controllerRef.current = controller;
 				try {
-					const response = await ctx.connection.api.subagents.history({
-						...address,
+					// 内核 0.1.2：connection.api.subagents.history 已随 typert RPC 换血移除。
+					// 改走 session.follow 的 subagent 地址开一次快照（maxMessages 由服务端
+					// 截尾），取到首帧即弃流 —— 轮询尾读语义不变；chunk 投影记录不是
+					// 事件，喂给 lastActivity 前先滤掉。
+					const stream = ctx.remote.session.follow({
+						address: {
+							kind: "subagent",
+							parentSessionId: address.parentSessionId,
+							childSessionId: address.childSessionId,
+							mode: address.mode
+						},
 						maxMessages: 12
 					}, controller.signal);
-					if (!response.result.ok) return;
-					setLive(lastActivity(response.result.value.events));
+					for await (const frame of stream) {
+						if (frame.type !== "snapshot") continue;
+						setLive(lastActivity(frame.records.filter((record) => record.type === "event")));
+						break;
+					}
 				} catch {}
 			}, [ctx, address]);
 			(0, react.useEffect)(() => {

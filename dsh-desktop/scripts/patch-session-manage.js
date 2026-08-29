@@ -122,6 +122,13 @@ const CTRL_ESDECORATE_INSERT = 'name: "archiveSession",\n\t\t\t\tstatic: false,\
 const CTRL_RUNNING_ANCHOR = 'import { Remote, TypertRemoteFailure, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";';
 const CTRL_RUNNING_INSERT = 'import { Remote, TypertRemoteFailure, TypertRemoteService } from "@deepseek-ai/dsh-typert-protocol";\n// dsh-desktop patch (session manage): 每会话最近一次 agent 运行状态（删除守卫用）。\nconst dshDesktopSessionRunning = /* @__PURE__ */ new Map();';
 
+// 5b-3. 运行状态同步监听（0.1.2 补位）：rc.2 时代由 dsh-host-apiproxy 的
+// host 流监听 agent/status 维护该 Map，0.1.2 apiproxy 移除后无人写入、
+// 守卫失效（运行中会话可被误删）。挂在 WorkspaceFeed 构造器的 app ctx 上，
+// 与 session controller 的 agent/status 监听同一作用域语义。
+const CTRL_FEED_ANCHOR = 'ctx.on("domain/changed", (change) => {\n\t\t\tthis.changed(change);\n\t\t});';
+const CTRL_FEED_INSERT = 'ctx.on("domain/changed", (change) => {\n\t\t\tthis.changed(change);\n\t\t});\n\t\t\t// dsh-desktop patch (session manage): 同步每会话运行状态（删除守卫；\n\t\t\t// 0.1.2 补位 —— apiproxy 移除后 rc.2 的维护监听随之消失）。\n\t\t\tctx.on("agent/status", ({ agent, status }) => {\n\t\t\t\tif (agent && agent.id) dshDesktopSessionRunning.set(agent.id, status === "running");\n\t\t\t});';
+
 // 5c. typert.host 注册表条目（锚：archiveSession 条目头；insert 复用参数/结果
 // schema 常量 —— unarchive 与 archive 同形，delete 结果 { deleted } 复用
 // WorkspaceArchiveValue 声明（zod 端实际校验宽松：object passthrough 不存在，
@@ -229,8 +236,11 @@ function applyReplacements(file, replacements, upgradeRules, log) {
   if (src.includes(MARKER)) {
     // 已应用：仍执行「升级替换」（旧版补丁 → 新版语义，幂等），
     // 例如 v1「当前会话行不显示删除」→ v2「所有会话行显示删除」。
+    // skipIf：insert 以 anchor 为前缀的插入型升级必须自带防重门槛，
+    // 否则 anchor 永远命中、监听会被反复叠加。
     let upgraded = false;
-    for (const { anchor, insert } of upgradeRules) {
+    for (const { anchor, insert, skipIf } of upgradeRules) {
+      if (skipIf !== undefined && src.includes(skipIf)) continue;
       if (src.includes(anchor)) {
         src = src.replace(anchor, insert);
         upgraded = true;
@@ -374,6 +384,11 @@ function patchSessionManage(nmRoot, log = () => {}) {
         { anchor: CTRL_PROXY_ANCHOR, insert: CTRL_PROXY_INSERT },
         { anchor: CTRL_DECORATOR_ANCHOR, insert: CTRL_DECORATOR_INSERT },
         { anchor: CTRL_ESDECORATE_ANCHOR, insert: CTRL_ESDECORATE_INSERT },
+        { anchor: CTRL_FEED_ANCHOR, insert: CTRL_FEED_INSERT },
+      ],
+      // 已打补丁的文件（含 MARKER）也要补上 0.1.2 运行守卫监听。
+      upgradeRules: [
+        { anchor: CTRL_FEED_ANCHOR, insert: CTRL_FEED_INSERT, skipIf: '同步每会话运行状态' },
       ],
     },
     {

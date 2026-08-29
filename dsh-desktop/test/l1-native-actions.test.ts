@@ -25,6 +25,14 @@ test('Rust L1 owns file-open, external URL and clipboard methods', () => {
   assert.match(shell, /fn show_system_notification\(/);
 });
 
+test('Windows native open bypasses cmd parsing and reports menu failures', () => {
+  assert.match(shell, /ShellExecuteW/);
+  assert.doesNotMatch(shell, /Command::new\("cmd"\)/);
+  assert.match(shell, /native_action_result\(result\)/);
+  assert.match(shell, /"open-browser"\s*=>[\s\S]*?native_action_result\(result\)/);
+  assert.match(shell, /"feedback"\s*=>[\s\S]*?native_action_result\(result\)/);
+});
+
 test('Tauri keeps WebView2Loader as a Windows-only bundle resource', () => {
   const baseConfigPath = join(root, 'tauri-shell', 'tauri.conf.json');
   const windowsConfigPath = join(root, 'tauri-shell', 'tauri.windows.conf.json');
