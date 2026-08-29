@@ -680,7 +680,7 @@ export function syncCompanionPlugins(): void {
       const prev = readJsonFile(marker);
       const next = { names: builtinNames, updatedAt: new Date().toISOString() };
       if (!prev || JSON.stringify(prev.names) !== JSON.stringify(next.names)) {
-        fs.writeFileSync(marker, JSON.stringify(next, null, 2) + '\n');
+        writeFileAtomic(marker, JSON.stringify(next, null, 2) + '\n');
       }
     } catch (err) {
       ctx.log('boot', '写入内置插件清单失败: ' + (err as Error).message);
@@ -769,7 +769,7 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // 前由 --patch overlay 语义达成：本函数写「编辑型」覆盖行（- id + config，
     // 不在 - insert 列表内 = 对既有行改 config，cordis.patch 的标准编辑语义）。
     // 幂等：已有编辑行则跳过。
-    if (!/^- id: plugin-package-inventory-deepseek\n\s+name: '@deepseek-ai\/dsh-plugin-package-inventory-deepseek'\n\s+config:\n\s+enabled: false/m.test(patch)) {
+    if (!/^- id: plugin-package-inventory-deepseek\r?\n\s+name: '@deepseek-ai\/dsh-plugin-package-inventory-deepseek'\r?\n\s+config:\r?\n\s+enabled: false/m.test(patch)) {
       const privacyRow = '- id: plugin-package-inventory-deepseek\n  name: \'@deepseek-ai/dsh-plugin-package-inventory-deepseek\'\n  config:\n    enabled: false\n';
       patch = patch.replace(/\s*$/, '\n') + privacyRow;
       changed = true;
@@ -838,7 +838,9 @@ function ensurePluginHostDeps(profileDirP: string): void {
         patch = cleaned;
         ctx.log('boot', '已清理 profile patch 中的孤儿 - insert: 行');
       }
-      fs.writeFileSync(patchFile, patch);
+      // 原子写（对齐上方 retireRemovedBuiltinPlugins 的 writeFileAtomic）：
+      // boot 最关键的一次 patch 重写，中断截断 = 插件树校验失败 → 启动死亡循环。
+      writeFileAtomic(patchFile, patch);
       ctx.log('boot', '已同步配套插件/皮肤到 web profile: ' + pending.map((p) => p.id).join(', '));
     }
     // 迁移带来的皮肤选择（migrateFromSharedWebProfile 记录）在此落位。

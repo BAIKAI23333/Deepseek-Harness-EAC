@@ -225,7 +225,7 @@ export function buildZipCommand(
   };
 }
 
-// 恢复页面（assets/recovery.html 语义）：日志打包到桌面并打开目录。
+// 恢复中心「导出日志」（原 assets/recovery.html 语义，旧页已退役）：打包到桌面并打开目录。
 async function exportLogs(): Promise<Record<string, unknown>> {
   try {
     const logsDir = path.join(H.userDataDir, 'logs');

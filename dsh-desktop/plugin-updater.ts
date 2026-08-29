@@ -1,6 +1,6 @@
 'use strict';
 
-// plugin-updater.js — 内置插件上游更新引擎（Electron 主进程）。
+// plugin-updater.js — 内置插件上游更新引擎（Tauri sidecar / 桌面服务层）。
 //
 // 内置插件（assets/plugins）随应用分发、版本固定：不升级应用本身就拿不到
 // 上游修复。本模块让「上游仍在 npm / GitHub 发布」的内置插件可以直接更新：
@@ -9,14 +9,13 @@
 //   · applyBuiltinPluginUpdate(ctx, source, opts)
 //                                              —— 下载新版本到覆盖层并
 //                                                 （尽力）拷入 profile
-//   · autoApplyUpdates(ctx, sources, opts)     —— 自动更新流程（默认关闭）
 //
 // 覆盖层 <userData>/builtin-plugin-updates/<dir>：syncCompanionPlugins 的
-// 「覆盖层优先」规则（main.js）保证下次启动从覆盖层拷贝、不被资产版本还原；
-// 应用自身升级后资产版本更新，覆盖层自动让位。
+// 「覆盖层优先」规则（companion-sync.ts）保证下次启动从覆盖层拷贝、不被资
+// 产版本还原；应用自身升级后资产版本更新，覆盖层自动让位。
 //
 // 安全设计：
-//   · 更新源白名单（main.js PLUGIN_UPDATE_SOURCES）：EAC 独占插件永不更新
+//   · 更新源白名单（server.ts PLUGIN_UPDATE_SOURCES）：EAC 独占插件永不更新
 //   · 更新前保护中心快照（一键回滚 + 守护启动兜底）
 //   · engines.dsh 门槛：新包要求的内核版本高于当前 dsh → 拒绝
 //   · npm 下载加 --ignore-scripts，绝不执行第三方安装脚本
@@ -481,34 +480,7 @@ async function applyBuiltinPluginUpdate(ctx: PluginUpdateCtx, source: UpdateSour
   return { ok: true, current, latest: vNew, profileCopied, restartRequired: !profileCopied };
 }
 
-/**
- * 自动更新流程（settings.pluginAutoUpdate 开启时由主进程调用）：
- * 逐个下载有更新的内置插件到覆盖层，失败不阻塞其余插件。
- */
-async function autoApplyUpdates(ctx: PluginUpdateCtx, sources: UpdateSource[], opts: CheckOpts = {}): Promise<{ done: { id: string; name: string; current: string | null; latest: string }[]; failed: { id: string; name: string; error: string }[] }> {
-  const list = await checkPluginUpdates(ctx, sources, opts);
-  const done: { id: string; name: string; current: string | null; latest: string }[] = [];
-  const failed: { id: string; name: string; error: string }[] = [];
-  for (const item of list) {
-    if (!item.hasUpdate || item.skipped) continue;
-    const source = sources.find((s) => s.id === item.id);
-    if (!source) continue;
-    try {
-      const r = await applyBuiltinPluginUpdate(ctx, source, { ...opts, latest: item.latest });
-      if (r.noop) continue;
-      done.push({ id: item.id, name: item.name, current: item.current, latest: r.latest });
-    } catch (err) {
-      failed.push({ id: item.id, name: item.name, error: String(((err as Error) && (err as Error).message) || err) });
-    }
-  }
-  return { done, failed };
-}
-
 export = {
-  PLUGIN_CHECK_TTL_MS,
-  PLUGIN_CHECK_INTERVAL_MS,
-  overlayRoot,
-  overlayDirOf,
   stagingRoot,
   sourceKind,
   sourceName,
@@ -529,5 +501,4 @@ export = {
   checkPluginUpdates,
   invalidateCache,
   applyBuiltinPluginUpdate,
-  autoApplyUpdates,
 };

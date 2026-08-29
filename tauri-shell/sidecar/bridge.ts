@@ -580,8 +580,9 @@
     maxBtn = bar.querySelector('[data-act="max"]') as HTMLElement | null;
     menuEl = bar.querySelector('.dch-menu') as HTMLElement | null;
 
-    var left = bar.querySelector('.dch-left');
-    if (left) armDrag(left);
+    // 只 arm bar 一层：.dch-left 是 bar 子元素，mousedown 会冒泡到 bar；
+    // 两层各自持有 lastClick 闭包会让左半栏双击 toggle 两次（净零）= 双击
+    // 最大化失效 + 每次按下多发一次拖拽事件（浮窗栏 L476 是正确单层样板）。
     armDrag(bar);
     var minBtn = bar.querySelector('[data-act="min"]');
     if (minBtn) minBtn.addEventListener('click', function () { dshDesktop.windowControls.minimize(); });

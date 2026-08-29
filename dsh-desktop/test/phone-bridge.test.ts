@@ -335,3 +335,58 @@ test('phone bridge: lanAddress 优先 RFC1918 私网地址，避免 169.254 链�
   // 空接口表 → 127.0.0.1
   assert.equal(lanAddress({}), '127.0.0.1')
 })
+
+// ---------------------------------------------------------------------------
+// 5.3.1 回归：桌面拒绝 → rejected 状态；start() 重入轮换失效 token；
+// 上游响应中途断开时代理响应终止（不悬挂）。
+// ---------------------------------------------------------------------------
+
+test('phone bridge: 桌面拒绝配对 → rejected 状态（等待页不再永远「正在建立」）', async () => {
+  const { bridge } = launch(null)
+  const info = await bridge.start()
+  const base = `http://127.0.0.1:${info.port}`
+  const token = new URL(info.url).searchParams.get('token') as string
+  const r = await request(base + '/desktop/decide', { method: 'POST', body: { approved: false } })
+  assert.equal(r.status, 200)
+  const state = await request(base + '/api/pair-state?token=' + encodeURIComponent(token))
+  assert.equal(state.body.state, 'rejected')
+  await bridge.stop()
+})
+
+test('phone bridge: start() 重入轮换已决定/过期的旧 token（重开「连接手机」拿新二维码）', async () => {
+  const { bridge } = launch(null)
+  const first = await bridge.start()
+  const token1 = new URL(first.url).searchParams.get('token') as string
+  assert.equal(bridge.decide(true).ok, true)
+  const second = await bridge.start()
+  const token2 = new URL(second.url).searchParams.get('token') as string
+  assert.notEqual(token1, token2, '已决定的 pairing 重开必须轮换 token')
+  // 旧 token 立即失效；新 token 回到 waiting
+  const old = await request(`http://127.0.0.1:${second.port}/api/pair-state?token=` + encodeURIComponent(token1))
+  assert.equal(old.status, 403)
+  const fresh = await request(`http://127.0.0.1:${second.port}/api/pair-state?token=` + encodeURIComponent(token2))
+  assert.equal(fresh.body.state, 'waiting')
+  await bridge.stop()
+})
+
+test('phone bridge: 上游响应中途断开 → 代理请求及时终止（不悬挂 120s）', async () => {
+  const kernel = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.write('<html><he')
+    setTimeout(() => (res.socket as net.Socket | null)?.destroy(), 50)
+  })
+  await new Promise<void>((r) => kernel.listen(0, '127.0.0.1', () => r()))
+  const { bridge } = launch(kernel)
+  const info = await bridge.start()
+  const base = `http://127.0.0.1:${info.port}`
+  assert.equal(bridge.decide(true).ok, true)
+  await assert.rejects(
+    () => Promise.race([
+      request(base + '/', { cookie: 'dsh_mobile=1' }),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('代理请求悬挂（上游错误未终止响应）')), 4000).unref()),
+    ]),
+    /aborted|ECONNRESET|socket hang up|悬挂/i,
+  )
+  await bridge.stop()
+  kernel.close()
+})

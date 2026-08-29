@@ -11,7 +11,7 @@ import { nodeExecutableName } from './platform';
 // 应用根目录（本模块位于 <root>/lib/desktop/ 下）。
 export const APP_ROOT = path.resolve(__dirname, '..', '..');
 
-/** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
+/** 注入接口：由宿主（Tauri sidecar）在启动时提供。 */
 export interface RuntimePathsCtx {
   log(tag: string, msg: string): void;
   getUserDataDir(): string;

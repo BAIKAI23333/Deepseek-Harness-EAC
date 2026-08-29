@@ -131,10 +131,6 @@ function migrateManagedCompactPresets(presetsRoot: string, log: (m: string) => v
 
 export = {
   MANAGED_PRESETS,
-  NEW_AGENT,
-  OLD_ENGINE,
-  TRANSITION_ENGINE,
-  DSH_YAML_SCHEMA,
   migrateManagedCompactPresets,
   migratePresetFile,
   parsePreset,

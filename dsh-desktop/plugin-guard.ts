@@ -822,4 +822,4 @@ function createGuard(opts: GuardOpts): GuardApi {
   };
 }
 
-export = { createGuard, GUARD_FILES };
+export = { createGuard };

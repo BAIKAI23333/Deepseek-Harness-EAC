@@ -1271,11 +1271,16 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
     Ok(())
 }
 
+/// 内联壳页（loading/died/update/about）共享的 body 主题样式（暗色底 + 居中栅格）。
+const SHELL_BODY_STYLE: &str = concat!(
+    "margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;",
+    "color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif",
+);
+
 fn loading_page() -> String {
     format!(
         "<!doctype html><meta charset=utf-8><title>Deepseek Harness EAC</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <body style=\"{SHELL_BODY_STYLE}\">\
          <div style=\"text-align:center\">\
          <div style=\"font-size:20px;font-weight:600;margin-bottom:14px\">Deepseek Harness EAC</div>\
          <div style=\"font-size:13px;color:#8b9ac4\">{}</div>\
@@ -1292,8 +1297,7 @@ fn died_page(log_path: &str, code: &str) -> String {
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     format!(
         "<!doctype html><html lang={0}><meta charset=utf-8><title>{1}</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <body style=\"{SHELL_BODY_STYLE}\">\
          <div style=\"text-align:center;max-width:560px\">\
          <div style=\"font-size:20px;font-weight:600;margin-bottom:10px\">{2}</div>\
          <div style=\"font-size:13px;color:#8b9ac4;margin-bottom:6px\">{3} {4}</div>\
@@ -1364,8 +1368,7 @@ fn update_page(version: &str, kind: &str) -> String {
     };
     format!(
         "<!doctype html><html lang={0}><meta charset=utf-8><title>{1}</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <body style=\"{SHELL_BODY_STYLE}\">\
          <div style=\"text-align:center;max-width:520px;width:82%\">\
          <div style=\"font-size:19px;font-weight:600;margin-bottom:8px\">{2} {3}</div>\
          <div style=\"font-size:12.5px;color:#8b9ac4;margin-bottom:22px\">v{4} · {5}</div>\
@@ -1410,8 +1413,7 @@ fn update_page(version: &str, kind: &str) -> String {
 fn about_page() -> String {
     format!(
         "<!doctype html><html lang={0}><meta charset=utf-8><title>{1}</title>\
-         <body style=\"margin:0;height:100vh;display:grid;place-items:center;background:#0b1220;\
-         color:#dfe6ff;font-family:'Segoe UI','Microsoft YaHei',system-ui,sans-serif\">\
+         <body style=\"{SHELL_BODY_STYLE}\">\
          <div style=\"text-align:center;max-width:460px;padding:30px 38px;border:1px solid rgba(255,255,255,.08);\
          border-radius:16px;background:color-mix(in srgb,#0b1220 92%,white)\">\
          <div style=\"font-size:20px;font-weight:600;margin-bottom:6px\">Deepseek Harness EAC</div>\
@@ -1440,7 +1442,7 @@ fn about_page() -> String {
 }
 
 /// 向导页：serve 真实 assets/onboarding.html，注入桥 + window.onboarding shim
-/// （对齐 onboarding-preload.js 的 list/submit/close 三键），并隐藏页面自绘标题栏
+/// （对齐已退役 onboarding-preload.js 的 list/submit/close 三键语义），并隐藏页面自绘标题栏
 /// （窗口控制由桥的 36px 玻璃栏承担）。
 fn wizard_page() -> String {
     let file = resource_root().join("dsh-desktop").join("assets").join("onboarding.html");

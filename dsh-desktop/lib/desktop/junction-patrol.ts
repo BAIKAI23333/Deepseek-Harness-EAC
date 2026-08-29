@@ -16,7 +16,7 @@ import type { GuardBoxCtx } from './guard-box';
 
 const IS_WIN = process.platform === 'win32';
 
-/** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
+/** 注入接口：由宿主（Tauri sidecar）在启动时提供。 */
 export interface JunctionPatrolCtx extends Pick<GuardBoxCtx, 'log'> {
   isQuitting(): boolean;
   isRestartingServer(): boolean;

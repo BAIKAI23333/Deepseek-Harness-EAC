@@ -184,10 +184,16 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
       }
       if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
     };
+    // 跨 chunk 行缓冲：就绪行（含一次性 token URL）若被管道分块截断，按块
+    // split 会两半都匹配失败 → token 永久丢失（HTTP 探测超时后 401 白屏）。
+    // 只处理完整行，尾段不完整行滚入下一块。
+    let lineBuf = '';
     const onData = (chunk: Buffer) => {
       output.write(chunk);
-      const text = chunk.toString();
-      for (const line of text.split(/\r?\n/)) {
+      lineBuf += chunk.toString();
+      const lines = lineBuf.split(/\r?\n/);
+      lineBuf = lines.pop()!;
+      for (const line of lines) {
         const m = line.match(/dsh web:\s+(https?:\/\/\S+)/);
         if (!m) continue;
         const blocked = restrictedPortOf(m[1]!);

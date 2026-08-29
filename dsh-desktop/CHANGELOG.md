@@ -44,6 +44,83 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
+## 5.3.1（本版：全库精简 + 十二处真 bug 根治 + 内核版本钉防漂移）· 2026-08-29
+
+### 死代码清除（~1,100 行，行为零变更）
+
+- 删除 `wsl-backend.js`（325 行，tracked，全库零引用，且从未进入 stage-resources 打包清单）。
+- 删除 4 个 Electron 时代死资产：`assets/recovery.html`（555 行，现役救援入口 = main.rs 内联
+  /died 页 + rescue.auto-repair RPC 面）、`assets/loading.html`、`assets/updating.html`
+  （现役内联页在 main.rs）、`assets/onboarding-preload.js`（三键语义已内联进 wizard_page）。
+- 删除 `plugin-updater.autoApplyUpdates`（Electron 主进程时代的自动更新流程，Tauri sidecar
+  从未接线；注释里引用的 main.js 已随壳退役一年）。
+- 删除 `client-updater.ts` 的 `require('electron')` / electron.net 分支（Tauri 产品里
+  electron 模块永不可得，该网络路径是死代码；统一 node https + 手动重定向）。
+- 收紧发布面导出（定义保留、去掉多余 export，tests 零触碰）：`client-updater`
+  （isPortable/DEFAULT_REPOS）、`plugin-guard`（GUARD_FILES）、`rescue-agent`（ACTION_SPEC）、
+  `compact-preset-migrate`（DSH_YAML_SCHEMA/NEW_AGENT/OLD_ENGINE/TRANSITION_ENGINE）、
+  `plugin-updater`（PLUGIN_CHECK_*/overlayRoot/overlayDirOf）。
+- 过期表述修正：tsconfig 头注释（electron-builder.yml → stage-resources.mjs）、
+  rescue-agent / runtime-paths / junction-patrol 头注释（Electron main → Tauri sidecar）。
+- 本地脏物清理：e2e-base.txt、空 dtempdsh-spike-home2/、debug-session-dump.cjs。
+
+### 真 bug 根治（双代理深读 + 逐项人工复核，每处可证明）
+
+- **sidecar 无头对话框兜底自动同意更新（HIGH）**：`showBoxFallback` 无条件回答
+  `{response:0}`（=「立即更新/立即重启」），周期检查一旦发现新版本就会无人值守地
+  杀服务换 exe 退出。改为回答 `cancelId`（fail-closed），「跳过/稍后」簿记首次可达。
+- **`service.restart` 无注册（HIGH）**：bridge.ts 的 `restartService()` 调
+  `service.restart`，Rust 壳透传但 sidecar 方法表没有该方法 → -32601 被插件静默吞掉，
+  「重启服务后生效」实际从不重启。注册别名指向 `restartWebServiceCore()`。
+- **feature-pack 更新流程 floating removePlugin（HIGH）**：未 await 的异步移除在文件锁
+  （EPERM/EBUSY）时变成 unhandled rejection 直接杀 sidecar，且与后续 `dsh plugin add`
+  并发改同一 profile。补 await。
+- **client-updater concatFiles 写流无 error 监听（HIGH）**：ENOSPC/EIO 以 uncaught
+  exception 杀进程（磁盘压力恰是该函数的存在理由）。提前挂监听 + 每段 promise 双侧
+  settle + 失败清理半成品 dest。
+- **boot-server 就绪行跨 chunk 截断丢 token（MED）**：一次性 token URL 被管道分块劈开时
+  正则两半都匹配失败 → HTTP 探测 30s 超时后 401 白屏。加跨块行缓冲。
+- **phone-bridge 上游响应中途断开（MED）**：HTML 缓冲分支 end 永不触发（请求挂死 +
+  缓冲内存滞留）。统一挂 `up.on('error') → res.destroy()`。
+- **phone-bridge /desktop/decide TOCTOU（MED）**：读 body 让出事件循环期间 token 轮换，
+  批准会落在别人刚扫到的新 token 上。捕获+身份复核。
+- **phone-bridge 拒绝配对永远「waiting」（MED）**：新增 `rejected` 状态 + 等待页分支，
+  手机端不再干等 5 分钟 TTL。
+- **phone-bridge start() 重入不轮换失效 token（LOW）**：过期/已决定的旧 pairing 重开
+  「连接手机」仍返回旧二维码。重入时轮换。
+- **files.revert `$` 模式注入（MED）**：`content.replace(newText, oldText)` 把原文当替换
+  模式，`$&`/`$'` 静默改写恢复内容。改函数替换 `() => oldText`。
+- **companion-sync 主同步路径非原子写（MED）**：cordis.patch.yml 与内置插件清单 marker
+  改 `writeFileAtomic`（对齐同文件既有用法），中断不再截断 patch → 启动死亡循环。
+- **companion-sync 隐私编辑行幂等检查不容 CRLF（LOW）**：patch 被 Windows 编辑器碰过就
+  每 boot 重复追加一行无上限增长。正则改 `\r?\n`。
+
+### 结构优化
+
+- main.rs 四个内联壳页（loading/died/update/about）共享 body 主题提取为
+  `SHELL_BODY_STYLE` 常量（cargo check 过，渲染字节级不变）。
+- 新增 `test/kernel-pin-consistency.test.ts`：package.json 内核钉 ↔ fetch-kernel
+  DEFAULT_TAG ↔ upgrade-test-441 硬断言三处一致性锁定，升内核漏改一处即红。
+- agentPreset 允许清单 ⚠️ 待验证项（MOBILE-CLIENT-DEV-SPEC，rc.2 时代）：0.1.2 已无
+  apiproxy allowlist 架构（phone-bridge 为全 UI 反代），该项作废，无代码需要改。
+
+### 明确不修（记录在案）
+
+- 内核 `remote.session` 启动竞态（0.1.2 alpha 已知暗雷，等上游，不做内核锚点补丁）。
+- feature-pack 安装/更新失败路径的完整事务回滚（头注释承诺但未实现）——工程量大，
+  本版只修其中会杀进程的 floating removePlugin。
+- client-updater 非中文 ASCII 安装路径下 nodeExe 写入 .cmd 的代码页问题（需改更新助手
+  参数协议，跨版本兼容风险，单独批次处理）。
+
+### 验证记录
+
+- `npm run typecheck` 0 错误；`npm test` **723 用例：713 通过 / 0 失败 / 10 skip**
+  （基线 717：707/0/10；新增 kernel-pin 3 例 + phone-bridge 回归 3 例）。
+- boot-smoke PASS（真内核 5s 起服务、token 捕获、零孤儿退出）；update-smoke 全部通过
+  （mock 源发现→下载→树交换→标记保留→staging 清理）。
+- 打包链：stage-resources（729 包 npm ci + 补丁重放 + WebView2Loader 装配，staging 内容
+  逐项核验含全部修复、不含任何死文件）→ tauri build（NSIS）→ make-portable。
+
 ## 新建对话滚动残余加固 + CI 测试挂起防护 + macOS CI · next
 
 ### settings-scroll-fix 2.0.2：会话树守卫收窄 + dialog 分支补判定（assets/plugins/dsh-settings-scroll-fix/）
