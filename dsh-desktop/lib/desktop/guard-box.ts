@@ -47,6 +47,12 @@ export interface GuardInstance {
   listIncidents(): { id: string; title: string }[];
   junctionFindings(): unknown[];
   repairJunctions(): { repaired: string[] };
+  /** 5.3.3 接线：boot 成功后把启动快照标为「最后良好」。此前 guardedBoot
+   * 在 Tauri 化时断线（无人调用），lastGood 恒空，恢复中心的
+   * 「回退最后良好快照」空转。 */
+  markGood(id: string): void;
+  /** 5.3.3 接线：boot 失败落事故留痕（供恢复中心展示）。 */
+  reportIncident(title: string, detail: string): { ok: boolean; file?: string; error?: string };
 }
 
 let ctx!: GuardBoxCtx;

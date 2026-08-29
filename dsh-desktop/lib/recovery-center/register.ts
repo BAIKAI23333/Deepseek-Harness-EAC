@@ -24,7 +24,7 @@ import logger = require('../../logger');
 import rescue = require('../../rescue-agent');
 import { state } from '../state.js';
 import { log } from '../log.js';
-import { writeJsonAtomic } from '../atomic-json.js';
+import { writeJsonAtomic, writeFileAtomic as writeTextAtomic } from '../atomic-json.js';
 import { ensureGuard } from '../desktop/guard-box.js';
 import {
   pluginManagerCollect, pluginManagerSetEnabled, pluginManagerSetRemoved,
@@ -95,7 +95,9 @@ export function safeModeEnable(opts?: { requestRelaunch?: boolean; logTag?: stri
   const coreIds = rows.filter((r) => (r as { core?: boolean }).core).map((r) => (r as { id: string }).id);
   const { patch, removed } = rescue.safeModePatch(text, coreIds);
   try {
-    if (patch !== text) fs.writeFileSync(patchFile, patch, 'utf8');
+    // 原子写（全项目 patch 落盘统一语义）：裸 writeFileSync 被杀/断电会
+    // 留截断的 cordis.patch.yml → 下次 boot 全链失败。
+    if (patch !== text) writeTextAtomic(patchFile, patch);
   } catch (err) {
     return { ok: false, error: '写入安全模式配置失败: ' + String((err as Error).message) };
   }

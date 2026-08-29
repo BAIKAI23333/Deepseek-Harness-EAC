@@ -110,8 +110,13 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
   // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
   if (serverProc && !serverProc.killed && !ctx.isQuitting()) {
     ctx.log('dsh', 'startServer 重入：先终结旧进程再启动');
-    killTree(serverProc);
+    const old = serverProc;
+    killTree(old);
     serverProc = null;
+    // 等旧进程真正退出再 spawn：Windows 控制台进程的强杀在 killTree 内
+    // +1500ms 落地，立即重拉必然 EADDRINUSE（「启动失败」假阳性来源，
+    // 5.3.2 及以前只 kill 不等）。
+    await waitForProcExit(old, 20000);
   }
   healCredentialsVersion();
   // 稳定端口（stable-port）：复用 settings.webPort，避免每次 --port 0 换
@@ -206,13 +211,16 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
           handedOff = true;
           ctx.log('dsh', `端口 ${blocked} 属于 Chromium 受限端口（ERR_UNSAFE_PORT），重启服务换端口（剩余重试 ${opts.unsafePortRetries} 次）`);
           killTree(proc);
-          setTimeout(() => {
+          // 等旧进程退出后再换端口重启：600ms 固定延迟早于强杀落地，
+          // 新实例大概率又撞 EADDRINUSE。
+          void (async () => {
+            await waitForProcExit(proc, 20000);
             if (ctx.isQuitting()) return finish(new Error('应用正在退出'), '');
             startServer(opts.unsafePortRetries - 1, opts.overlays).then(
               (url) => finish(null, url),
               (err) => finish(err, ''),
             );
-          }, 600);
+          })();
           return;
         }
         // 稳定端口：若 dsh 最终监听端口与请求的不同（极端兜底），以实际为准并保存。

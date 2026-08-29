@@ -799,7 +799,15 @@ const loggerAPI: LoggerApiObject = {
     let archiverFn: any;
     try { archiverFn = require('archiver'); } catch (e) { throw new Error('archiver dep missing: ' + (e as Error).message); }
     const archive = archiverFn('zip', { zlib: { level: 9 } });
-    archive.on('error', (e: unknown) => { throw e; });
+    // archiver 出错（磁盘满/压缩流损坏）绝不能在 EventEmitter 回调里 throw
+    // —— 那是 uncaughtException，直接崩掉 sidecar 主进程。转入诊断错误通道、
+    // 销毁输出流，让下方 await finished 拿到拒绝；半成品 zip 随后清理。
+    let archiveError: Error | null = null;
+    archive.on('error', (e: Error) => {
+      archiveError = e;
+      _state.onError(e);
+      try { output.destroy(e); } catch { /* noop */ }
+    });
     archive.pipe(output);
 
     const manifestEntries: { name: string; size: number; mtime: string }[] = [];
@@ -872,18 +880,18 @@ const loggerAPI: LoggerApiObject = {
         } catch (e) { _state.onError(e); }
       }
     }
-    //   profile cordis.patch.yml
-    {
-      const profileDir = path.join(userDataDir, 'profiles', 'web-desktop');
-      const src = path.join(profileDir, 'cordis.patch.yml');
-      if (fs.existsSync(src)) {
-        try {
-          const raw = fs.readFileSync(src, 'utf8');
-          const masked = _valueMasked(raw);
-          const st = fs.statSync(src);
-          addBuffer('config/profile/cordis.patch.yml', masked, { mtime: st.mtime });
-        } catch (e) { _state.onError(e); }
-      }
+    //   profile cordis.patch.yml（web-desktop 主用 + web 共用 profile；根在
+    //   dshHome —— profile.ts 与 updater 快照均以 home 为根，5.3.2 及以前
+    //   误用 userDataDir 导致诊断包静默缺这一关键文件）
+    for (const profName of ['web-desktop', 'web']) {
+      const src = path.join(dshHome, 'profiles', profName, 'cordis.patch.yml');
+      if (!fs.existsSync(src)) continue;
+      try {
+        const raw = fs.readFileSync(src, 'utf8');
+        const masked = _valueMasked(raw);
+        const st = fs.statSync(src);
+        addBuffer(`config/profile/${profName}/cordis.patch.yml`, masked, { mtime: st.mtime });
+      } catch (e) { _state.onError(e); }
     }
 
     // (3) Updater pending update meta.
@@ -1000,8 +1008,15 @@ const loggerAPI: LoggerApiObject = {
       // Guard: if already closed, fire on next tick.
       process.nextTick(() => { if (output.closed) res(); });
     });
-    await archive.finalize();
-    await finished;
+    try {
+      await archive.finalize();
+      await finished;
+      if (archiveError !== null) throw archiveError as Error;
+    } catch (e) {
+      // 失败不留半成品 zip（磁盘满/锁占用导致清理失败时不掩盖原错误）。
+      try { fs.unlinkSync(zipPath); } catch { /* noop */ }
+      throw e;
+    }
 
     return zipPath;
   },

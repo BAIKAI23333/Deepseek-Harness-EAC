@@ -16,8 +16,29 @@ const { scanZstdFrames } = require('../../session-watcher') as {
 export const DANGEROUS_EXT = /\.(bat|cmd|com|exe|ps1|vbs|lnk|js|jse|msi|scr|pif|reg)$/i;
 
 const fileRootsCache: { at: number; roots: string[] } = { at: 0, roots: [] };
+// 5.3.3：按文件 mtime 增量缓存每个会话的 cwd —— 缓存过期后只重读**新增/
+// 变化**的 session.jsonl.zstd（readFileSync + zstd 解压是大头），扫描会话
+// 数百个、单文件数 MB 时不再整树全量重解（IPC 热路径秒级卡顿源）。
+const cwdByFile = new Map<string, { mtimeMs: number; cwd: string }>();
 
 interface SessionHeader { cwd?: unknown }
+
+function readSessionCwd(p: string, mtimeMs: number): string {
+  const cached = cwdByFile.get(p);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.cwd;
+  let cwd = '';
+  try {
+    const buf = fs.readFileSync(p);
+    const { frames } = scanZstdFrames(buf);
+    if (frames.length > 0) {
+      const text = zlib.zstdDecompressSync(buf.subarray(frames[0]!.start, frames[0]!.end)).toString('utf8');
+      const header = JSON.parse(text.split('\n', 1)[0]!) as SessionHeader;
+      if (header && typeof header.cwd === 'string') cwd = header.cwd;
+    }
+  } catch { /* 损坏日志按空 cwd 缓存，mtime 变化才重试 */ }
+  cwdByFile.set(p, { mtimeMs, cwd });
+  return cwd;
+}
 
 export function fileRoots(): string[] {
   if (Date.now() - fileRootsCache.at < 5 * 60 * 1000) return fileRootsCache.roots;
@@ -31,13 +52,9 @@ export function fileRoots(): string[] {
       if (e.isDirectory()) { walk(p); continue; }
       if (e.name !== 'session.jsonl.zstd') continue;
       try {
-        const buf = fs.readFileSync(p);
-        const { frames } = scanZstdFrames(buf);
-        if (frames.length === 0) continue;
-        const text = zlib.zstdDecompressSync(buf.subarray(frames[0]!.start, frames[0]!.end)).toString('utf8');
-        const header = JSON.parse(text.split('\n', 1)[0]!) as SessionHeader;
-        if (header && typeof header.cwd === 'string' && header.cwd) roots.push(header.cwd);
-      } catch { /* 跳过损坏日志 */ }
+        const cwd = readSessionCwd(p, fs.statSync(p).mtimeMs);
+        if (cwd) roots.push(cwd);
+      } catch { /* stat 失败跳过 */ }
     }
   };
   walk(path.join(dshHome, 'sessions'));

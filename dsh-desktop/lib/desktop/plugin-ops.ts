@@ -36,6 +36,7 @@ const {
   copyPluginPackage(profileDir: string, src: string, name: string): void;
 };
 import { desktopProfileDir } from './profile';
+import { writeFileAtomic } from '../atomic-json';
 import { APP_ROOT } from './runtime-paths';
 
 interface CompanionPlugin {
@@ -166,7 +167,8 @@ function restoreCompanionPlugin(p: CompanionPlugin): { ok: boolean; error?: stri
       if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/\[\]/m, block);
       else if (patch.trim() === '') patch = '# dsh web profile patch（由 DSH Desktop 维护）\n' + block;
       else patch = patch.replace(/\s*$/, '\n') + block;
-      try { fs.writeFileSync(patchFile, patch); } catch (err) {
+      // 原子写（启动关键文件，与 syncCompanionPlugins/setEnabled 同语义）。
+      try { writeFileAtomic(patchFile, patch); } catch (err) {
         return { ok: false, error: String(((err as Error).message) || err) };
       }
     }

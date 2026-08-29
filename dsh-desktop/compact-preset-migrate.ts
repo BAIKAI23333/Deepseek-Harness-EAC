@@ -110,13 +110,14 @@ function migratePresetFile(file: string, log: (m: string) => void = () => {}) {
     return { status: 'invalid-result', file, error: ((error as Error) && (error as Error).message) || error };
   }
   const backup = file + '.bak';
+  const temp = file + `.tmp-${process.pid}-${Date.now()}`;
   try {
     if (!fs.existsSync(backup)) fs.copyFileSync(file, backup);
-    const temp = file + `.tmp-${process.pid}-${Date.now()}`;
     fs.writeFileSync(temp, replaced.text, 'utf8');
     fs.renameSync(temp, file);
     return { status: 'migrated', file, backup };
   } catch (error) {
+    try { fs.rmSync(temp, { force: true }); } catch { /* 尽力清理 */ }
     log(`迁移 preset 失败: ${file}: ${((error as Error) && (error as Error).message) || error}`);
     return { status: 'failed', file, error: ((error as Error) && (error as Error).message) || error };
   }

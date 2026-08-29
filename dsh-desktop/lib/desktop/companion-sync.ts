@@ -436,7 +436,9 @@ export const RETIRED_BUILTIN_PLUGINS = [
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
-export function retireRemovedBuiltinPlugins(profileDirP: string): void {
+// 内部函数：外部一律走带版本对齐门控的 retireRemovedBuiltinPluginsGated
+// （issue #74 —— 5.3.2 及以前 sidecar preBootSync 直调无门控版，门控被架空）。
+function retireRemovedBuiltinPlugins(profileDirP: string): void {
   for (const p of RETIRED_BUILTIN_PLUGINS) {
     const patchFile = path.join(profileDirP, 'cordis.patch.yml');
     try {
@@ -493,7 +495,7 @@ function safeModeActive(): boolean {
 function retiredListHash(): string {
   return crypto.createHash('sha256').update(JSON.stringify(RETIRED_BUILTIN_PLUGINS)).digest('hex');
 }
-function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
+export function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
   let version = '';
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')) as { version?: string };
@@ -770,7 +772,10 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // 前由 --patch overlay 语义达成：本函数写「编辑型」覆盖行（- id + config，
     // 不在 - insert 列表内 = 对既有行改 config，cordis.patch 的标准编辑语义）。
     // 幂等：已有编辑行则跳过。
-    if (!/^- id: plugin-package-inventory-deepseek\r?\n\s+name: '@deepseek-ai\/dsh-plugin-package-inventory-deepseek'\r?\n\s+config:\r?\n\s+enabled: false/m.test(patch)) {
+    // 幂等按 entry id 判定：可手工编辑的 YAML 用精确正则判「已存在」，
+    // 用户重排引号/注释/缩进即失配 → 追加第二条同 id 编辑行（cordis 行为
+    // 未定义）。hasEntryId 与本文件其余 patch 行逻辑同一判定。
+    if (!hasEntryId(patch, 'plugin-package-inventory-deepseek')) {
       const privacyRow = '- id: plugin-package-inventory-deepseek\n  name: \'@deepseek-ai/dsh-plugin-package-inventory-deepseek\'\n  config:\n    enabled: false\n';
       patch = patch.replace(/\s*$/, '\n') + privacyRow;
       changed = true;

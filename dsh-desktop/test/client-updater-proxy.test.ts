@@ -18,10 +18,12 @@ test('githubProxyUrl only proxies GitHub asset URLs', () => {
   assert.equal(githubProxyUrl(''), null);
 });
 
-test('downloadUrls puts the proxy before GitHub and other fallback sources', () => {
+test('downloadUrls puts GitHub direct first, proxy as fallback (5.3.3: 直连优先)', () => {
+  // 5.3.3：第三方加速域名易主/失效会拖垮全部下载，代理从首选降级为直连
+  // 失败后的候选（顺序：GitHub 直连 → 代理 → 其他源）。
   assert.deepEqual(downloadUrls(GITHUB_ASSET, [GITEE_ASSET]), [
-    'https://gh.geekertao.top/' + GITHUB_ASSET,
     GITHUB_ASSET,
+    'https://gh.geekertao.top/' + GITHUB_ASSET,
     GITEE_ASSET,
   ]);
 });
@@ -62,10 +64,10 @@ test('githubProxyUrl encodes special characters in params', () => {
   );
 });
 
-test('downloadUrls forwards cache-busting opts to the proxied URL only', () => {
+test('downloadUrls forwards cache-busting opts to the proxied URL only (direct untouched)', () => {
   assert.deepEqual(downloadUrls(GITHUB_ASSET, [GITEE_ASSET], { version: '4.4.1', sha256: 'abc' }), [
-    'https://gh.geekertao.top/' + GITHUB_ASSET + '?v=4.4.1&sha256=abc',
     GITHUB_ASSET,
+    'https://gh.geekertao.top/' + GITHUB_ASSET + '?v=4.4.1&sha256=abc',
     GITEE_ASSET,
   ]);
 });

@@ -105,8 +105,6 @@ interface GuardApi {
   listIncidents(): { id: string; title: string }[];
   readIncident(id: string): { ok: boolean; content?: string; error?: string };
   resolveIncident(id: string): { ok: boolean; error?: string };
-  guardedBoot(startOnce: () => Promise<string>, describeFailure?: () => string, opts?: { preRetry?: (errText: string) => Promise<unknown> }): Promise<string>;
-  setRollbackLift(fn: () => Promise<string>): void;
   attributeBootFailure(errText: string): BootAttribution | null;
 }
 
@@ -648,85 +646,6 @@ function createGuard(opts: GuardOpts): GuardApi {
     }
   }
 
-  // ── 守护启动（guarded boot）──────────────────────────────────────────
-  // startOnce: () => Promise<url>（真正的拉起动作）。失败链路：
-  //   体检 → 可修复项修复 → 重试 → 仍有最后良好快照则回滚 → 重试 → 事故报告。
-  // 每层只重试一次，绝不无限循环。
-  // V4.2：opts.preRetry(errText) 是配置级修复钩子（pnpm allowBuilds 等），
-  // 返回 { applied: [...] }（或真值）即视为「已修复」，与 repair() 结果合并
-  // 后一起重试一次；返回 false 则走原链路。钩子只调用一次。
-  async function guardedBoot(startOnce: () => Promise<string>, describeFailure?: () => string, opts: { preRetry?: (errText: string) => Promise<unknown> } = {}): Promise<string> {
-    const snap = snapshot('boot');
-    try {
-      const url = await startOnce();
-      if (snap) markGood(snap.id);
-      return url;
-    } catch (firstErr) {
-      log('guard', '守护启动：首次拉起失败，进入体检修复流程');
-      const { findings } = healthCheck();
-      const fixable = findings.filter((f) => f.fixable);
-      for (const f of findings) log('guard', `[体检] ${f.code}(${f.severity}): ${f.message}`);
-
-      // V4.2：allowBuilds 等配置级修复钩子（只调用一次，返回 false 不打扰）。
-      let preApplied: string[] = [];
-      if (opts.preRetry) {
-        try {
-          const r: any = await opts.preRetry(String(((firstErr as Error) && (firstErr as Error).message) || firstErr));
-          if (r && Array.isArray(r.applied) && r.applied.length) preApplied = r.applied;
-          else if (r) preApplied = ['配置级修复钩子已应用'];
-        } catch (err) {
-          log('guard', 'preRetry 钩子失败: ' + String(((err as Error) && (err as Error).message) || err));
-        }
-      }
-
-      if (fixable.length || preApplied.length) {
-        const { applied } = repair(findings);
-        const all = [...applied, ...preApplied];
-        if (all.length) {
-          log('guard', '已应用修复: ' + all.join('；'));
-          try {
-            const url = await startOnce();
-            if (snap) markGood(snap.id);
-            reportIncident('boot-recovered', '首次启动失败，自动修复后恢复。\n修复项：\n- ' + all.join('\n- ') + '\n\n原始错误：\n' + String(((firstErr as Error) && (firstErr as Error).message) || firstErr));
-            return url;
-          } catch (secondErr) {
-            log('guard', '修复后重试仍失败，进入回滚流程');
-            return rollbackPath(secondErr, snap, describeFailure);
-          }
-        }
-      }
-      return rollbackPath(firstErr, snap, describeFailure);
-    }
-  }
-
-  async function rollbackPath(err: unknown, bootSnap: SnapshotMeta | null, describeFailure?: () => string): Promise<string> {
-    const good = lastGoodSnapshot();
-    if (good && (!bootSnap || good.id !== bootSnap.id)) {
-      log('guard', `回滚到最后良好快照 ${good.id}（${good.reason}）`);
-      const res = restore(good.id);
-      if (res.ok) {
-        repair(healthCheck().findings); // 回滚后再清一次遮蔽（pnpm 可能刚 hoist 过）
-        try {
-          const url = await guardedBootRetryOnce();
-          return url;
-        } catch (finalErr) {
-          reportIncident('rollback-failed', '回滚到快照 ' + good.id + ' 后仍无法启动。\n\n最终错误：\n' + String(((finalErr as Error) && (finalErr as Error).message) || finalErr));
-          throw finalErr;
-        }
-      }
-    }
-    reportIncident('boot-failed', '启动失败且无可回滚快照。\n\n错误：\n' + String(((err as Error) && (err as Error).message) || err) + (describeFailure ? '\n\n' + describeFailure() : ''));
-    throw err;
-  }
-
-  // 回滚后的拉起也要留「最后良好」标记 —— 交给调用方包一层。
-  let rollbackLift: (() => Promise<string>) | null = null;
-  function setRollbackLift(fn: () => Promise<string>): void { rollbackLift = fn; }
-  async function guardedBootRetryOnce(): Promise<string> {
-    if (rollbackLift) return rollbackLift();
-    throw new Error('rollback lift not configured');
-  }
-
   // ── 启动失败归因（V4.2）────────────────────────────────────────────
   // 把启动报错文案里的包名/行 id 对应到 profile 里「可停用的插件」：
   //   · 命中 patch 行 id/name → 返回 { name, kind: 'patchRow', rowId }
@@ -818,7 +737,7 @@ function createGuard(opts: GuardOpts): GuardApi {
     snapshot, listSnapshots, restore, markGood, lastGoodSnapshot,
     healthCheck, repair, repairJunctions, junctionFindings,
     reportIncident, listIncidents, readIncident, resolveIncident,
-    guardedBoot, setRollbackLift, attributeBootFailure,
+    attributeBootFailure,
   };
 }
 

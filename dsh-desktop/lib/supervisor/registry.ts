@@ -114,13 +114,14 @@ export function recordStartFailure(id: string, error: string): void {
   }
 }
 
-/** 恢复中心动作成功后清除失败标记。 */
+/** 恢复中心动作成功后清除失败标记。只清 lastError 字段，不动 state：
+ * 状态转移一律走状态机（直接置 installed/disabled 会制造 quarantined →
+ * installed 之类的非法转移，静默击穿隔离语义）。 */
 export function clearStartFailure(id: string): void {
   try {
     const reg = readRegistry();
     const e = reg.plugins[id] as RegistryEntry | undefined;
     if (!e) return;
-    e.state = e.enabled ? 'installed' : 'disabled';
     delete e.lastError;
     delete e.lastErrorAt;
     reg.plugins[id] = e;

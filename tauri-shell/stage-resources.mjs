@@ -401,6 +401,9 @@ console.log('[stage] 完成：' + staged);
     cpSync(loader, dest);
     console.log('[stage] WebView2Loader.dll 已装配: ' + path.relative(root, dest));
   } else {
-    console.warn('[stage] 未找到 WebView2Loader.dll（webview2-com-sys），安装包可能启动即崩');
+    // fail-fast：缺 loader 的安装包启动即 0xC0000135 崩，绝不能让坏包流出炉。
+    console.error('[stage] 未找到 WebView2Loader.dll（webview2-com-sys）——中止打包');
+    console.error('[stage] 提示：先跑一次 npx tauri build 让 cargo 拉取 webview2-com-sys，或设置 CARGO_HOME 指向含该包的目录');
+    process.exit(1);
   }
 }

@@ -131,14 +131,23 @@ export function childEnv(): NodeJS.ProcessEnv {
 }
 
 // 等待一个子进程真正退出（taskkill 先优雅后强杀，锁住的 DLL 要等进程
-// 终止才释放）。轮询 tasklist，超时后放行由调用方自行处理。
+// 终止才释放）。'exit' 事件优先（零开销、不阻塞事件循环），tasklist 轮询
+// 兜底覆盖 detached/re-parent 后事件丢失的场景，超时后放行由调用方处理。
 export function waitForProcExit(proc: ChildProcess | null | undefined, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
     if (!proc || !proc.pid) { resolve(); return; }
+    if (proc.exitCode !== null || proc.signalCode !== null) { resolve(); return; }
     const pid = proc.pid;
     const started = Date.now();
+    let pollTimer: NodeJS.Timeout | null = null;
+    const finish = (): void => {
+      if (pollTimer !== null) clearTimeout(pollTimer);
+      resolve();
+    };
+    proc.once('exit', finish);
+    proc.once('error', finish);
     const isAlive = (): boolean => {
-      if (proc.exitCode !== null) return false;
+      if (proc.exitCode !== null || proc.signalCode !== null) return false;
       if (!IS_WIN) {
         try { process.kill(pid, 0); return true; } catch { return false; }
       }
@@ -149,14 +158,15 @@ export function waitForProcExit(proc: ChildProcess | null | undefined, timeoutMs
       } catch { return false; }
     };
     const check = (): void => {
-      if (!isAlive()) { resolve(); return; }
+      if (!isAlive()) { finish(); return; }
       if (Date.now() - started >= timeoutMs) {
         ctx.log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
-        resolve();
+        finish();
         return;
       }
-      setTimeout(check, 200);
+      pollTimer = setTimeout(check, 500);
     };
-    check();
+    // 首轮兜底轮询延后：给 'exit' 事件留出优先到达的窗口。
+    pollTimer = setTimeout(check, 500);
   });
 }

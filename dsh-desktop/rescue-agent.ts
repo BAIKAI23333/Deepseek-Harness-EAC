@@ -149,7 +149,7 @@ function collectDiagnosis(ctx: RescueCtx, opts: Partial<typeof DEFAULT_OPTS> = {
     const content = safe(() => ctx.readIncident!(inc.id), null);
     if (!content) continue;
     const body = String(content).slice(0, o.INCIDENT_MAX);
-    incBytes += body.length;
+    incBytes += Buffer.byteLength(body);
     if (incBytes > o.DIAG_TOTAL_MAX / 2) break;
     incidents.push({ id: inc.id, title: inc.title || inc.id, body });
   }
@@ -216,7 +216,7 @@ function collectDiagnosis(ctx: RescueCtx, opts: Partial<typeof DEFAULT_OPTS> = {
 
   return {
     ok: true,
-    totalBytes: JSON.stringify(payload).length,
+    totalBytes: Buffer.byteLength(JSON.stringify(payload)),
     sendManifest,
     payload,
   };

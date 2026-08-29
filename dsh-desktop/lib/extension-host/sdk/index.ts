@@ -66,12 +66,16 @@ export function validateArgs(
 // 权限门：路径围栏与受控能力面（deny-by-default：未声明即不可见）
 // ---------------------------------------------------------------------------
 
-/** 路径是否落在任一白名单根内（含自身；防 ../ 逃逸）。 */
+/** 路径是否落在任一白名单根内（含自身；防 ../ 逃逸）。win32 比较大小写
+ * 不敏感（路径语义如此），否则 `C:\Data` 白名单会误拒 `c:\data\x`。 */
 function withinRoots(p: string, roots: readonly string[]): boolean {
   const norm = path.resolve(p);
+  const lower = process.platform === 'win32';
+  const normCmp = lower ? norm.toLowerCase() : norm;
   return roots.some((r) => {
     const root = path.resolve(r);
-    return norm === root || norm.startsWith(root + path.sep);
+    const rootCmp = lower ? root.toLowerCase() : root;
+    return normCmp === rootCmp || normCmp.startsWith(rootCmp + path.sep);
   });
 }
 
@@ -187,7 +191,9 @@ export function buildSdk(params: HostInitParams, io: SdkIo): { ctx: Record<strin
       handler?: (args: unknown) => Promise<unknown> | unknown,
     ): void => {
       const meta: HostToolMeta =
-        typeof metaOrHandler === 'function' ? { name } : { ...metaOrHandler, name: metaOrHandler.name || name };
+        typeof metaOrHandler === 'function' ? { name } : { ...metaOrHandler, name };
+      // meta.name 强制等于注册键 name：init 应答按 meta.name 上报，宿主按
+      // 键查找 —— 键名错位会让「注册成功、调用必报 unknown tool」。
       const fn = typeof metaOrHandler === 'function' ? metaOrHandler : handler;
       if (typeof fn !== 'function') throw new Error(`registerTool(${name}) 缺少处理函数`);
       if (!/^[A-Za-z0-9_.-]{1,64}$/.test(name)) throw new Error(`工具名 ${name} 非法（[A-Za-z0-9_.-]，≤64）`);
@@ -222,8 +228,12 @@ export function buildSdk(params: HostInitParams, io: SdkIo): { ctx: Record<strin
       exec: (cmd: string, timeoutMs = 30_000): Promise<{ code: number | null; stdout: string; stderr: string }> =>
         new Promise((resolve) => {
           cp.exec(String(cmd), { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
-            const code = typeof err?.code === 'number' ? err.code : 0;
-            resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+            // err.code 数字 = 进程退出码；字符串（ENOENT 等）= spawn 本身失败
+            // —— 5.3.2 及以前一律回落 0（成功），调用方无法区分。
+            let code: number | null = 0;
+            if (err) code = typeof err.code === 'number' ? err.code : null;
+            const extra = err && typeof err.code === 'string' ? `\n[spawn failed] ${err.code}` : '';
+            resolve({ code, stdout: String(stdout), stderr: String(stderr) + extra });
           });
         }),
     };

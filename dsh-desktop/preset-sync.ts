@@ -24,8 +24,10 @@ function syncBundledPresets(assetsRoot: string, presetsRoot: string, log: (m: st
   const installed: string[] = [];
   const kept: string[] = [];
   let entries;
-  try { entries = fs.readdirSync(assetsRoot, { withFileTypes: true }); } catch { return { installed, kept }; }
-  fs.mkdirSync(presetsRoot, { recursive: true });
+  try {
+    entries = fs.readdirSync(assetsRoot, { withFileTypes: true });
+    fs.mkdirSync(presetsRoot, { recursive: true });
+  } catch { return { installed, kept }; }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const src = path.join(assetsRoot, entry.name);

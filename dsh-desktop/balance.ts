@@ -163,6 +163,19 @@ function balanceEndpoint() {
 
 function fetchJson(url: string, apiKey: string, timeoutMs = 15000): Promise<unknown> {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(totalTimer);
+      fn();
+    };
+    // 总超时（无条件销毁请求）：req.setTimeout 是 socket 空闲超时，慢速
+    // 滴水响应永不触发 → Promise 永不 settle → 余额小部件永久转圈。
+    const totalTimer = setTimeout(() => {
+      req.destroy(new Error('请求超时'));
+      done(() => reject(new Error('请求超时')));
+    }, timeoutMs);
     const req = https.get(
       url,
       { headers: { Authorization: 'Bearer ' + apiKey, 'User-Agent': 'DSH-Desktop' } },
@@ -171,19 +184,23 @@ function fetchJson(url: string, apiKey: string, timeoutMs = 15000): Promise<unkn
         res.setEncoding('utf8');
         res.on('data', (c) => {
           body += c;
-          if (body.length > 1024 * 1024) req.destroy(new Error('响应过大'));
+          if (body.length > 1024 * 1024) {
+            req.destroy(new Error('响应过大'));
+            done(() => reject(new Error('响应过大')));
+          }
         });
         res.on('end', () => {
           if (res.statusCode !== 200) {
             const hint = body.slice(0, 200).trim();
-            return reject(new Error('HTTP ' + res.statusCode + (hint ? '：' + hint : '')));
+            return done(() => reject(new Error('HTTP ' + res.statusCode + (hint ? '：' + hint : ''))));
           }
-          try { resolve(JSON.parse(body)); } catch { reject(new Error('JSON 解析失败')); }
+          let parsed: unknown;
+          try { parsed = JSON.parse(body); } catch { return done(() => reject(new Error('JSON 解析失败'))); }
+          done(() => resolve(parsed));
         });
       }
     );
-    req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
-    req.on('error', reject);
+    req.on('error', (e) => done(() => reject(e)));
   });
 }
 

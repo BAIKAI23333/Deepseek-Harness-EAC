@@ -17,10 +17,13 @@
 // POST /api/* 的 unary JSON 响应按 Accept-Encoding 加 gzip（手机蜂窝网络
 // 拉大会话历史 1-8MB 的场景压缩 70-90%），SSE/WS/静态资源原样透传。
 // 配对 token 一次性 + 5min TTL + 常量时间比对；approve/decide/disconnect
-// 仅接受回环来源；dsh_mobile cookie HttpOnly + SameSite=Strict，一年有效期。
+// 仅接受回环来源；dsh_mobile cookie HttpOnly + SameSite=Strict，一年有效期，
+// 值 = 服务端随机会话密钥（持久化 userData）：断开连接即轮换，全部旧
+// cookie 立即失效；应用重启密钥不变，手机端无需重新配对。
 
 import * as http from 'node:http';
 import type * as net from 'node:net';
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import zlib from 'node:zlib';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -45,6 +48,8 @@ const RANDOMUUID_POLYFILL =
 export interface PhoneBridgeOptions {
   getWebUrl: () => string | null;
   log: (message: string) => void;
+  /** 会话密钥持久化文件（userData 下）：跨重启保持手机端配对有效，轮换即全部失效。 */
+  sessionFile: string;
 }
 
 export interface PhoneStatus {
@@ -142,15 +147,15 @@ function gatePage(): string {
 
 function pairingWaitPage(): string {
   const script = [
-    'var poll=function(){',
-    "fetch('/api/pair-state?token='+encodeURIComponent(location.search.match(/[?&]token=([^&]+)/)[1]))",
+    'var token=location.search.match(/[?&]token=([^&]+)/)[1];',
+    'var timer=setInterval(poll,1200);poll();',
+    "function poll(){fetch('/api/pair-state?token='+encodeURIComponent(token))",
     ".then(function(r){return r.json()})",
-    ".then(function(s){if(s.state==='approved'){location.href='/'}else if(s.state==='rejected'){",
-    "document.getElementById('st').textContent='配对被拒绝，请在电脑端重新发起配对。'}else if(s.state==='expired'){",
+    ".then(function(s){if(s.state==='approved'){clearInterval(timer);location.href='/'}else if(s.state==='rejected'){clearInterval(timer);",
+    "document.getElementById('st').textContent='配对被拒绝，请在电脑端重新发起配对。'}else if(s.state==='expired'){clearInterval(timer);",
     "document.getElementById('st').textContent='配对已过期，请在电脑端重新发起配对。'}})",
     ".catch(function(){})",
     '};',
-    'setInterval(poll,1200);poll();',
   ].join('');
   return [
     '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">',
@@ -162,7 +167,7 @@ function pairingWaitPage(): string {
 }
 
 export function createPhoneBridge(options: PhoneBridgeOptions) {
-  const { getWebUrl, log } = options;
+  const { getWebUrl, log, sessionFile } = options;
   let server: http.Server | null = null;
   let port = 0;
   let lanUrl = '';
@@ -173,12 +178,47 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
   // 否则停桥后手机侧 WS 仍活着、server.close() 回调也永不触发。
   const liveWsSockets = new Set<net.Socket>();
 
+  // ---- 会话密钥（dsh_mobile cookie 的值）----
+  // 5.3.3 前是静态 "1"：断开连接只轮换配对 token，旧 cookie 仍可在一年
+  // 有效期内全功能访问。「断开并失效」要求 cookie 值本身可轮换，因此改为
+  // 服务端随机会话密钥并持久化到 userData —— 应用重启后密钥不变（手机端
+  // 无需重新配对），disconnect 轮换后旧 cookie 立即失效。
+  let sessionSecret = loadSessionSecret();
+
+  function persistSessionSecret(value: string): void {
+    try {
+      const tmp = sessionFile + '.tmp-' + randomBytes(4).toString('hex');
+      fs.writeFileSync(tmp, JSON.stringify({ secret: value }));
+      fs.renameSync(tmp, sessionFile);
+    } catch (error) {
+      // 持久化失败只影响跨重启有效性：本轮密钥仍在内存，断开轮换照常生效。
+      log('phone bridge: session secret persist failed: ' + String((error as Error)?.message ?? error));
+    }
+  }
+
+  function loadSessionSecret(): string {
+    try {
+      const raw = JSON.parse(fs.readFileSync(sessionFile, 'utf8')) as { secret?: unknown };
+      if (typeof raw.secret === 'string' && raw.secret.length >= 32) return raw.secret;
+    } catch { /* 首次使用或文件损坏 → 重新签发 */ }
+    const fresh = randomBytes(32).toString('base64url');
+    persistSessionSecret(fresh);
+    return fresh;
+  }
+
   function rotatePairing(): void {
     pairing = {
       token: randomBytes(32).toString('base64url'),
       expiresAt: Date.now() + PAIRING_TTL_MS,
       decided: null,
     };
+  }
+
+  /** 桌面端断开：轮换会话密钥（既有手机端 cookie 立即失效）+ 配对 token。 */
+  function disconnectAll(): void {
+    sessionSecret = randomBytes(32).toString('base64url');
+    persistSessionSecret(sessionSecret);
+    rotatePairing();
   }
 
   function currentPairingState(): 'idle' | 'waiting' | 'approved' | 'rejected' | 'expired' {
@@ -191,7 +231,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
 
   function hasPairedCookie(req: http.IncomingMessage): boolean {
     const cookies = (req.headers.cookie ?? '').split(';').map((c) => c.trim());
-    return cookies.some((c) => c === 'dsh_mobile=1');
+    return cookies.some((c) => tokenEquals(c, `dsh_mobile=${sessionSecret}`));
   }
 
   /** 上游目标（host/port）。服务未运行返回 null。 */
@@ -248,9 +288,10 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           'x-frame-options': 'DENY',
         };
         if (state === 'approved') {
-          // 配对成功即签发一年期 dsh_mobile 会话 cookie（移动端随后继访问携带）。
+          // 配对成功即签发一年期 dsh_mobile 会话 cookie（值 = 服务端会话密钥，
+          // 移动端随后继访问携带；disconnect 轮换密钥即全部失效）。
           headers['set-cookie'] =
-            `dsh_mobile=1; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE}`;
+            `dsh_mobile=${sessionSecret}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${COOKIE_MAX_AGE}`;
         }
         const payload = JSON.stringify({ state, expiresAt: pairing.expiresAt });
         res.writeHead(200, headers);
@@ -290,7 +331,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           json(res, 200, { ok: true, approved: pending.decided });
           return;
         }
-        rotatePairing();
+        disconnectAll();
         log('phone bridge: disconnected; pairing token rotated');
         json(res, 200, { ok: true });
         return;
@@ -365,6 +406,11 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         } else {
           res.destroy();
         }
+      });
+      // 手机端中途放弃（刷新/关页）：销毁上游连接，否则上游挂到 120s 超时、
+      // 反复刷新堆积半开连接。res 未写完即 close = 客户端已走。
+      res.on('close', () => {
+        if (!res.writableEnded) upstreamReq.destroy();
       });
       req.pipe(upstreamReq);
     })().catch((error: unknown) => {
@@ -503,10 +549,10 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
       log(`phone bridge: pairing ${pairing.decided ? 'approved' : 'rejected'} via desktop RPC`);
       return { ok: true, approved: pairing.decided };
     },
-    /** 桌面端断开：轮换配对 token 并清空决定，手机端既有 cookie 立即失效。 */
+    /** 桌面端断开：轮换会话密钥并清空决定，手机端既有 cookie 立即失效。 */
     disconnect(): { ok: boolean } {
-      rotatePairing();
-      log('phone bridge: disconnected via desktop RPC; pairing token rotated');
+      disconnectAll();
+      log('phone bridge: disconnected via desktop RPC; session secret + pairing token rotated');
       return { ok: true };
     },
   };

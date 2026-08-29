@@ -47,7 +47,15 @@ function headerValue(headers: Record<string, unknown> | null | undefined, name: 
 const DEFAULT_REPOS = { github: 'zouyuxuan122/Deepseek-Harness-EAC', gitee: 'zouyuxuan122/Deepseek-Harness-EAC' };
 const REPO_SLUG = /^[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_.-]{1,64}$/;
 const MIN_VALID_BYTES = 64 * 1024 * 1024; // 完整安装包远大于 64MB，防止把错误页当 exe
-const GITHUB_DOWNLOAD_PROXY = 'https://gh.geekertao.top/';
+const GITHUB_DOWNLOAD_PROXY_DEFAULT = 'https://gh.geekertao.top/';
+// 5.3.3：代理前缀可经 DSH_DESKTOP_GH_PROXY 覆盖（第三方加速域名易主/失效
+// 会拖垮全部 GitHub 下载）；置 0/off/false 关闭。
+function ghProxyBase(): string | null {
+  const env = String(process.env.DSH_DESKTOP_GH_PROXY || '').trim();
+  if (/^(0|off|false)$/i.test(env)) return null;
+  if (env) return env.replace(/\/+$/, '') + '/';
+  return GITHUB_DOWNLOAD_PROXY_DEFAULT;
+}
 
 interface UpdateCtx {
   userDataDir: string;
@@ -189,16 +197,18 @@ function githubProxyUrl(url: string | null | undefined, { version = '', sha256 =
   if (version) params.push(`v=${encodeURIComponent(String(version))}`);
   if (sha256) params.push(`sha256=${encodeURIComponent(String(sha256))}`);
   const suffix = params.length ? (value.includes('?') ? '&' : '?') + params.join('&') : '';
-  return GITHUB_DOWNLOAD_PROXY + value + suffix;
+  const base = ghProxyBase();
+  return base ? base + value + suffix : null;
 }
 
 /** 组装下载候选：代理优先，随后原始地址，再接其他 Release 源。opts 透传给代理地址生成（缓存破坏参数）。 */
 function downloadUrls(primaryUrl: string | null | undefined, fallbackUrls: unknown[] = [], opts: { version?: string; sha256?: string } = {}): string[] {
   const primary = String(primaryUrl || '').trim();
   const candidates: string[] = [];
+  // 直连优先（官方源），代理只作直连失败后的加速候选。
+  if (primary) candidates.push(primary);
   const proxied = githubProxyUrl(primary, opts);
   if (proxied) candidates.push(proxied);
-  if (primary) candidates.push(primary);
   for (const url of Array.isArray(fallbackUrls) ? fallbackUrls : []) {
     const value = String(url || '').trim();
     if (value) candidates.push(value);
@@ -691,10 +701,21 @@ async function downloadRelease(ctx: UpdateCtx, release: ReleaseInfo, { onProgres
   // 配合 version 让代理缓存键随内容变化、绕开旧缓存），又在下载完成后复用
   // 做内容校验（单一来源，不在每个分片/校验时重复请求 SHA256SUMS）。
   const expected = await expectedSha256(ctx, release, sel);
+  // 分片按版本掺名后旧版本残留不再命中，下载前顺手清理（含 5.3.2 旧式
+  // 无版本分片名）。
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (f.startsWith(sel.name) && f.includes('.part') && !f.includes(release.version + '.part')) {
+        fs.rmSync(path.join(dir, f), { force: true });
+      }
+    }
+  } catch { /* 尽力而为 */ }
   for (let i = 0; i < sel.parts.length; i++) {
     const p = sel.parts[i]!;
     ctx.log('client-update', `下载 ${p.name}（${Math.round(p.size / 1048576)} MB）`);
-    const dest = split ? finalPath + '.part' + (i + 1) : finalPath;
+    // 分片名掺入版本号：固定名候选（无版本）跨版本同名，旧 .part 会被
+    // 当断点续传拼进新版本安装包（无 digest 时仅 ±2MB 告警兜底）。
+    const dest = split ? `${finalPath}.${release.version}.part${i + 1}` : finalPath;
     const urls = downloadUrls(
       p.url,
       fbSelections.map((f) => (f.parts[i] && f.parts[i]!.url) || ''),

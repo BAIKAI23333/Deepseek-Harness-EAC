@@ -268,7 +268,11 @@ export class ExtensionHostManager {
       return true;
     } catch (err) {
       // 握手失败：Host 可能活着但不可用 —— 杀掉再走 start-failed。
+      // 主动停止（stopPlugin/shutdownAll 在握手期间掐断 peer）：rt 已摘表，
+      // 与 heartbeatTick/onHostExit 的 stopping 守卫对齐直接返回 —— 否则
+      // startFailed → scheduleRestart 会把刚停用的插件自动复活。
       await this.killHost(id);
+      if (rt.stopping) return false;
       this.startFailed(id, `init 握手失败: ${String((err as Error).message)}`);
       return false;
     }

@@ -225,6 +225,14 @@ const UI_EN_INSERT = '"menu.archiveSession": "Archive session",\n\t\t\t"menu.del
 // ---------------------------------------------------------------------------
 // 工具：在文件中做「锚点必须存在 + 标记幂等」的替换
 // ---------------------------------------------------------------------------
+function writeAtomic(file, content, enc) {
+  const tmp = file + '.tmp-' + Date.now() + '-' + Math.random().toString(16).slice(2, 6);
+  require('node:fs').writeFileSync(tmp, content, enc);
+  try { require('node:fs').renameSync(tmp, file); } catch (e) {
+    require('node:fs').rmSync(file, { force: true, maxRetries: 3 });
+    require('node:fs').renameSync(tmp, file);
+  }
+}
 function applyReplacements(file, replacements, upgradeRules, log) {
   let src;
   try {
@@ -242,13 +250,13 @@ function applyReplacements(file, replacements, upgradeRules, log) {
     for (const { anchor, insert, skipIf } of upgradeRules) {
       if (skipIf !== undefined && src.includes(skipIf)) continue;
       if (src.includes(anchor)) {
-        src = src.replace(anchor, insert);
+        src = src.replace(anchor, () => insert);
         upgraded = true;
       }
     }
     if (upgraded) {
       try {
-        fs.writeFileSync(file, src, 'utf8');
+        writeAtomic(file, src, 'utf8');
         log('session-manage 补丁: 已升级 ' + file);
         return true;
       } catch (err) {
@@ -268,11 +276,11 @@ function applyReplacements(file, replacements, upgradeRules, log) {
       log('session-manage 补丁: 锚点未匹配（dsh 版本可能已变化），跳过 ' + file + ' :: ' + candidates[0].anchor.slice(0, 60));
       return false;
     }
-    src = src.replace(hit.anchor, hit.insert);
+    src = src.replace(hit.anchor, () => hit.insert);
   }
   src = '// ' + MARKER + ': 对话删除/归档管理运行时补丁\n' + src;
   try {
-    fs.writeFileSync(file, src, 'utf8');
+    writeAtomic(file, src, 'utf8');
     log('session-manage 补丁: 已应用 ' + file);
     return true;
   } catch (err) {

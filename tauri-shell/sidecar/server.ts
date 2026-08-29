@@ -74,7 +74,10 @@ const MOUNTED = ['proc', 'platform', 'runtime-paths', 'profile', 'guard-box', 'r
 // 不走 lib/desktop 的 mount 通道，按绝对路径 require（编译产物 .js）。
 const vnextState = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'state.js')) as {
   initVNextState(d: { dshHome?: string; userDataDir?: string; logsDir?: string }): void;
-  state: { eacBridge: { url: string; token: string; close(): void } | null };
+  state: { eacBridge: { url: string; token: string; close(): void } | null; restartingServer: boolean };
+};
+const supervisorInstaller = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'supervisor', 'installer.js')) as {
+  sweepInstallerResidue(keep?: number): { staging: number; trash: number; rollback: number };
 };
 const vnextLog = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'log.js')) as {
   setLogSink(fn: ((tag: string, msg: string) => void) | null): void;
@@ -279,6 +282,7 @@ const phoneBridgeMod = require('./phone-bridge.js') as {
   createPhoneBridge(options: {
     getWebUrl: () => string | null;
     log: (message: string) => void;
+    sessionFile: string;
   }): {
     start(): Promise<{ url: string; port: number }>;
     stop(): Promise<void>;
@@ -290,6 +294,7 @@ const phoneBridgeMod = require('./phone-bridge.js') as {
 const phoneBridge = phoneBridgeMod.createPhoneBridge({
   getWebUrl: () => (currentWebInfo ? currentWebInfo.webUrl : null),
   log: (m) => say(m),
+  sessionFile: path.join(userDataDir, 'phone-bridge-session.json'),
 });
 function handlePhoneMethod(method: string, p: RpcParams): RpcResult | Promise<RpcResult> {
   if (method === 'phone.start') return phoneBridge.start().then((r) => ({ ok: true, ...r }));
@@ -347,10 +352,18 @@ vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir
 async function preBootSync(): Promise<void> {
   // （旧 credentials-format-heal 反向迁移已删除，见文件头部说明）
   await (marketMod.processPendingMarketOps as () => Promise<void>)();
-  (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
+  (companionSyncMod.retireRemovedBuiltinPluginsGated as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
   (companionSyncMod.syncCompanionPlugins as () => void)();
   (marketMod.syncBundledSkills as () => void)();
   (companionSyncMod.healProfileModules as () => void)();
+  try {
+    const swept = supervisorInstaller.sweepInstallerResidue();
+    if (swept.staging || swept.trash || swept.rollback) {
+      say(`已清扫 SDK 插件安装残留：.staging×${swept.staging}、.trash×${swept.trash}、.rollback×${swept.rollback}`);
+    }
+  } catch (e) {
+    say('安装残留清扫失败（不影响启动）: ' + String(((e as Error).message) || e));
+  }
   await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
 }
 
@@ -361,11 +374,15 @@ async function preBootSync(): Promise<void> {
 async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; port?: number; error?: string }> {
   const running = (bootMod.state as () => { running: boolean })().running;
   (bootMod.setIsRestarting as (v: boolean) => void)(true);
+  // 5.3.3 接线：boot-server 的模块私有重启标志同步写共享 state —— 恢复中心
+  // 的重启竞态护栏（safeModeEnable 等：running && !restartingServer 才放行）
+  // 此前读到的是恒 false 的死字段，护栏从未生效。
+  vnextState.state.restartingServer = true;
   try {
     if (!running) {
       log('service', '请求启动 dsh web 服务（未在运行）');
       await preBootSync();
-      const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
+      const r = await guardedStartAndWait([]);
       log('service', 'dsh web 服务已启动: ' + r.webUrl);
       currentWebInfo = { webUrl: r.webUrl, port: r.port };
 
@@ -378,7 +395,7 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     (companionSyncMod.syncCompanionPlugins as () => void)();
     (companionSyncMod.healProfileModules as () => void)();
     await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
-    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
+    const r = await guardedStartAndWait([]);
     log('service', 'dsh web 服务已重启: ' + r.webUrl);
     currentWebInfo = { webUrl: r.webUrl, port: r.port };
 
@@ -389,6 +406,42 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     return { ok: false, error: String(((e as Error).message) || e) };
   } finally {
     (bootMod.setIsRestarting as (v: boolean) => void)(false);
+    vnextState.state.restartingServer = false;
+  }
+}
+
+// ---- 5.3.3：守护启动接线（guardedBoot 在 Tauri 化时断线的最小恢复）--------
+// 启动前取 profile 快照；成功 → markGood 标「最后良好」（恢复中心
+// 「回退最后良好快照」的数据来源，此前永不写入、恒空转）；失败 →
+// 事故留痕。完整 guardedBoot 重试链不接：sidecar 启动链已自带有界重试
+// 与救援引导，重试语义重复。
+let agentPreviousConfirmed = false;
+async function guardedStartAndWait(overlays: string[]): Promise<{ webUrl: string; port: number }> {
+  const g = (guardBoxMod.ensureGuard as () => {
+    snapshot(r: string): { id: string } | null;
+    markGood(id: string): void;
+    reportIncident(t: string, d: string): { ok: boolean };
+  })();
+  const snap = g.snapshot('boot');
+  try {
+    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+    if (snap) g.markGood(snap.id);
+    // agent-previous 备份生命周期：更新后的首次健康启动即清理上一版备份
+    // （5.3.2 及以前 confirmPreviousAgentHealthy 零调用，数百 MB 备份永滞）。
+    if (!agentPreviousConfirmed) {
+      agentPreviousConfirmed = true;
+      try {
+        (updater.confirmPreviousAgentHealthy as (c: unknown) => boolean)((pathsMod.updCtx as () => unknown)());
+      } catch (e) {
+        log('update', '确认上一版健康失败: ' + String(((e as Error).message) || e));
+      }
+    }
+    return r;
+  } catch (e) {
+    try {
+      g.reportIncident('boot-failed', 'dsh web 服务拉起失败。\n\n错误：\n' + String(((e as Error).message) || e));
+    } catch { /* 尽力而为 */ }
+    throw e;
   }
 }
 
@@ -403,6 +456,20 @@ recoveryCenter.init({
 interface RpcReq { id: number | null; method: string; params?: Record<string, unknown> }
 type RpcResult = Record<string, unknown>;
 type RpcParams = Record<string, unknown> | undefined;
+
+// 图标 dataUri 模块级缓存：bridge openMenu 每次开菜单都调 chrome.init，
+// 5.3.2 及以前每次重读 146KB 图标 + base64 并经 WS 回环发 ~195KB JSON。
+let chromeIconDataUri: string | null = null;
+function chromeIcon(): string {
+  if (chromeIconDataUri !== null) return chromeIconDataUri;
+  try {
+    const buf = fs.readFileSync(path.join(DSH_DESKTOP_ROOT, 'assets', 'icon.png'));
+    chromeIconDataUri = buf.length > 0 && buf[0] === 0x89 && buf[1] === 0x50
+      ? 'data:image/png;base64,' + buf.toString('base64')
+      : '';
+  } catch { chromeIconDataUri = ''; /* 无图标不致命 */ }
+  return chromeIconDataUri;
+}
 
 const methods: Record<string, (p: RpcParams) => unknown> = {
   'shell.info': (): RpcResult => ({
@@ -465,7 +532,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     }
     let r: { webUrl: string; port: number };
     try {
-      r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+      r = await guardedStartAndWait(overlays);
     } catch (e) {
       // 崩溃循环计数（= main.js recordBootFailureNow）：连续失败达阈值后，
       // 救援页据 rescue.state.crash 引导安全模式。
@@ -500,13 +567,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       closeToTray?: boolean; exitAction?: string; shortcutPolicy?: string;
       notifyOnTurnEnd?: boolean; repos?: { github?: string; gitee?: string };
     };
-    let iconDataUri = '';
-    try {
-      const buf = fs.readFileSync(path.join(DSH_DESKTOP_ROOT, 'assets', 'icon.png'));
-      if (buf.length > 0 && buf[0] === 0x89 && buf[1] === 0x50) {
-        iconDataUri = 'data:image/png;base64,' + buf.toString('base64');
-      }
-    } catch { /* 无图标不致命 */ }
+    const iconDataUri = chromeIcon();
     const exitAction = s.exitAction === 'ask' || s.exitAction === 'minimize' || s.exitAction === 'quit'
       ? s.exitAction
       : s.closeToTray === false ? 'quit' : s.closeToTray === true ? 'minimize' : 'ask';
@@ -930,6 +991,7 @@ const updater = require(path.join(DSH_DESKTOP_ROOT, 'updater.js')) as {
   saveSettings(c: unknown, s: unknown): void;
   compareVersions(a: string, b: string): number;
   applyUpdate(c: unknown, latest: string, o: { onProgress: (ev: string) => void }): Promise<void>;
+  confirmPreviousAgentHealthy(c: unknown): boolean;
 };
 const onboardingLogic = require(path.join(DSH_DESKTOP_ROOT, 'scripts', 'onboarding.js')) as {
   CORE_PLUGIN_IDS: string[];

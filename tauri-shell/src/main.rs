@@ -1214,19 +1214,94 @@ fn open_recovery_center_window(app: &tauri::AppHandle) -> bool {
     true
 }
 
+/// 回环 WS 准入校验（传入已小写的请求头）。
+/// 浏览器跨站 WebSocket 必带发起页 Origin；非浏览器客户端（注入桥在
+/// WebView 内运行，同样带 Origin）之外的场景通常不带。规则：
+///   - 头部未完整终止（无 \r\n\r\n，窥探缓冲被截断）→ 拒绝；
+///   - Origin 缺省 → 放行；有 Origin 则其 host 必须是本机回环名
+///     （127.0.0.1 / localhost / [::1] / tauri.localhost，WebView2 的
+///     tauri 源与内核 web 源均落在这些名下）；
+///   - Host 头同理校验（防 DNS rebinding 把外部域名解析到回环后命中本桥）。
+fn ws_handshake_allowed(head_lower: &str) -> bool {
+    if !head_lower.contains("\r\n\r\n") {
+        return false;
+    }
+    let allowed_host = |host: &str| -> bool {
+        let h = host.trim();
+        let h = if let Some(rest) = h.strip_prefix('[') {
+            rest.split(']').next().unwrap_or("")
+        } else {
+            h.split(':').next().unwrap_or("")
+        };
+        matches!(h, "127.0.0.1" | "localhost" | "::1" | "tauri.localhost")
+    };
+    for line in head_lower.split("\r\n") {
+        if let Some(v) = line.strip_prefix("origin:") {
+            let v = v.trim();
+            if v.is_empty() {
+                continue; // 空 Origin 视同缺省
+            }
+            // "scheme://host[:port]/path" → host 段；"null"（沙箱 iframe）无 :// 直落 allowed_host 判否。
+            let host = v.split("://").nth(1).unwrap_or(v);
+            let host = host.split('/').next().unwrap_or("");
+            if !allowed_host(host) {
+                return false;
+            }
+        } else if let Some(v) = line.strip_prefix("host:") {
+            if !allowed_host(v) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+#[cfg(test)]
+mod ws_handshake_tests {
+    use super::ws_handshake_allowed;
+
+    #[test]
+    fn allows_loopback_origins_and_missing_origin() {
+        let hdr = "get /ws http/1.1\r\nhost: 127.0.0.1:19873\r\nupgrade: websocket\r\nconnection: upgrade\r\nsec-websocket-key: x=\r\n\r\n";
+        assert!(ws_handshake_allowed(hdr));
+        assert!(ws_handshake_allowed("get /ws http/1.1\r\nhost: 127.0.0.1:19873\r\norigin: http://127.0.0.1:5173\r\nupgrade: websocket\r\n\r\n"));
+        assert!(ws_handshake_allowed("get /ws http/1.1\r\nhost: localhost:19873\r\norigin: http://tauri.localhost\r\nupgrade: websocket\r\n\r\n"));
+        assert!(ws_handshake_allowed("get /ws http/1.1\r\norigin: tauri://localhost\r\nupgrade: websocket\r\n\r\n"));
+        assert!(ws_handshake_allowed("get /ws http/1.1\r\nhost: [::1]:19873\r\norigin: http://[::1]:19873\r\nupgrade: websocket\r\n\r\n"));
+    }
+
+    #[test]
+    fn rejects_cross_site_origins_rebinding_and_truncated_headers() {
+        assert!(!ws_handshake_allowed("get /ws http/1.1\r\nhost: 127.0.0.1:19873\r\norigin: https://evil.example\r\nupgrade: websocket\r\n\r\n"));
+        // DNS rebinding：外部域名解析到回环后 Host 头仍带外部名。
+        assert!(!ws_handshake_allowed("get /ws http/1.1\r\nhost: evil.example:19873\r\nupgrade: websocket\r\n\r\n"));
+        // 沙箱 iframe 的 null 源。
+        assert!(!ws_handshake_allowed("get /ws http/1.1\r\nhost: 127.0.0.1:19873\r\norigin: null\r\nupgrade: websocket\r\n\r\n"));
+        // 头部截断（窥探缓冲不满且未见终止符）一律拒绝。
+        assert!(!ws_handshake_allowed("get /ws http/1.1\r\norigin: http://127.0.0.1:1"));
+    }
+}
+
 async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandle) -> std::io::Result<()> {
     // 先窥探请求头：决定 WS 升级还是极简 HTTP。（peek 取 &self，不消耗流）
-    let (req_path, wants_upgrade) = {
-        let mut buf = [0u8; 2048];
+    let (req_path, wants_upgrade, head) = {
+        let mut buf = [0u8; 4096];
         let n = stream.peek(&mut buf).await?;
         let head = String::from_utf8_lossy(&buf[..n]).to_string();
         let first = head.lines().next().unwrap_or("");
         let path = first.split_whitespace().nth(1).unwrap_or("/").to_string();
-        (path, head.to_lowercase().contains("upgrade: websocket"))
+        (path, head.to_lowercase().contains("upgrade: websocket"), head)
     };
 
     if !wants_upgrade {
         return http_serve(stream, &req_path).await;
+    }
+
+    // 回环桥准入：拒绝浏览器跨站 WebSocket —— 本机任意网页可跨站连入并调用
+    // 全部壳层/侧车 RPC（files.revert 改文件、boot.stop 停服务等）。
+    if !ws_handshake_allowed(&head.to_lowercase()) {
+        eprintln!("[ws] rejected cross-origin / rebinding handshake");
+        return Ok(());
     }
 
     let ws = tokio_tungstenite::accept_async(stream)
@@ -1391,8 +1466,24 @@ fn navigate_main(app: &tauri::AppHandle, href: String) {
 }
 
 /// back 查询参数编码（与 /died 的 log 参数同规则；页面侧 URLSearchParams 解码）。
+/// 查询参数百分号编码（encodeURIComponent 语义：RFC 3986 unreserved 之外
+/// 全部转 %XX）。5.3.2 及以前只编码反斜杠/冒号/斜杠/空格 —— `&`/`#` 会
+/// 截断或污染参数（log 路径含 `&` 时 /died 页丢失后续内容）。页面侧
+/// URLSearchParams 对 %XX 与旧 +（空格）均正确解码，行为兼容。
+fn encode_query(v: &str) -> String {
+    let mut out = String::with_capacity(v.len() + 8);
+    for b in v.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
+/// back 查询参数编码（与 /died 的 log 参数同规则；页面侧 URLSearchParams 解码）。
 fn encode_back(url: &str) -> String {
-    url.replace('\\', "%5C").replace(':', "%3A").replace('/', "%2F").replace(' ', "+")
+    encode_query(url)
 }
 
 /// 更新进度页（client-update.show / agent 更新共用；进度经 _onNotify 渲染）。
@@ -1731,8 +1822,8 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             let href = format!(
                 "http://127.0.0.1:{}/died?code={}&log={}",
                 WS_PORT,
-                code,
-                log.replace('\\', "%5C").replace(':', "%3A").replace('/', "%2F").replace(' ', "+")
+                encode_query(&code),
+                encode_query(&log)
             );
             let app2 = app.clone();
             let _ = app.run_on_main_thread(move || {
@@ -2150,11 +2241,27 @@ fn main() {
                             sc.call("shutdown", serde_json::json!({})),
                         )
                         .await;
-                        // gracefulExit 内含 stopServer（grace 1.2s + hard 4s 有界）。
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        if let Some(mut owned) = Arc::into_inner(sc) {
-                            owned.kill().await;
-                        }
+                        // shutdown 后 sidecar 自行 gracefulExit → stopServer
+                        // （grace 1.2s + hard 4s 有界，detached 的 dsh web 树杀
+                        // 在其中）→ process.exit(0)。等它自退再兜底 kill：
+                        // 5.3.2 及以前固定睡 500ms 就杀，stopServer 被拦腰
+                        // 砍断，dsh web 变孤儿占着端口。有界轮询 ~9s 覆盖
+                        // stopServer 上界 + 边距。
+                            if let Some(mut owned) = Arc::into_inner(sc) {
+                                let started = std::time::Instant::now();
+                                let mut exited = false;
+                                while started.elapsed() < std::time::Duration::from_secs(9) {
+                                    if let Ok(Some(_)) = owned.child.try_wait() {
+                                        exited = true;
+                                        break;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                }
+                                if !exited {
+                                    println!("[shell] sidecar did not exit in time; killing");
+                                    let _ = owned.kill().await;
+                                }
+                            }
                     }
                 });
                 println!("[shell] sidecar reaped; exiting");
