@@ -99,6 +99,16 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
   改 `writeFileAtomic`（对齐同文件既有用法），中断不再截断 patch → 启动死亡循环。
 - **companion-sync 隐私编辑行幂等检查不容 CRLF（LOW）**：patch 被 Windows 编辑器碰过就
   每 boot 重复追加一行无上限增长。正则改 `\r?\n`。
+- **AgentTeams 与 0.1.2-alpha.1 内核适配（用户启用实测 pending 后根治）**：bundled
+  0.1.13 注入 rc.2 时代的 `conversationEvents` 顶层服务（alpha.1 已移除 → boot 报
+  "1 entry did not activate / pending (waiting for service: conversationEvents)"）；
+  上游 0.1.14 面向更新内核（需 `dsh-client-runtime`，alpha.1 亦无），无版本可直接用。
+  按 dsh-raw-html 先例改造为 **EAC 托管适配版（0.1.13-eac.1）**：注入名换
+  `uiConversation`（alpha.1 的 UiConversation 服务，`.events` =
+  ConversationEventRegistry，契约 match/start/update/buildViewNode 与原版逐字段
+  一致），注册调用加双路径兼容回退。隔离内核 + 无痕浏览器实测：插件激活零 pending、
+  零警告零异常。功能面（队长/子代理/任务 DAG/活动面板/`/agent-teams`）全部保留；
+  实际跑团需 API Key，按花费禁令未实测。仍不登记更新白名单（适配版防被上游覆盖）。
 
 ### 结构优化
 
@@ -112,13 +122,6 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 ### 明确不修（记录在案）
 
 - 内核 `remote.session` 启动竞态（0.1.2 alpha 已知暗雷，等上游，不做内核锚点补丁）。
-- **AgentTeams（@nanmicoder/dsh-agent-teams）与 0.1.2-alpha.1 内核不兼容**：bundled
-  0.1.13 注入 rc.2 时代的 `conversationEvents` 服务（alpha.1 已移除 → 启用后 boot 报
-  "1 entry did not activate / pending (waiting for service: conversationEvents)"）；
-  上游 0.1.14（08-27）改注入 `dsh-client-runtime`，该模块在 alpha.1 同样不存在
-  （面向更新的内核）。**当前内核下无可用版本**，不登记更新白名单（升了也是换一个
-  服务名 pending）。待内核升级到提供新 client API 的版本后，同步更新 bundled 副本
-  并补登记 `PLUGIN_UPDATE_SOURCES['agent-teams']`。默认关闭状态完全无影响。
 - feature-pack 安装/更新失败路径的完整事务回滚（头注释承诺但未实现）——工程量大，
   本版只修其中会杀进程的 floating removePlugin。
 - client-updater 非中文 ASCII 安装路径下 nodeExe 写入 .cmd 的代码页问题（需改更新助手
