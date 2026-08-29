@@ -80,9 +80,11 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
   settle + 失败清理半成品 dest。
 - **boot-server 就绪行跨 chunk 截断丢 token（MED）**：一次性 token URL 被管道分块劈开时
   正则两半都匹配失败 → HTTP 探测 30s 超时后 401 白屏。加跨块行缓冲。
-- **boot-server 丢 `--no-open` → 每次启动弹系统浏览器（MED，实战用户反馈）**：5.1.0 修过
-  的弹浏览器问题在 5.3.0 重写 boot-server 时回归，日志每轮都有 "opening the default
-  browser"。spawn 参数补回 `--no-open`（内核 web 命令原生支持，boot-smoke 验证不再弹）。
+- **boot-server 丢 `--no-open` → 每次启动弹系统浏览器（MED，实战用户反馈）**：5.3.0 期间
+  PR #249 曾有意移除该参数（spike 内核不认，传了启动必死）并加测试钉死「不得出现」；
+  最终 vendored alpha.1 的 dsh-web-app 恢复了 `--no-open` 支持，本版补回并把钉子翻转为
+  「必须存在」（boot-smoke 实证正常启动且不再弹浏览器，日志无 "opening the default
+  browser"）。
 - **phone-bridge 上游响应中途断开（MED）**：HTML 缓冲分支 end 永不触发（请求挂死 +
   缓冲内存滞留）。统一挂 `up.on('error') → res.destroy()`。
 - **phone-bridge /desktop/decide TOCTOU（MED）**：读 body 让出事件循环期间 token 轮换，

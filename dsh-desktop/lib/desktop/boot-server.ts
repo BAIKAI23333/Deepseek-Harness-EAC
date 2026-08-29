@@ -136,8 +136,10 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
       .flatMap((p) => ['--patch', p]);
     // `--profile <name>` 直接在根命令上（本版本的 `web` 是 --profile web 的
     // 硬编码别名，不接受父级 --profile）；--host/--port 透传给该 app。
-    // --no-open：内核 openBrowser 默认 true 会每轮启动弹一个系统浏览器标签
-    //（5.1.0 批次修过，5.3.0 重写 boot-server 时丢失回归）。
+    // --no-open：内核 openBrowser 默认 true 会每轮启动弹一个系统浏览器标签。
+    // 历史：5.3.0 期间的 spike 内核不认该参数（PR #249 有意移除防启动必死）；
+    // 最终 vendored alpha.1 的 dsh-web-app 恢复了支持，此处补回
+    //（boot-smoke 实证正常启动且不再弹浏览器），契约测试钉住「必须存在」。
     const proc = cp.spawn(
       nodeBin,
       ['--use-system-ca', bin, '--profile', ctx.getDesktopProfile(), '--host', '127.0.0.1', '--port', String(webPort), '--no-open', ...patchArgs],
