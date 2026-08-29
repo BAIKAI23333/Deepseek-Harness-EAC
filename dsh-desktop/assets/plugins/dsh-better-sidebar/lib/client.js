@@ -4796,10 +4796,13 @@ window.__ModuleLoader__.load({
 				controllerRef.current = controller;
 				try {
 					// 内核 0.1.2：connection.api.subagents.history 已随 typert RPC 换血移除。
-					// 改走 session.follow 的 subagent 地址开一次快照（maxMessages 由服务端
-					// 截尾），取到首帧即弃流 —— 轮询尾读语义不变；chunk 投影记录不是
-					// 事件，喂给 lastActivity 前先滤掉。
-					const stream = ctx.remote.session.follow({
+					// remote 用 ctx.get 显式解析（ctx.remote 属性访问会撞 cordis 的
+					// inject 强校验，不同作用域表现不一致）；改走 session.follow 的
+					// subagent 地址开一次快照（maxMessages 由服务端截尾），取到首帧
+					// 即弃流 —— 轮询尾读语义不变；chunk 投影记录不是事件，喂给
+					// lastActivity 前先滤掉。
+					const remote = ctx.get("remote");
+					const stream = remote.session.follow({
 						address: {
 							kind: "subagent",
 							parentSessionId: address.parentSessionId,
@@ -8828,7 +8831,11 @@ window.__ModuleLoader__.load({
 			"sessions",
 			"connection",
 			"workspaces",
-			"locale"
+			"locale",
+			// 子代理实时行轮询（SubagentLiveLines）走 remote.session.follow ——
+			// cordis 要求 deep 路径逐级声明，缺一即 "cannot get property without inject"。
+			"remote",
+			"remote.session"
 		];
 		/**
 		* Error boundary over the sidebar tree (root scope): a render error in the
