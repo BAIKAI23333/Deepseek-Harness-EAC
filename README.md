@@ -67,13 +67,12 @@
 
 ### Windows
 
-> 正式版当前为 v4.4.1（Electron 壳）；下方 Lite 版为 Tauri（Rust）壳，体积更小、启动更快。安装包直接从 Release 下载。
+> 当前发布线为 5.x（Tauri/Rust 壳）。5.2 起桌面版统一为 Tauri 壳；更早的 v4.4.1 Electron 版已退役（仅 Release 存档）。安装包直接从 Release 下载。
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | 安装到系统，创建快捷方式 | ~246 MB |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | 免安装单文件，可放任意目录运行 | ~212 MB |
-| [Lite 版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.5-lite/Deepseek.Harness.EAC.v4Lite_4.5.0_x64-setup.exe) | **Lite 精简版**（Tauri 壳，与上方正式版相互独立、可并存）：主程序为 `Deepseek Harness EAC v4Lite.exe`，数据目录 `~/.dsh-v4lite`，SHA256 校验文件随 Release 提供 | ~73 MB |
+| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) | Tauri 壳安装版（NSIS），安装到系统并创建快捷方式；文件名形如 `*-Setup-*-x64.exe` | ~180 MB |
+| [便携版](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) | 免安装单文件（自解压），可放任意目录运行；文件名形如 `*-Portable-*-x64.exe`，SHA256 校验文件随 Release 提供 | ~205 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
@@ -222,7 +221,7 @@ node make-portable.mjs           # 便携 zip（可选）→ target/release/port
 > 偶发 `makensis` mmap error（杀软放大触发）——重跑即可。
 
 <details>
-<summary>Electron 壳（v4 冻结维护，仅回退用）</summary>
+<summary>打包链（Tauri 三段链，从源码出安装包/便携包）</summary>
 
 ```powershell
 cd dsh-desktop

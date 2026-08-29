@@ -574,6 +574,12 @@ export function syncCompanionPlugins(): void {
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending: PendingRow[] = [];
     const removedIds = removedPluginIds();
+    // 市场残留预检的共享输入（循环外读一次）：34 个配套插件逐个 dupPreCheck
+    // 会把 profile package.json 与 cordis.patch.yml 各重读一遍（~68 次读）。
+    // 迁移手术本身会改写这两个文件 —— 手术后的插件重读一次（按需失效）。
+    let precheckPkg = readJsonFile(path.join(profileDirP, 'package.json'));
+    let precheckPatch = '';
+    try { precheckPatch = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8'); } catch { /* 缺省空 */ }
     // V4.2：用户曾从市场安装过与内置插件同名的包时，写包前先迁移残留
     // （package.json 依赖/bundles + patch 行），让内置版干净接管，避免
     // duplicate loader entry；完成后系统通知告知「插件树变化」。
@@ -603,23 +609,22 @@ export function syncCompanionPlugins(): void {
           patchHasForeignRows(patchText: string, name: string): boolean;
         };
         // 市场同名包残留预检（v4.2，用户反馈问题 5）：只有「非应用自写」证据
-        // （package.json 依赖/bundles 或非自写 patch 行）才算残留。
+        // （package.json 依赖/bundles 或非自写 patch 行）才算残留。共享输入
+        // 来自循环外的单次读取；迁移手术后两个文件都变了，重读一次。
         const dupPreCheck = (() => {
           try {
-            const pkg = readJsonFile(path.join(profileDirP, 'package.json'));
-            const deps = pkg && (pkg.dependencies as Record<string, unknown> | undefined);
+            const deps = precheckPkg && (precheckPkg.dependencies as Record<string, unknown> | undefined);
             const spec = deps && deps[p.name];
             if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
-            const dsh = pkg && (pkg.dsh as Record<string, unknown> | undefined);
+            const dsh = precheckPkg && (precheckPkg.dsh as Record<string, unknown> | undefined);
             const prof = dsh && (dsh.profile as Record<string, unknown> | undefined);
             if (prof && Array.isArray(prof.bundles) && (prof.bundles as string[]).includes(p.name)) return true;
-            const patchText = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8');
             // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
             // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
             // 的启停状态，不是市场残留。否则 v4.4 首次向导的取消勾选会在同一启动
             // 里被剥离后按注册表默认回写（dsh-dafeiyu 等默认启用插件被静默重新
             // 启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:` 行堆积。
-            return patchHasForeignRows(patchText, p.name);
+            return patchHasForeignRows(precheckPatch, p.name);
           } catch { return false; }
         })();
         if (dupPreCheck) {
@@ -634,6 +639,9 @@ export function syncCompanionPlugins(): void {
           if (migrated.changed && migrated.ok) {
             migratedBuiltins.push({ name: p.name, dep: migrated.removedDep.length > 0, rows: migrated.removedRows.length });
             ctx.log('boot', `内置插件 ${p.name} 已接管市场同名包（移除依赖 ${migrated.removedDep.length} 个、patch 行 ${migrated.removedRows.length} 个）`);
+            // 迁移改写了两个文件：后续插件的预检必须看到新内容。
+            precheckPkg = readJsonFile(path.join(profileDirP, 'package.json'));
+            try { precheckPatch = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8'); } catch { precheckPatch = ''; }
           }
         }
       } catch (err) {

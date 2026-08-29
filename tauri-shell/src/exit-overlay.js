@@ -34,7 +34,16 @@
   function dismiss() {
     var el = document.getElementById('dsh-exit-overlay')
     if (el) el.remove()
+    if (activeKeyHandler) {
+      document.removeEventListener('keydown', activeKeyHandler)
+      activeKeyHandler = null
+    }
   }
+
+  // 每次 show() 都会挂一个 keydown 监听（Escape 取消用）：旧实现只有 Esc
+  // 路径自移除，反复开关 overlay 会把监听器累加到 document 上。show() 开头
+  // 先经 dismiss() 卸掉旧监听，杜绝堆积。
+  var activeKeyHandler = null
 
   function show() {
     dismiss()
@@ -55,15 +64,16 @@
       })
     })
     // Escape / Cmd+W 取消
-    document.addEventListener('keydown', function onKey(e) {
+    var onKey = function (e) {
       if (e.key === 'Escape' || (e.metaKey && e.key === 'w')) {
         e.preventDefault()
         dismiss()
         if (window.dshDesktop && window.dshDesktop._call) window.dshDesktop._call('win.close-dialog', {})
         else dismiss()
-        document.removeEventListener('keydown', onKey)
       }
-    })
+    }
+    activeKeyHandler = onKey
+    document.addEventListener('keydown', onKey)
   }
 
   window.__dshExitOverlay = { show: show, dismiss: dismiss }

@@ -105,9 +105,18 @@ export function startPreviewStaticServer(): void {
 // before starting dsh web. A botched upgrade leaves empty package skeletons;
 // Node then dies with ERR_MODULE_NOT_FOUND in a loop. Tell the user to
 // reinstall instead (with an escape hatch to continue anyway).
+// 路径布局：Electron 时代 manifest 在 resources/app/ 下；Tauri 化后应用树
+// 直接是 <DSH_RESOURCE_ROOT>/dsh-desktop（与 node_modules 同级）。宿主注入
+// 的 resourcesPath 应指向 dsh-desktop 应用树本身 —— 兼容两种：resourcesPath
+// 末段是 dsh-desktop 直接用，否则按旧 Electron 布局拼 app/。
+function appTreeDir(): string {
+  const rp = resourcesDir();
+  if (path.basename(rp).toLowerCase() === 'dsh-desktop') return rp;
+  return path.join(rp, 'app');
+}
 export function verifyBundledModules(): Promise<void> {
   if (!isPackaged()) return Promise.resolve();
-  const appDir = path.join(resourcesDir(), 'app');
+  const appDir = appTreeDir();
   const manifestPath = path.join(appDir, 'bundle-manifest.json');
   let manifest: unknown = null;
   try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return Promise.resolve(); }

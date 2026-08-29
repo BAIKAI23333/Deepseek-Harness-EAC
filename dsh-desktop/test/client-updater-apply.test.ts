@@ -605,7 +605,9 @@ test('installed helper waits for graceful app exit before running the update act
       '-File',
       appScript,
     ], { stdio: 'ignore', windowsHide: true });
-    await waitForFile(runningMarker);
+    // 15s：PowerShell 冷启动在全量测试并行负载下可超 5s（本机实测单跑
+    // ~8s 含 1.2s 睡眠）；这里只等「假应用起来写了标记」，宽窗不弱化断言。
+    await waitForFile(runningMarker, 15000);
 
     const helper = runInstalledHelper({
       script,

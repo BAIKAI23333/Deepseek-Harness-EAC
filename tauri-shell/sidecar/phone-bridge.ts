@@ -234,16 +234,65 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
     return cookies.some((c) => tokenEquals(c, `dsh_mobile=${sessionSecret}`));
   }
 
-  /** 上游目标（host/port）。服务未运行返回 null。 */
-  function upstreamOf(): { host: string; port: number; origin: string } | null {
+  /** 上游目标（host/port/token）。服务未运行返回 null。 */
+  function upstreamOf(): { host: string; port: number; origin: string; token: string } | null {
     const base = getWebUrl();
     if (!base) return null;
     try {
       const url = new URL(base);
-      return { host: url.hostname, port: Number(url.port) || (url.protocol === 'https:' ? 443 : 80), origin: url.origin };
+      return {
+        host: url.hostname,
+        port: Number(url.port) || (url.protocol === 'https:' ? 443 : 80),
+        origin: url.origin,
+        token: url.searchParams.get('token') ?? '',
+      };
     } catch {
       return null;
     }
+  }
+
+  // ---- 内核鉴权自兑（0.1.2 token 鉴权适配）----
+  // 内核 Web 首屏为「一次性 token → 兑换 dsh-auth-* 签名 cookie」模型：裸 /
+  // 401，/?token= 303 + Set-Cookie（30 天、Host 绑定、token 可重复兑换）。
+  // 手机桥代理必须携带该 cookie。此处缓存一份（token 变化 = 内核重启轮换，
+  // 自动重兑）；手机浏览器自带的 dsh-auth-* cookie（上次透传存下的）在
+  // proxyHeaders spread 里原样透传，优先于缓存。
+  let kernelCookieCache: { token: string; cookie: string } | null = null;
+  async function ensureKernelCookie(force: boolean): Promise<string | null> {
+    const upstream = upstreamOf();
+    if (!upstream || !upstream.token) return null;
+    if (!force && kernelCookieCache && kernelCookieCache.token === upstream.token) {
+      return kernelCookieCache.cookie;
+    }
+    return new Promise((resolve) => {
+      const req = http.request(
+        { host: upstream.host, port: upstream.port, path: '/?token=' + encodeURIComponent(upstream.token), method: 'GET' },
+        (res) => {
+          res.resume();
+          const raw = res.headers['set-cookie'] ?? [];
+          const auth = raw
+            .filter((c) => c.startsWith('dsh-auth-'))
+            .map((c) => c.split(';', 1)[0] ?? '');
+          const cookie = auth.filter(Boolean).join('; ');
+          if (res.statusCode === 303 && cookie) {
+            kernelCookieCache = { token: upstream.token, cookie };
+            resolve(cookie);
+          } else {
+            resolve(null);
+          }
+        },
+      );
+      req.on('error', () => resolve(null));
+      req.end();
+    });
+  }
+
+  /** 合并 cookie 头：手机自带的 dsh-auth-* 优先（透传语义），否则用缓存。 */
+  function withKernelCookie(headers: Record<string, string | string[] | undefined>, kernelCookie: string | null): void {
+    if (!kernelCookie) return;
+    const existing = typeof headers.cookie === 'string' ? headers.cookie : '';
+    if (/dsh-auth-[^=]+=/i.test(existing)) return;
+    headers.cookie = existing ? existing + '; ' + kernelCookie : kernelCookie;
   }
 
   /** 请求头改写：Host/Origin 指向内核自身 origin（信任围栏视为同源）。 */
@@ -347,6 +396,8 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         json(res, 503, { error: 'harness web service is not running' });
         return;
       }
+      // 内核鉴权自兑（前置）：缓存缺失/内核重启轮换时先兑换 dsh-auth-* cookie。
+      const kernelCookie = await ensureKernelCookie(false);
       // 内核 Web 恒为回环 http（boot-server 以 --host 127.0.0.1 拉起）。
       const upstreamReq = http.request(
         {
@@ -354,7 +405,11 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           port: upstream.port,
           path: (req.url ?? '/'),
           method: req.method,
-          headers: proxyHeaders(req, upstream.origin),
+          headers: (() => {
+            const h = proxyHeaders(req, upstream.origin);
+            withKernelCookie(h, kernelCookie);
+            return h;
+          })(),
         },
         (up: http.IncomingMessage) => {
           // 上游响应流中途出错（服务重启/连接重置）：三个分支都挂同一兜底，
@@ -450,17 +505,27 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             socket.destroy();
             return;
           }
-          const upstreamReq = http.request({
-            host: upstream.host,
-            port: upstream.port,
-            path: req.url,
-            method: req.method,
-            headers: {
-              ...proxyHeaders(req, upstream.origin),
-              connection: 'Upgrade',
-              upgrade: 'websocket',
-            },
-          });
+          // WS 升级同样需要内核 dsh-auth-* cookie：缓存命中同步走；缺失时
+          // 先兑换再升级（升级头必须在 http.request 发出前定稿，无法 401
+          // 后重试 —— 兑换失败按无 cookie 尝试，上游 401 透传给手机）。
+          void ensureKernelCookie(false)
+            .catch(() => null)
+            .then((kernelCookie) => {
+              const upstreamReq = http.request({
+                host: upstream.host,
+                port: upstream.port,
+                path: req.url,
+                method: req.method,
+                headers: (() => {
+                  const h = {
+                    ...proxyHeaders(req, upstream.origin),
+                    connection: 'Upgrade',
+                    upgrade: 'websocket',
+                  };
+                  withKernelCookie(h, kernelCookie);
+                  return h;
+                })(),
+              });
           upstreamReq.on('upgrade', (upRes, upSocket, upHead) => {
             socket.write(
               `HTTP/1.1 101 Switching Protocols\r\n${
@@ -492,6 +557,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           upstreamReq.on('error', () => socket.destroy());
           if (head.length > 0) upstreamReq.write(head);
           upstreamReq.end();
+            });
         });
         s.on('error', (error) => reject(error));
         s.listen(0, '0.0.0.0', () => {

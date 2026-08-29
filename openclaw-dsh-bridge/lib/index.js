@@ -561,20 +561,32 @@ async function attachRec(ctx, sessionId) {
   throw new Error("session not found: " + sessionId);
 }
 
-/** 取 firstSeq 之后最后一条 assistant 文本（与 dsh-headless 的 summarize 同构）。 */
-function lastAssistantText(agent, firstSeq) {
+/** 从 fromSeq（含）起向后扫描助手文本/终止原因，返回最后命中的文本与
+ * turn/end reason。增量推进：调用方从上次的扫过位置继续，不再每轮从
+ * firstSeq 全量重扫（长回合 O(n²) 的来源）。 */
+function scanFrom(agent, fromSeq) {
   let text = "";
+  let reason;
+  let last = fromSeq; // 已扫描过的 seq 上界（下一个起点）
   for (const event of agent.session.events) {
-    if (event.seq < firstSeq) continue;
+    if (event.seq < fromSeq) continue;
+    last = event.seq + 1;
     if (event.type === "assistant/message") {
       const joined = (event.data?.message?.content || [])
         .filter((b) => b && b.type === "text")
         .map((b) => b.text || "")
         .join("");
       if (joined) text = joined;
+    } else if (event.type === "turn/end") {
+      reason = event.data?.reason;
     }
   }
-  return text;
+  return { text, reason, next: last };
+}
+
+/** 兼容旧调用面：firstSeq 之后最后一条 assistant 文本。 */
+function lastAssistantText(agent, firstSeq) {
+  return scanFrom(agent, firstSeq).text;
 }
 
 /**
@@ -588,9 +600,11 @@ async function runTurn(rec, toInject, emit) {
   const firstSeq = agent.session.seq;
   let timer = null;
   let emitted = 0;
+  let scanNext = firstSeq; // 增量扫描游标：每 tick 只看新事件
   if (emit) {
     timer = setInterval(() => {
-      const text = lastAssistantText(agent, firstSeq);
+      const { text, next } = scanFrom(agent, scanNext);
+      scanNext = next;
       if (text.length > emitted) {
         emit(text.slice(emitted));
         emitted = text.length;
@@ -611,13 +625,10 @@ async function runTurn(rec, toInject, emit) {
   } finally {
     if (timer) clearInterval(timer);
   }
-  let text = lastAssistantText(agent, firstSeq);
+  const finalScan = scanFrom(agent, scanNext);
+  const text = finalScan.text.length > 0 ? finalScan.text : lastAssistantText(agent, firstSeq);
   if (emit && text.length > emitted) emit(text.slice(emitted));
-  let reason;
-  for (const event of agent.session.events) {
-    if (event.seq < firstSeq) continue;
-    if (event.type === "turn/end") reason = event.data?.reason;
-  }
+  const reason = finalScan.reason;
   if (reason && reason.kind === "error") {
     const err = new Error((reason.error && reason.error.message) || "agent turn failed");
     err.status = 502;

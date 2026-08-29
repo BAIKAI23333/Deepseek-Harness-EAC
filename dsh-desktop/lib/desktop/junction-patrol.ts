@@ -63,6 +63,8 @@ export function startJunctionWatchdog(): void {
 
 // 检测本机是否有其它 dsh 进程在跑（原生 CLI / 另一份安装）。Windows 下用
 // CIM 查 node 进程命令行；超时或失败按「无外部进程」处理（宁可漏报）。
+// exec 形式（异步）：execSync 的 PowerShell 12s 超时会周期性冻结 sidecar
+// 事件循环（5min 巡检 tick 每次 12s 卡顿，服务/WS 心跳全停）。
 export function detectExternalDsh(): Promise<{ running: boolean; pids: number[] }> {
   return new Promise((resolve) => {
     if (!IS_WIN) { resolve({ running: false, pids: [] }); return; }
@@ -70,29 +72,31 @@ export function detectExternalDsh(): Promise<{ running: boolean; pids: number[] 
     const sp = ctx.getServerProc();
     if (sp && sp.pid) own.add(sp.pid);
     let out = '';
-    try {
-      out = cp.execSync(
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \'Name=\'\'node.exe\'\'\' | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"',
-        { encoding: 'utf8', windowsHide: true, timeout: 12000 });
-    } catch {
-      resolve({ running: false, pids: [] });
-      return;
-    }
-    try {
-      const arr = out.trim() === '' ? [] : JSON.parse(out);
-      const list = Array.isArray(arr) ? arr : [arr];
-      const pids: number[] = [];
-      for (const it of list) {
-        const pid = Number(it && it.ProcessId);
-        const cmd = String((it && it.CommandLine) || '');
-        if (!Number.isFinite(pid) || own.has(pid)) continue;
-        if (!/dsh|deepseek-ai/i.test(cmd)) continue;
-        if (!/(\s|\/|\\)(web|plugin|run|tui)(\s|$)|bin\.(js|ts)/i.test(cmd)) continue;
-        pids.push(pid);
-      }
-      resolve({ running: pids.length > 0, pids });
-    } catch {
-      resolve({ running: false, pids: [] });
-    }
+    const child = cp.exec(
+      'powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \'Name=\'\'node.exe\'\'\' | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"',
+      { encoding: 'utf8', windowsHide: true, timeout: 12000 },
+      (err, stdout) => {
+        if (err && !stdout) { resolve({ running: false, pids: [] }); return; }
+        out = String(stdout || '');
+        try {
+          const arr = out.trim() === '' ? [] : JSON.parse(out);
+          const list = Array.isArray(arr) ? arr : [arr];
+          const pids: number[] = [];
+          for (const it of list) {
+            const pid = Number(it && it.ProcessId);
+            const cmd = String((it && it.CommandLine) || '');
+            if (!Number.isFinite(pid) || own.has(pid)) continue;
+            if (!/dsh|deepseek-ai/i.test(cmd)) continue;
+            if (!/(\s|\/|\\)(web|plugin|run|tui)(\s|$)|bin\.(js|ts)/i.test(cmd)) continue;
+            pids.push(pid);
+          }
+          resolve({ running: pids.length > 0, pids });
+        } catch {
+          resolve({ running: false, pids: [] });
+        }
+      },
+    );
+    // exec 回调之外再挂一层 error 兜底（spawn 失败时回调带 err，双保险）。
+    child.on('error', () => resolve({ running: false, pids: [] }));
   });
 }

@@ -69,6 +69,16 @@ const bootMod = mount('boot-server');
 
 const MOUNTED = ['proc', 'platform', 'runtime-paths', 'profile', 'guard-box', 'runtime-patches', 'companion-sync', 'plugin-ops', 'market', 'shortcuts', 'junction-patrol', 'client-update', 'static-preview', 'file-roots', 'boot-server'];
 
+// 打包态判定 + 资源根：Rust 壳 spawn sidecar 时注入 DSH_SHELL_EXE /
+// DSH_RESOURCE_ROOT（main.rs Sidecar::spawn）。DSH_RESOURCE_ROOT 存在即打包态；
+// 开发态两者缺省 → isPackaged=false（快捷方式/完整性校验等打包态功能自动跳过）。
+function isPackagedRuntime(): boolean {
+  return Boolean(process.env.DSH_RESOURCE_ROOT);
+}
+function resourceRoot(): string {
+  return process.env.DSH_RESOURCE_ROOT || '';
+}
+
 // ---- vnext 隔离体系（vnext-absorb Phase 2）：supervisor / extension-host / 恢复中心 ----
 // 这些模块位于 lib/{state,log,supervisor,extension-host,recovery-center}，
 // 不走 lib/desktop 的 mount 通道，按绝对路径 require（编译产物 .js）。
@@ -182,7 +192,7 @@ try {
 }
 
 procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfileFn });
-pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => false, resourcesPath: () => '', platform: process.platform });
+pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => isPackagedRuntime(), resourcesPath: () => resourceRoot(), platform: process.platform });
 profileMod.init({ log, getDshHome: () => dshHome });
 guardBoxMod.init({
   log,
@@ -196,16 +206,22 @@ shortcutsMod.init({
   showBox: showBoxFallback,
   getUserDataDir: () => userDataDir,
   getDshHome: () => dshHome,
-  isPackaged: () => false,
+  isPackaged: isPackagedRuntime,
   systemPath: (kind: string) => (kind === 'appData' ? appDataDir : kind === 'desktop' ? path.join(os.homedir(), 'Desktop') : ''),
   links: { read: psLnkRead, write: psLnkWrite },
 });
 junctionPatrolMod.init({
   log,
-  isQuitting: () => false,
-  isRestartingServer: () => false,
-  getServerProc: () => null,
-  showMainWindow: () => say('showMainWindow (host-delegated)'),
+  isQuitting: () => quitting,
+  // 真实接线（5.3.3 批次 D）：此前是硬编码桩（isRestartingServer 恒 false、
+  // getServerProc 恒 null）——直接按桩启动 watchdog 会把桌面端自己的 dsh web
+  // 判成「外部 dsh」，修复被永久搁置。透传 boot-server 的真实状态。
+  isRestartingServer: () => vnextState.state.restartingServer === true,
+  getServerProc: () => {
+    const proc = (bootMod.getServerProc as () => { pid?: number } | null)();
+    return proc && proc.pid ? { pid: proc.pid } : null;
+  },
+  showMainWindow: () => { notify('shell.show-main-window', {}); },
   notify: notifyFallback,
 });
 // /update 进度页开关状态（showUpdateWindow/destroy 维护）。
@@ -255,7 +271,7 @@ clientUpdateMod.init({
   // 打包态取壳层 exe 目录（DSH_SHELL_EXE）；开发态 sidecar 的 node 不适用。
   getExecDir: () => (process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : path.dirname(process.execPath)),
 });
-previewMod.init({ log, showBox: showBoxFallback, exitDamaged: () => process.exit(1), isPackaged: () => false, resourcesPath: () => '' });
+previewMod.init({ log, showBox: showBoxFallback, exitDamaged: () => process.exit(1), isPackaged: isPackagedRuntime, resourcesPath: () => resourceRoot() });
 marketMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
 pluginOpsMod.init({ log });
 companionSyncMod.init({
@@ -341,6 +357,44 @@ bootMod.init({
 });
 
 say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
+
+// ---- SessionWatcher（5.3.3 批次 D 接线，= Electron main.js onSessionTurnEnd）----
+// 会话任务完成通知：2s 轮询 <dshHome>/sessions 的 zstd 日志，turn/end 时经
+// 壳层系统通知提醒（notifyOnTurnEnd 设置项控制，同会话 30s 限频）。
+const sessionWatcherMod = require(path.join(DSH_DESKTOP_ROOT, 'session-watcher.js')) as {
+  SessionWatcher: new (opts: {
+    sessionsDir: string;
+    log: (tag: string, msg: string) => void;
+    onTurnEnd: (info: { sessionId: string; title?: string; body?: string }) => void;
+  }) => { start(): void; stop(): void };
+};
+let sessionWatcher: { start(): void; stop(): void } | null = null;
+const turnEndNotifyAt = new Map<string, number>();
+function startSessionWatcher(): void {
+  if (sessionWatcher) return;
+  try {
+    const s = loadSettings() as { notifyOnTurnEnd?: boolean };
+    if (s.notifyOnTurnEnd === false) return;
+    sessionWatcher = new sessionWatcherMod.SessionWatcher({
+      sessionsDir: path.join(dshHome, 'sessions'),
+      log,
+      onTurnEnd: (info) => {
+        if (quitting) return;
+        const now = Date.now();
+        const last = turnEndNotifyAt.get(info.sessionId) || 0;
+        if (now - last < 30000) return; // 同会话至多一条 toast / 30s
+        turnEndNotifyAt.set(info.sessionId, now);
+        notifyFallback({
+          title: info.title || 'DSH 任务完成',
+          body: info.body || '会话任务已完成',
+        });
+      },
+    });
+    sessionWatcher.start();
+  } catch (e) {
+    say('SessionWatcher 启动失败（不影响主流程）: ' + String(((e as Error).message) || e));
+  }
+}
 
 // ---- vnext 初始化：日志 sink + 共享状态 + 恢复中心 ctx ----------------------
 vnextLog.setLogSink(log);
@@ -493,6 +547,9 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
   // ---- boot.*（P2：dsh web 服务编排，Rust 壳的启动主链路） ----
   'boot.start': async (p): Promise<RpcResult> => {
     const overlays = Array.isArray(p && p.overlays) ? (p!.overlays as string[]) : [];
+    // 打包态捆绑依赖完整性校验（issue #7，= Electron startAndShowGuarded 前置）：
+    // 空壳包以明确文案提示重装，用户选「仍然启动」才继续。
+    await (previewMod.verifyBundledModules as () => Promise<void>)();
     // 前置文件树准备（= main.js boot() 在 startAndShowGuarded 之前的序列，
     // 摘除 GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽
     // 修复 → 构建产物回填。koffi 预检与 junction 巡检属 P3 壳层集成。
@@ -500,6 +557,14 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       await preBootSync();
     } catch (e) {
       say('boot 前置准备失败（继续尝试拉起服务）: ' + String(((e as Error).message) || e));
+    }
+    // 共享 profile 一次性迁移（= Electron main.js boot() 序列）：必须在
+    // syncCompanionPlugins 写新 profile 之后、皮肤行落位（applyLegacySkinChoice
+    // 在 sync 内消费）之前判定 —— preBootSync 已完成 sync，此处执行迁移清理。
+    try {
+      (shortcutsMod.migrateFromSharedWebProfile as () => void)();
+    } catch (e) {
+      say('共享 profile 迁移失败（不影响启动）: ' + String(((e as Error).message) || e));
     }
     // vnext（Phase 2）：插件档案登记 + 示例 SDK 插件安装（幂等）。
     try {
@@ -548,6 +613,34 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
     // vnext（Phase 2）：并行拉起全部启用的 SDK 插件宿主（不阻塞 boot）。
     void extHost.startEnabledExtensionHosts();
+    // ---- 5.3.3 批次 D 接线（= Electron main.js boot() 成功路径的桌面集成）----
+    // 预览静态服务：独立回环端口（不占 UI 的 6 连接池），chrome.init 的
+    // staticPort 字段从此有真实值（dsh-client-file-changes 预览面板消费）。
+    try {
+      (previewMod.startPreviewStaticServer as () => void)();
+    } catch (e) {
+      say('预览静态服务启动失败（不影响主流程）: ' + String(((e as Error).message) || e));
+    }
+    // 快捷方式维护（打包态 Windows 才生效：开始菜单 + 便携版桌面）与
+    // 临时目录运行告警（便携版解压在 %TEMP% 时提醒搬走）。
+    try {
+      (shortcutsMod.maintainShortcuts as () => void)();
+    } catch (e) {
+      say('快捷方式维护失败（不影响启动）: ' + String(((e as Error).message) || e));
+    }
+    try {
+      (shortcutsMod.warnTempRun as () => void)();
+    } catch (e) {
+      say('临时目录运行检测失败（不影响启动）: ' + String(((e as Error).message) || e));
+    }
+    // junction 归属巡检（5min 周期，外部原生 dsh 退出后自动修复指向）。
+    try {
+      (junctionPatrolMod.startJunctionWatchdog as () => void)();
+    } catch (e) {
+      say('junction 巡检启动失败（不影响启动）: ' + String(((e as Error).message) || e));
+    }
+    // 会话任务完成通知（notifyOnTurnEnd 设置项控制）。
+    startSessionWatcher();
     return r;
   },
   'boot.stop': async (): Promise<RpcResult> => {
@@ -587,7 +680,9 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       capabilities: desktopPlatform.capabilities(),
       iconDataUri,
       repoUrls: { github: repos.github ? 'https://github.com/' + repos.github : '', gitee: repos.gitee ? 'https://gitee.com/' + repos.gitee : '' },
-      staticPort: 0,
+      // 预览静态服务端口（boot.start 里 startPreviewStaticServer 已 listen；
+      // 服务未起时 0 = 插件侧回退宿主 /dsh-files/static/ 路由）。
+      staticPort: (previewMod.getPreviewStaticPort as () => number)(),
     };
   },
   // 原地重启 Web 服务核心：无锁窗口内消费市场排队 → 同步配套插件 →
@@ -1214,6 +1309,7 @@ rl.on('close', () => { void gracefulExit(); });
 
 async function gracefulExit(): Promise<void> {
   quitting = true;
+  try { if (sessionWatcher) { sessionWatcher.stop(); sessionWatcher = null; } } catch { /* 尽力回收 */ }
   try { await (bootMod.stopServer as () => Promise<void>)(); } catch { /* 尽力回收 */ }
   process.exit(0);
 }

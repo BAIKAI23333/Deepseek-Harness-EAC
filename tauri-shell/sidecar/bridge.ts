@@ -462,7 +462,10 @@
     }
 
     function scheduleProbe(): void {
-      if (probeTimer === null) probeMenus();
+      // 每个变更批次都同步 querySelectorAll 全树扫描：对话流式输出期间 DOM
+      // 变更风暴会把这条热路径烧起来。菜单开/关/挪位晚一帧探测无可感知
+      // 差异 —— rAF 把同帧的整批变更合并成一次探测（与页面渲染同帧节流）。
+      if (probeTimer === null) probeTimer = window.requestAnimationFrame(probeMenus);
     }
 
     function start(): void {

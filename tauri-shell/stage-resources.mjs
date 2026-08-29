@@ -9,7 +9,7 @@
 //
 // 用法：node stage-resources.mjs [--target=win32|linux|darwin] [--skip-npm]
 
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -347,6 +347,20 @@ const vendoredBashFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-tool-
 if (existsSync(vendoredBashFix)) {
   cpSync(vendoredBashFix, path.join(nmDest, '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'));
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
+}
+
+// 捆绑依赖完整性清单（issue #7）：对**最终载荷**（npm ci + 补丁 + vendored
+// 回填之后）逐包计文件数，落 bundle-manifest.json。启动期 static-preview.
+// verifyBundledModules 复查比对 —— 空壳包（升级中断残留）会在 boot 期以
+// 明确文案提示重装，而不是 ERR_MODULE_NOT_FOUND 循环。
+// （Electron 时代由 scripts/after-pack.js 生成；Tauri 化后随 stage 生成。）
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const bi = req(path.join(dd, 'bundle-integrity.js'));
+  const manifest = bi.buildBundleManifest(nmDest);
+  writeFileSync(path.join(staged, 'dsh-desktop', 'bundle-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  console.log('[stage] bundle manifest written (' + Object.keys(manifest.packages).length + ' packages)');
 }
 
 // Tauri 的增量资源复制不会删除上一次 bundle 中已经消失的文件。只清理可由

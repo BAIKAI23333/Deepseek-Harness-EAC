@@ -44,6 +44,69 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
+## 5.3.3（本版：全库精简与高危修复批次 —— 安全加固 + 死功能接线 + 性能优化 + 真根 bug 修复）· 2026-08-30
+
+### 安全加固（高危）
+
+- 壳层回环 WS 加 Origin/Host 准入校验：本机任意网页此前可跨站 WebSocket 连入
+  127.0.0.1:19873 调用全部壳层/侧车 RPC（改文件/停服务）；含 DNS rebinding
+  与沙箱 null 源拒绝（cargo 8 断言钉住）。
+- 手机桥「断开并失效」真生效：cookie 从静态 `dsh_mobile=1` 改为服务端随机
+  会话密钥（持久化 userData，重启不需重新配对），断开即轮换、旧 cookie 立即
+  401；常量时间比对。
+- 微信桥二维码本地生成（内联 qrcode-generator，MIT）：绑定二维码此前拼给
+  第三方 api.qrserver.com 渲染（凭据外泄 + 断网白屏）。
+- 微信桥 fetchJson 补 HTTP 状态校验：token 过期的 401/HTML 此前被静默当
+  成功，回复链路无声丢失。
+
+### 死功能接线（Tauri 化断线恢复）
+
+- static-preview：独立回环端口预览服务接线，chrome.init 的 staticPort 从
+  恒 0 变真实值（dsh-client-file-changes 预览面板的加速通道）；bundle-manifest
+  完整性清单生成随 stage-resources 重建（Electron after-pack 退役后缺失）。
+- shortcuts：maintainShortcuts / warnTempRun / migrateFromSharedWebProfile
+  三函数接线；isPackaged 判定改真实（DSH_RESOURCE_ROOT 存在即打包态）。
+- junction-patrol：巡检 watchdog 启动 + 真实 getServerProc/isRestartingServer
+  透传（旧桩会把自家 dsh web 判成外部进程，修复永不触发）；巡检的 PowerShell
+  探测从 execSync（12s 冻结事件循环）改异步 exec。
+- SessionWatcher：会话任务完成通知恢复（经壳层系统通知通道，30s 限频）。
+- 快照回退链：boot 成功 markGood / 失败 reportIncident 接线（恢复中心
+  「回退最后良好快照」此前恒空转）；agent-previous 备份确认链恢复（不再永滞）。
+
+### 真 bug 修复（本批新发现）
+
+- healCredentialsVersion 扁平迁移分支的标量行正则 `\S` 只匹配单字符值——
+  真实 API key 全是多字符 → rc.2 扁平凭据文件从未被自愈（5.3.0 起潜伏，
+  补单测时暴露；修复 + 6 项单测钉住）。
+- 微信桥测试污染真实 ~/.dsh（session-map/工作区/mock 会话落真实 home，
+  次轮跑必崩）：测试导入插件前置临时 DSH_HOME。
+- patch-deps.js l2 偏移换算与 replace 函数化、build-native.js
+  CARGO_ENCODED_RUSTFLAGS（5.3.3 批次一 commit message 声称已修但未落
+  地，本批补齐）。
+- 打包态内置 Node/npm 定位错位：runtime-paths 的 nodeExe/npmCli 打包分支
+  按 Electron 旧布局找 resources/node/，Tauri 布局实际在应用树 vendor/node/
+  下 —— 5.3.2 靠 isPackaged 恒 false 侥幸走开发分支掩盖，批次 D 打包态
+  功能接线（快捷方式维护/完整性校验）使其暴露，已按 Tauri 布局修复
+  （旧布局保留兼容候选）。
+
+### 性能优化
+
+- boot 期注册表 N+1 写合并（40 插件 80 次 IO → 2 次）；companion-sync
+  市场残留预检共享单次读取；plugin-updater 每源重读 settings 合并 + 全败
+  结果不进 TTL 缓存；dsh-web.log 启动截断（>10MB 保尾部 2MB）；微信桥流式
+  轮询增量推进（长回合 O(n²) 消除）；bridge.ts popup rescue observer
+  rAF 节流（流式输出期间 DOM 变更风暴不再全树同步扫描）；childEnv/
+  desktopProfile 按 mtime 记忆化。
+
+### 其余修复（批次一详见 docs/HANDOVER-2026-08-29-5.3.3-batch1.md）
+
+- EADDRINUSE 启动假阳性（重入/换端口先等旧进程退出）、退出竞态孤儿 dsh web
+  （9s 有界轮询）、插件 Host 停用竞态/job-fence spawn error/market settled
+  单次收尾、registerTool 键名错位、shell.exec 失败码、installer 回滚点严格
+  解析 + 残留清扫、feature-pack 失败按快照回滚 + 5min 超时、balance 总超时、
+  client-update busy 竞态 + 下载直连优先 + 分片掺版本、atomic-json 并发踩踏、
+  诊断 zip 路径错根、启动退役清理门控恢复（issue #74 修复被架空）等。
+
 ## 5.3.2（本版：删除对话 0.1.2 内核适配根治 + 同类旧 API 面清理 + PR #251 合并）· 2026-08-29
 
 ### 删除对话「操作失败: Cannot read properties of undefined (reading 'workspace')」根治

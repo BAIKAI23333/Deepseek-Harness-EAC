@@ -16,7 +16,8 @@
     user-select: none;
     font-size: 13px;
   }
-  /* 自绘标题栏（无边框窗口） */
+  /* 标题栏条：Tauri 壳注入 <style>.bar{display:none}</style>（窗口控制由桥的
+     36px 玻璃栏承担）；样式保留供 Electron 归档页/无注入直开场景降级渲染。 */
   .bar {
     flex: none;
     height: 40px;
@@ -24,7 +25,6 @@
     align-items: center;
     gap: 8px;
     padding: 0 8px 0 12px;
-    -webkit-app-region: drag;
     border-bottom: 1px solid rgba(255,255,255,.07);
     background: rgba(11,18,32,.55);
   }
@@ -33,7 +33,6 @@
   .bar .mode { font-size: 10.5px; color: #93a5d8; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; padding: 1px 8px; }
   .bar .spacer { flex: 1; }
   .bar button {
-    -webkit-app-region: no-drag;
     width: 30px; height: 28px; border: none; border-radius: 8px; cursor: pointer;
     background: transparent; color: #b8c5ea; display: grid; place-items: center;
   }
@@ -117,7 +116,11 @@
 </head>
 <body>
   <div class="bar">
-    <img class="icon" src="icon.png" alt="" draggable="false" />
+    <!-- 图标改内联 SVG：Tauri 壳按 /wizard 路由整页 serve（不是文件级静态
+         目录），相对 icon.png 在该路由下 404 → 破图标。 -->
+    <svg class="icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+      <path fill="#5b8cff" d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm-3.5 7.5h2v2h-2v-2zm5 0h2v2h-2v-2z"/>
+    </svg>
     <span class="title">Deepseek Harness EAC</span>
     <span class="mode" id="modeTag">首次引导</span>
     <span class="spacer"></span>

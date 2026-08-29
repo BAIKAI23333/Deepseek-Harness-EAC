@@ -469,10 +469,7 @@ export async function parsePackZip(zipPath: string): Promise<{ manifest: PackMan
   const v = validateManifest(parsed);
   if (!v.ok) throw fail('pack.json 校验失败: ' + v.errors.join('；'));
   const manifest = parsed as PackManifest;
-  if (manifest.id + '-' + manifest.version !== path.basename(zipPath).replace(/\.dshpack$/i, '')) {
-    // 文件名约定校验（<id>-<version>.dshpack）；不强制（允许重命名），仅提示。
-    /* 空 */
-  }
+  // 文件名约定（<id>-<version>.dshpack）不强制：允许用户重命名包文件。
   return { manifest, zip };
 }
 

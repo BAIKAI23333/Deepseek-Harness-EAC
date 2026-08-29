@@ -1868,6 +1868,18 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             println!("[shell] relaunch requested (agent update)");
             app.restart();
         }
+        "shell.show-main-window" => {
+            // 通知点击/任务完成等场景聚焦主窗（= Electron second-instance 行为）。
+            let app2 = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                use tauri::Manager;
+                if let Some(win) = app2.get_webview_window("main") {
+                    let _ = win.show();
+                    let _ = win.unminimize();
+                    let _ = win.set_focus();
+                }
+            });
+        }
         "shell.quit-for-update" => {
             // 客户端更新交接：更新助手已 detached，壳整体优雅退出
             // （ExitRequested 钩子会同步有界关停 sidecar/dsh web）。

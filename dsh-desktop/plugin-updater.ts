@@ -195,10 +195,10 @@ function markChecked(ctx: PluginUpdateCtx): void {
   } catch { /* 写失败不影响 */ }
 }
 
-function isVersionSkipped(ctx: PluginUpdateCtx, id: string, version: string): boolean {
+function isVersionSkipped(ctx: PluginUpdateCtx, id: string, version: string, s?: Record<string, any>): boolean {
   try {
-    const s = updater.loadSettings(ctx);
-    return (s.pluginSkipVersions || {})[id] === version;
+    const settings = s || updater.loadSettings(ctx);
+    return (settings.pluginSkipVersions || {})[id] === version;
   } catch { return false; }
 }
 
@@ -263,6 +263,9 @@ interface CheckOpts {
 async function checkPluginUpdates(ctx: PluginUpdateCtx, sources: UpdateSource[], opts: CheckOpts = {}): Promise<PluginCheckItem[]> {
   const now = Date.now();
   if (!opts.force && checkCache.list && now - checkCache.at < PLUGIN_CHECK_TTL_MS) return checkCache.list;
+  // 每源/版本判定原本各自重读 settings.json（网络并发下数十次同步 IO）；
+  // 跳过表在检查过程中不会被本函数改写，读一次共享。
+  const skipSettings = updater.loadSettings(ctx);
   const list = await Promise.all(sources.map(async (s): Promise<PluginCheckItem> => {
     const out: PluginCheckItem = {
       id: s.id,
@@ -279,14 +282,18 @@ async function checkPluginUpdates(ctx: PluginUpdateCtx, sources: UpdateSource[],
       out.current = currentVersionOf(ctx, s.assetsDir, s.update, opts.profileDirP || null);
       out.latest = await resolveLatest(ctx, s.update);
       out.hasUpdate = hasUpdateOf(out.current, out.latest);
-      if (out.hasUpdate && isVersionSkipped(ctx, s.id, out.latest!)) out.skipped = true;
+      if (out.hasUpdate && isVersionSkipped(ctx, s.id, out.latest!, skipSettings)) out.skipped = true;
     } catch (err) {
       out.error = String(((err as Error) && (err as Error).message) || err);
     }
     return out;
   }));
   list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  checkCache = { at: now, list };
+  // 全部失败的结果不进 TTL 缓存：网络故障的一次失败结果会被钉 10 分钟，
+  // 用户点「重试」也拿不到新数据（TTL 缓存只该加速成功的清单）。
+  const failed = list.filter((x) => x.error).length;
+  if (failed < list.length) checkCache = { at: now, list };
+  else ctx.log('plugin-update', `全部 ${list.length} 个更新源检测失败，跳过缓存（下次立即重试）`);
   return list;
 }
 

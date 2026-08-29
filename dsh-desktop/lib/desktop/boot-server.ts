@@ -75,7 +75,12 @@ function dshWebLogPath(): string { return path.join(logsDir(), 'dsh-web.log'); }
 // 标量顶层条目收进 refs:、records: 块原样保留在根（语义对齐内核
 // renderFlatLayoutMigration，且绝不触碰任何密钥值）；形态看不懂就不动，
 // 交内核报错路径展示。失败不阻塞启动。
-function healCredentialsVersion(): void {
+/**
+ * .credentials.yaml 版式自愈（导出供单测）：0.1.2 内核 credentials-local 只认
+ * version:1 + refs:/records: 版式 —— 引号 version（"1"）与 rc.2 扁平文件都会
+ * 被拒启（「升级后启动必死」级故障，5.3.0 实战事故的反向自愈半边）。
+ */
+export function healCredentialsVersion(): void {
   try {
     const home = childEnv().DSH_HOME || path.join(os.homedir(), '.dsh');
     const file = path.join(home, '.credentials.yaml');
@@ -90,7 +95,9 @@ function healCredentialsVersion(): void {
       for (const line of fixed.split('\n')) {
         if (/^records:[ \t]*$/.test(line)) { inRecords = true; rest.push(line); continue; }
         if (inRecords) { rest.push(line); continue; }
-        if (/^[A-Za-z_][A-Za-z0-9_-]*:[ \t]*\S[ \t]*$/.test(line)) { scalar.push(line); continue; }
+        // 标量行：key: value —— value 是任意非空白串（原实现 \S 只匹配单字符，
+        // 真实 API key 全是多字符 → 扁平迁移分支永不触发，5.3.0 起潜伏）。
+        if (/^[A-Za-z_][A-Za-z0-9_-]*:[ \t]*\S+(?:[ \t]+\S+)*[ \t]*$/.test(line)) { scalar.push(line); continue; }
         if (line.trim() === '') continue;
         recognizable = false;
         break;
@@ -132,6 +139,24 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
       return reject(new Error('找不到内置 Node 运行时: ' + nodeBin));
     }
     fs.mkdirSync(logsDir(), { recursive: true });
+    // 启动截断：append-only 无轮转，长寿命安装会积累出数百 MB 的 dsh-web.log。
+    // 超过 10MB 时保留尾部 2MB —— 诊断链路只读 tail（rescue-agent 与恢复
+    // 中心的 readLog 均带 32KB tail 上限），头部是重复的启动横幅无信息量。
+    try {
+      const LOG_TRIM_THRESHOLD = 10 * 1024 * 1024;
+      const LOG_KEEP_TAIL = 2 * 1024 * 1024;
+      const st = fs.statSync(dshWebLogPath());
+      if (st.size > LOG_TRIM_THRESHOLD) {
+        const keep = Buffer.alloc(LOG_KEEP_TAIL);
+        const fd = fs.openSync(dshWebLogPath(), 'r');
+        try {
+          fs.readSync(fd, keep, 0, LOG_KEEP_TAIL, st.size - LOG_KEEP_TAIL);
+        } finally {
+          fs.closeSync(fd);
+        }
+        fs.writeFileSync(dshWebLogPath(), keep);
+      }
+    } catch { /* 无旧日志/读取失败都不影响启动 */ }
     const out = fs.createWriteStream(dshWebLogPath(), { flags: 'a' });
     ctx.log('dsh', `启动: "${nodeBin}" "${bin}" web --host 127.0.0.1 --port ${webPort}`);
     // --use-system-ca：让 dsh web 进程信任系统证书库（代理/MITM 场景下内置
