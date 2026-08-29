@@ -46,6 +46,8 @@ function resolvePnpmEntry() {
     ];
     const command = process.platform === 'win32' ? 'where' : 'which';
     const located = capture(command, ['pnpm']).split(/\r?\n/)[0];
+    if (located === undefined || located === '')
+        throw new Error('PATH 中找不到 pnpm');
     const binDir = path.dirname(located.replace(/\.cmd$/i, ''));
     candidates.push(path.join(binDir, 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'), path.join(binDir, '..', 'lib', 'node_modules', 'pnpm', 'bin', 'pnpm.cjs'));
     const entry = candidates.find((candidate) => fs.existsSync(candidate));
@@ -80,7 +82,9 @@ function main() {
     console.log(`fetch-kernel: 下载 ${url}`);
     run('curl', curlArgs, WORK);
     console.log('fetch-kernel: 解包');
-    const tarArgs = ['-xzf', tgzPath];
+    // 相对归档路径（cwd=WORK）：绝对路径 `D:\...` 会被 GNU tar 当远程 tape 主机，
+    // 与下方内核补丁 2 同款思路，BSD tar 与 GNU tar 均兼容。
+    const tarArgs = ['-xzf', `${tag}.tar.gz`];
     run('tar', tarArgs, WORK);
     const srcDir = fs.readdirSync(WORK).find((e) => e.startsWith('deepseek-harness-') && fs.statSync(path.join(WORK, e)).isDirectory());
     if (!srcDir)

@@ -98,7 +98,9 @@ function main(): void {
   run('curl', curlArgs, WORK);
 
   console.log('fetch-kernel: 解包');
-  const tarArgs = ['-xzf', tgzPath];
+  // 相对归档路径（cwd=WORK）：绝对路径 `D:\...` 会被 GNU tar 当远程 tape 主机，
+  // 与下方内核补丁 2 同款思路，BSD tar 与 GNU tar 均兼容。
+  const tarArgs = ['-xzf', `${tag}.tar.gz`];
   run('tar', tarArgs, WORK);
   const srcDir = fs.readdirSync(WORK).find((e) => e.startsWith('deepseek-harness-') && fs.statSync(path.join(WORK, e)).isDirectory());
   if (!srcDir) throw new Error('解包后找不到源码目录');
