@@ -319,7 +319,9 @@ function _deepRedactInternal(o: unknown, seen: WeakMap<object, unknown>, ctx: De
       try { v = obj[k]; } // access getter may throw
       catch (e) {
         onError(e);
-        out[k] = obj[k] !== undefined ? obj[k] : undefined; // keep original (even if we can't read, don't erase shape)
+        // 旧实现这里再次 obj[k] 取值 —— getter 再抛 → 冒泡到外层 catch，
+        // 返回未脱敏的原对象进日志。读不到就只能置 undefined（保键名）。
+        out[k] = undefined;
         continue;
       }
       if (isBlackKey(k)) {
@@ -386,7 +388,9 @@ class RedactTransform extends Transform {
 
   override _flush(cb: (error?: Error | null) => void): void {
     if (this._buf) {
-      try { this.push(this._redactLevel === 'shallow' ? _valueMasked(this._buf) : this._buf); }
+      // 残留半行在 deep 模式也不能原样透传：至少走 shallow masker 把已知
+      // 敏感键盖掉（半行 JSON 无法 parse，deep 链路本来就处理不了）。
+      try { this.push(_valueMasked(this._buf)); }
       catch (e) { this._warnHandler(e); this.push(this._buf); }
       this._buf = '';
     }
@@ -429,6 +433,7 @@ class RotateWriteStream extends Writable {
     this._size = 0;
     this._closed = false;
     if (!fs.existsSync(this.logsDir)) fs.mkdirSync(this.logsDir, { recursive: true });
+    this._rollExistingOnStartup();
     this._openNew();
   }
 
@@ -455,6 +460,26 @@ class RotateWriteStream extends Writable {
     }
     // 3. Open new main.00
     this._openNew();
+  }
+
+  // 进程启动时现存 main.00 属于上一轮运行：直接 _openNew() 用 'w' 截断会把
+  // 上次会话的全部日志毁掉（"10 文件轮转"名存实亡，用户重启后报障即失据）。
+  // 先按同一条链滚动一次（main.00 → main.01 → …），再开新文件。
+  _rollExistingOnStartup(): void {
+    try {
+      const st = fs.statSync(this._path);
+      if (!st.isFile() || st.size <= 0) return;
+    } catch { return; /* 无历史文件：直接开新 */ }
+    try {
+      const lastIdx = this.maxFiles - 1;
+      const lastPath = path.join(this.logsDir, _idxName(lastIdx));
+      try { fs.unlinkSync(lastPath); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+      for (let i = lastIdx - 1; i >= 0; i--) {
+        const src = path.join(this.logsDir, _idxName(i));
+        const dst = path.join(this.logsDir, _idxName(i + 1));
+        try { fs.renameSync(src, dst); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+      }
+    } catch { /* 滚动失败（如文件被占用）退回截断语义，不阻塞日志初始化 */ }
   }
 
   override _write(chunk: any, enc: BufferEncoding, cb: (error?: Error | null) => void): void {

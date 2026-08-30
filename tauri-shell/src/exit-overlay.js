@@ -47,9 +47,15 @@
 
   function show() {
     dismiss()
-    var style = document.createElement('style')
-    style.textContent = CSS
-    document.head.appendChild(style)
+    // 样式按 id 复用：旧实现每次 show() 都 append 一个新 <style>，dismiss()
+    // 只删 overlay 节点 —— 反复「取消→再关」会在 head 里无限堆 style 标签。
+    var style = document.getElementById('dsh-exit-overlay-style')
+    if (!style) {
+      style = document.createElement('style')
+      style.id = 'dsh-exit-overlay-style'
+      style.textContent = CSS
+      document.head.appendChild(style)
+    }
     document.body.insertAdjacentHTML('beforeend', HTML)
     document.querySelectorAll('[data-v]').forEach(function (btn) {
       btn.addEventListener('click', function () {

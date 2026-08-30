@@ -134,7 +134,9 @@ function banner(text, kind) {
 
 async function refresh() {
   const st = await act('status');
-  if (!st || !st.ok) { banner(english ? 'Could not read status: ' + safeError(st && st.error) : '状态读取失败：' + (st && st.error), 'err'); return; }
+  // st.error 可能缺失（异常未带 error 字段）：不能把 "undefined"/"null" 直接
+  // 拼进文案，两种语言都给兜底（safeError 缺值时返回空串，同样要兜底）。
+  if (!st || !st.ok) { banner(english ? 'Could not read status: ' + (safeError(st && st.error) || 'unknown error') : '状态读取失败：' + ((st && st.error) || '未知错误'), 'err'); return; }
   $('meta').textContent = 'v' + st.appVersion + ' · profile: ' + st.profile +
     (english ? ' · snapshots ' + st.snapshots.length + ' · incidents ' + st.incidents.length : ' · 快照 ' + st.snapshots.length + ' · 事故 ' + st.incidents.length);
   const tb = $('rows');

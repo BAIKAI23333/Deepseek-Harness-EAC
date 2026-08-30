@@ -457,6 +457,9 @@ function downloadFileOnce(url: string, dest: string, { onProgress, resumeFrom = 
         const m = /^bytes (\d+)-/i.exec(cr);
         if (m && Number(m[1]!) !== resumeFrom) {
           stream.resume();
+          // 必须删掉 .part：不删则下一轮 attempt 携同一半截重试，恒撞
+          // RESUME_INVALID 空转烧完 maxAttempts（416 分支已有同款清理）。
+          try { fs.rmSync(tmp, { force: true }); } catch { /* 尽力清理 */ }
           return finish(reject, new Error('RESUME_INVALID'));
         }
       }
@@ -891,7 +894,10 @@ function buildApplyScript({ portable, nodeExe }: ApplyScriptOpts): string[] {
       // V4.1 更新保障③：成功路径也保留 %OLD%.bak（上一版 exe）并落 marker。
       // 新版若崩溃（run-state 非干净退出 + marker 存在），下次启动自动回退。
       // 新版健康启动后由主进程清理（cleanupClientBackupIfHealthy）。
-      'if exist "%OLD%.bak" copy /y "%OLD%" "%OLD%.crash" >nul 2>&1',
+      // V4.1 保障③的 .crash 快照必须取自 %OLD%.bak（上一版 exe）：此处
+      // %OLD% 已被上方 copy 覆盖为新版，从 %OLD% 复制得到的是新 exe，
+      // 崩溃回退保险丝名存实亡。
+      'if exist "%OLD%.bak" copy /y "%OLD%.bak" "%OLD%.crash" >nul 2>&1',
       'start "" "%OLD%"',
       'echo updated %date% %time% > "%OLD%.bak.marker"',
       'del "%~f0" >nul 2>&1',
@@ -1266,4 +1272,67 @@ function applyUpdate(ctx: UpdateCtx, pending: PendingUpdate, opts?: ApplyUpdateO
   return script;
 }
 
-export = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls };
+
+// --- 更新备份清理（V4.3/V4.1 保障③承诺的 cleanupClientBackupIfHealthy）------
+// 安装版自更新每次在 <userData>/backups/<ts>/ 留 4 目录全量镜像并写
+// <userData>/updates/.backup-ts marker；便携版留 <shellExe>.bak(+.bak.marker)。
+// 「新版健康启动后清理」的承诺在 Tauri 化后一直没有实现 —— 更新频繁的用户
+// 磁盘被逐次吃满。headless sidecar 弹窗会被 fail-closed 兜底自动应答（等同
+// 无人选择），因此不做询问交互：备份保留 24h —— 未满 24h 留待下次启动再查，
+// 超过即静默删除。便携 .bak 是崩溃自回退保险丝：健康启动（本函数被调到）
+// 即不再需要，删 marker + .bak + .crash。
+// ⚠️ 必须异步（fs.promises.rm）且由调用方在 boot 应答后延迟调用：真实机器
+// 的 backups/ 可累积数 GB 镜像，同步 rm 会冻结 sidecar 事件循环数分钟
+//（所有 RPC 卡死 + boot.start 180s 超时弹 died 页，5.3.5 首发实测事故）。
+async function cleanupClientBackupIfHealthy(ctx: UpdateCtx, opts: { shellExe?: string } = {}): Promise<{ removed: string[]; kept: string[] }> {
+  const removed: string[] = [];
+  const kept: string[] = [];
+  const KEEP_MS = 24 * 60 * 60 * 1000;
+  const backupsDir = path.join(ctx.userDataDir, 'backups');
+  let sawBackup = false;
+  let entries;
+  try {
+    entries = fs.readdirSync(backupsDir, { withFileTypes: true });
+  } catch { entries = null; /* backups 目录不存在：无安装版备份可清 */ }
+  if (entries) {
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      sawBackup = true;
+      const dir = path.join(backupsDir, e.name);
+      if (fs.existsSync(path.join(dir, '.keep'))) { kept.push(e.name); continue; }
+      let at = 0;
+      try {
+        const ts = parseInt(e.name, 10);
+        at = Number.isFinite(ts) && ts > 0 ? ts : fs.statSync(dir).mtimeMs;
+      } catch { continue; }
+      if (Date.now() - at < KEEP_MS) { kept.push(e.name); continue; }
+      try {
+        await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 });
+        removed.push(e.name);
+      } catch { kept.push(e.name); }
+    }
+    if (sawBackup && removed.length) {
+      ctx.log('update', `已清理更新备份 ${removed.length} 份（保留未满 24h 的 ${kept.length} 份）`);
+      if (!kept.length) {
+        try { await fs.promises.rm(path.join(ctx.userDataDir, 'updates', '.backup-ts'), { force: true }); } catch { /* 尽力而为 */ }
+      }
+    }
+  }
+  const shellExe = opts.shellExe || process.env.DSH_SHELL_EXE || '';
+  if (shellExe) {
+    try {
+      if (fs.existsSync(shellExe + '.bak.marker')) {
+        // .bak/.crash 是单文件 exe（百 MB 级），同样走异步删。
+        await fs.promises.rm(shellExe + '.bak.marker', { force: true });
+        await fs.promises.rm(shellExe + '.bak', { force: true, maxRetries: 3 });
+        await fs.promises.rm(shellExe + '.crash', { force: true, maxRetries: 3 });
+        ctx.log('update', '新版启动确认健康，已清理便携 .bak 保险丝');
+      }
+    } catch (err) {
+      ctx.log('update', '清理便携 .bak 保险丝失败: ' + ((err as Error) && (err as Error).message || err));
+    }
+  }
+  return { removed, kept };
+}
+
+export = { cleanupClientBackupIfHealthy, checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls };

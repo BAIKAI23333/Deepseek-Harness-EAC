@@ -20,6 +20,9 @@
 ;         展开成 ""path" 导致 spawn 静默失败；_?= 必须裸写 —— NSIS 卸载器原样
 ;         取命令行剩余串当目录，带引号反而失效（实测退出码 2、零删除），
 ;         含空格目录无需引号；尾反斜杠先剥防边界歧义。
+;      d) UninstallString 仅整串被一对引号包裹才剥对，`"path" args` 形态保持
+;         原值走脏值分支（防剥坏）；e) InstallLocation 为空时跳过 ExecWait
+;         （_?= 空目录未定义），只清注册表键。
 
 ; 注意：currentUser 安装器对 HKLM 通常只有读权限，删除 HKLM 键会静默失败
 ; （NSIS DeleteRegKey 无错误返回）。该路径为 best-effort：尽力卸载旧文件并
@@ -28,12 +31,29 @@
 !macro DSH_TakeoverOldShell HIVE KEYNAME
   ReadRegStr $0 ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "UninstallString"
   ${If} $0 != ""
-    ; UninstallString 常带整串引号：剥掉再判存。
+    ; UninstallString 剥引号（窄修）：仅当整串恰被一对引号包裹（引号总数为 2
+    ; 且首尾各一）才整体剥对 —— `"path" args` 形态若沿用旧的「删首字符 + StrCpy
+    ; -1 删尾字符」会剥成 `path" arg` 的脏值；此时保持 $0 原值，交给下方
+    ; FileExists 脏值分支兜底。NSIS 无内建子串搜索，引号计数用 $R0（工作副本，
+    ; 逐字符右移）/ $R1（计数器）实现。
     StrCpy $3 $0
-    StrCpy $4 $3 1
-    ${If} $4 == '"'
-      StrCpy $3 $3 "" 1
-      StrCpy $3 $3 -1
+    StrCpy $R0 $0
+    StrCpy $R1 0
+    ${Do}
+      StrCpy $4 $R0 1
+      ${If} $4 == '"'
+        IntOp $R1 $R1 + 1
+      ${EndIf}
+      StrCpy $R0 $R0 "" 1
+    ${LoopUntil} $R0 == ""
+    ${If} $R1 == 2
+      StrCpy $4 $3 1
+      StrCpy $R0 $3 1 -1
+      ${If} $4 == '"'
+      ${AndIf} $R0 == '"'
+        StrCpy $3 $3 "" 1
+        StrCpy $3 $3 -1
+      ${EndIf}
     ${EndIf}
     ; InstallLocation 剥引号防御（_?= 需要目录路径）。
     ReadRegStr $1 ${HIVE} "Software\Microsoft\Windows\CurrentVersion\Uninstall\${KEYNAME}" "InstallLocation"
@@ -58,8 +78,14 @@
       ; spawn 失败（R6 实测复现）。_?= 必须裸写不加引号：NSIS 卸载器原样
       ; 取命令行剩余串当安装目录，带引号会内嵌字面 " 而静默失效（实测退出码 2、
       ; 零删除）；也正因原样取剩余，含空格目录无需引号（官方文档示例 _?=$INSTDIR）。
-      ExecWait '"$3" /S _?=$1' $R0
-      DetailPrint "DSH EAC: 旧壳卸载退出码 $R0"
+      ; $1（InstallLocation）为空时 _?= 空目录行为未定义 —— 跳过卸载器调用，
+      ; 只清注册表键（下方 DeleteRegKey 兜底）。
+      ${If} $1 == ""
+        DetailPrint "DSH EAC: 旧壳 InstallLocation 为空，跳过卸载器调用，仅清理注册表"
+      ${Else}
+        ExecWait '"$3" /S _?=$1' $R0
+        DetailPrint "DSH EAC: 旧壳卸载退出码 $R0"
+      ${EndIf}
     ${Else}
       DetailPrint "DSH EAC: 旧壳卸载键为脏值（卸载器缺失），仅清理注册表"
     ${EndIf}

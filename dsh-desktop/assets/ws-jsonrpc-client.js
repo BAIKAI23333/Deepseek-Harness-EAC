@@ -36,13 +36,25 @@
       if (wsReady) rawSend({ jsonrpc: '2.0', method: method, params: params || {} });
     }
 
+    function settle(id, ok, value) {
+      var r = pending[id];
+      if (!r) return;
+      delete pending[id];
+      if (r.timer) clearTimeout(r.timer);
+      if (ok) r.resolve(value);
+      else r.reject(value);
+    }
+
     function call(method, params, t) {
       return new Promise(function (resolve, reject) {
         var id = ++seq;
-        pending[id] = { resolve: resolve, reject: reject };
+        var entry = { resolve: resolve, reject: reject, timer: null, sent: false };
+        pending[id] = entry;
         if (!wsReady) queue.push({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
-        else rawSend({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
-        setTimeout(function () {
+        else { entry.sent = true; rawSend({ jsonrpc: '2.0', id: id, method: method, params: params || {} }); }
+        // 超时定时器在请求 settle（响应/断线回绝）时清掉：旧实现任由它到点
+        // 空跑，长会话累积大量无用定时器。
+        entry.timer = setTimeout(function () {
           if (pending[id]) {
             delete pending[id];
             reject(new Error('bridge call timeout: ' + method));
@@ -55,17 +67,21 @@
       ws = new WebSocket(WS_URL);
       ws.onopen = function () {
         wsReady = true;
-        while (queue.length) rawSend(queue.shift());
+        while (queue.length) {
+          var frame = queue.shift();
+          // 补发即视为已发出：此后断线同样走「在途回绝」路径。
+          var pe = pending[frame.id];
+          if (pe) pe.sent = true;
+          rawSend(frame);
+        }
         try { if (options.onOpen) options.onOpen(); } catch (e) { /* 回调异常不断桥 */ }
       };
       ws.onmessage = function (ev) {
         var msg;
         try { msg = JSON.parse(ev.data); } catch (e) { return; }
         if (msg.id != null && pending[msg.id]) {
-          var r = pending[msg.id];
-          delete pending[msg.id];
-          if (msg.error) r.reject(new Error(msg.error.message || 'rpc error'));
-          else r.resolve(msg.result);
+          if (msg.error) settle(msg.id, false, new Error(msg.error.message || 'rpc error'));
+          else settle(msg.id, true, msg.result);
         } else if (msg.method) {
           // 通知帧：win.maximized / dsh.balance / boot.web-ready …
           try {
@@ -75,6 +91,14 @@
       };
       ws.onclose = function () {
         wsReady = false;
+        // 回绝所有【已发出】的在途请求：sidecar 重启/崩溃期间旧实现让它们
+        // 干等到 30-60s 超时，恢复/自愈流程动辄卡半分钟。排队区（未发出）
+        // 的请求保留 —— 重连后 onopen 会补发。
+        for (var id in pending) {
+          if (Object.prototype.hasOwnProperty.call(pending, id) && pending[id].sent) {
+            settle(Number(id), false, new Error('bridge disconnected'));
+          }
+        }
         setTimeout(connect, 1500);
       };
       ws.onerror = function () { try { if (ws) ws.close(); } catch (e) { /* 重连由 onclose 驱动 */ } };

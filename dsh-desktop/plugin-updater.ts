@@ -76,6 +76,18 @@ function overlayDirOf(ctx: PluginUpdateCtx, dir: string): string { return path.j
 
 function stagingRoot(ctx: PluginUpdateCtx): string { return path.join(ctx.userDataDir, 'plugin-update-staging'); }
 
+// 并发闸：同一时刻只允许一个内置插件更新在执行。旧实现 stagingRoot 是全局
+// 共享目录且开跑先 rmSync —— 两个更新并发（快速连点/自动+手动重叠）时后
+// 启动者会删掉前者正在使用的 staging，rename 失败或装出半包。单飞闸 + 按
+// 次随机子目录双保险。
+let updateInFlight: Promise<unknown> | null = null;
+function singleFlight<T>(job: () => Promise<T>): Promise<T> {
+  if (updateInFlight) return Promise.reject(new Error('已有插件更新在进行中，请稍候再试。'));
+  const p = job().finally(() => { updateInFlight = null; });
+  updateInFlight = p;
+  return p;
+}
+
 // ---------------------------------------------------------------------------
 // 源解析（source = { npm: 包名 } | { github: 'owner/repo' }）
 // ---------------------------------------------------------------------------
@@ -266,7 +278,13 @@ async function checkPluginUpdates(ctx: PluginUpdateCtx, sources: UpdateSource[],
   // 每源/版本判定原本各自重读 settings.json（网络并发下数十次同步 IO）；
   // 跳过表在检查过程中不会被本函数改写，读一次共享。
   const skipSettings = updater.loadSettings(ctx);
-  const list = await Promise.all(sources.map(async (s): Promise<PluginCheckItem> => {
+  // 并发限流（worker-pool）：每源 1-2 个 npm 子进程，全量 Promise.all 会
+  // 一次拉起 ~22 个 npm（内存/句柄尖峰，且全部注册进 updater 的进程集合）。
+  // 4 个 worker 依序取源执行，results 按源下标回填，输出顺序与输入一致。
+  const CONCURRENCY = 4;
+  const results: PluginCheckItem[] = new Array(sources.length);
+  let cursor = 0;
+  const checkOne = async (s: UpdateSource): Promise<PluginCheckItem> => {
     const out: PluginCheckItem = {
       id: s.id,
       name: s.name,
@@ -287,7 +305,16 @@ async function checkPluginUpdates(ctx: PluginUpdateCtx, sources: UpdateSource[],
       out.error = String(((err as Error) && (err as Error).message) || err);
     }
     return out;
-  }));
+  };
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const idx = cursor++;
+      if (idx >= sources.length) return;
+      results[idx] = await checkOne(sources[idx]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(CONCURRENCY, sources.length)) }, worker));
+  const list = results;
   list.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   // 全部失败的结果不进 TTL 缓存：网络故障的一次失败结果会被钉 10 分钟，
   // 用户点「重试」也拿不到新数据（TTL 缓存只该加速成功的清单）。
@@ -371,7 +398,7 @@ interface ApplyResult {
  *                 bundledDshVersion, log }
  * @returns { ok, current, latest, noop?, profileCopied?, restartRequired? }
  */
-async function applyBuiltinPluginUpdate(ctx: PluginUpdateCtx, source: UpdateSource, opts: ApplyOpts = {}): Promise<ApplyResult> {
+async function applyBuiltinPluginUpdateInner(ctx: PluginUpdateCtx, source: UpdateSource, opts: ApplyOpts = {}): Promise<ApplyResult> {
   const log = opts.log || ctx.log;
   const update = source.update!;
   const name = sourceName(update);
@@ -388,10 +415,12 @@ async function applyBuiltinPluginUpdate(ctx: PluginUpdateCtx, source: UpdateSour
 
   // 2) 下载到 staging：npm 源走 registry（镜像链）；GitHub 源走 codeload
   //    tarball URL（npm 直接解包安装）。--ignore-scripts 绝不执行第三方脚本。
+  // staging 仍为固定路径（runNpm mock 与外部语义都锚定 stagingRoot/pkg）；
+  // 并发互斥由上方 singleFlight 闸保证 —— 同时只会有一个更新在写这里。
   const stagingRootDir = stagingRoot(ctx);
   fs.rmSync(stagingRootDir, { recursive: true, force: true });
-  fs.mkdirSync(stagingRootDir, { recursive: true });
   const staging = path.join(stagingRootDir, 'pkg');
+  fs.mkdirSync(staging, { recursive: true });
   const candidates = update.npm
     ? [update.npm + '@' + latest]
     : githubTarballCandidates(update.github!, latest);
@@ -485,6 +514,12 @@ async function applyBuiltinPluginUpdate(ctx: PluginUpdateCtx, source: UpdateSour
   invalidateCache();
   log('plugin-update', '内置插件已更新 ' + source.id + '（' + source.name + '）: ' + (current || '?') + ' → ' + vNew + (profileCopied ? '' : '（覆盖层已就绪，重启服务生效）'));
   return { ok: true, current, latest: vNew, profileCopied, restartRequired: !profileCopied };
+}
+
+// 对外入口包单飞闸：并发调用第二个直接拒绝（staging 单目录假设 + copyIntoProfile
+// 与 syncCompanionPlugins 的写 profile 路径都不抗并发）。
+function applyBuiltinPluginUpdate(ctx: PluginUpdateCtx, source: UpdateSource, opts: ApplyOpts = {}): Promise<ApplyResult> {
+  return singleFlight(() => applyBuiltinPluginUpdateInner(ctx, source, opts));
 }
 
 export = {

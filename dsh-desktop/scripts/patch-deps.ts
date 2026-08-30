@@ -3,6 +3,9 @@
 // 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
 import fs = require('node:fs');
 import path = require('node:path');
+// 内核补丁文件一旦截断 = 用户机启动期 MODULE_NOT_FOUND/语法损坏且无自愈：
+// 全部落盘走原子写（tmp + 两步换入，见 lib/atomic-json）。
+import { writeFileAtomic } from '../lib/atomic-json';
 
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-host-directory-picker-native', 'lib', 'index.js');
@@ -33,7 +36,7 @@ function patchPickerWorker(): void {
     return;
   }
   src = src.replace(OLD_RE, NEW_BLOCK);
-  fs.writeFileSync(target, src);
+  writeFileAtomic(target, src);
   console.log('[patch-deps] 已补丁 picker-native：worker 退出上报 exit code / signal');
 }
 
@@ -71,7 +74,7 @@ function patchSettingsNavScroll(): void {
     '{flex-direction:column;gap:4px;display:flex;min-height:0;overflow-y:auto;padding-bottom:10px;/*' + NAV_SCROLL_MARKER + '*/}'
   );
   src = src.replace(oldNav, newNav).replace(oldNavList, newNavList);
-  fs.writeFileSync(file, src);
+  writeFileAtomic(file, src);
   console.log('[patch-deps] 已补丁 settings-general：设置弹窗左栏可滚动，底部条目不再被裁掉');
 }
 
@@ -109,7 +112,7 @@ function patchSettingsPanelResize(): void {
     '.' + m[1] + '_panel{' + m[2] + 'width:min(75vw,1280px);' + m[3] +
     'overflow:auto;resize:horizontal;min-width:640px;/*' + PANEL_RESIZE_MARKER + '*/}';
   src = src.replace(m[0], next);
-  fs.writeFileSync(file, src);
+  writeFileAtomic(file, src);
   console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
 }
 
@@ -145,7 +148,7 @@ function patchOptionalEscalationFields(): void {
       continue;
     }
     src = src.replace(OPTIONAL_ESCALATION_OLD, OPTIONAL_ESCALATION_NEW);
-    fs.writeFileSync(file, src);
+    writeFileAtomic(file, src);
     console.log('[patch-deps] 已补丁可选升级字段：' + path.basename(path.dirname(path.dirname(file))));
   }
 }
@@ -235,7 +238,7 @@ function patchAgentPresetMenu(file?: string): boolean {
     .replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew)
     .replace(AGENT_PRESET_ZH_ANCHOR, AGENT_PRESET_ZH_ANCHOR + zhDictAdd)
     .replace(AGENT_PRESET_EN_ANCHOR, AGENT_PRESET_EN_ANCHOR + enDictAdd);
-  fs.writeFileSync(target, src);
+  writeFileAtomic(target, src);
   console.log('[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单');
   return true;
 }
@@ -393,7 +396,7 @@ function patchMenuSubmenuScroll(file?: string): boolean {
       console.log('[patch-deps] 已补丁主 bundle：submenu 项两行布局不再被裁剪');
     }
   }
-  if (changed) fs.writeFileSync(target, src);
+  if (changed) writeFileAtomic(target, src);
   return true;
 }
 
@@ -418,7 +421,7 @@ function patchClientModulesResolve(): void {
     return;
   }
   src = src.replace(CLIENT_MODULES_RESOLVE_OLD, CLIENT_MODULES_RESOLVE_NEW);
-  fs.writeFileSync(CLIENT_MODULES_RESOLVE_TARGET, src);
+  writeFileAtomic(CLIENT_MODULES_RESOLVE_TARGET, src);
   console.log('[patch-deps] 已补丁 client-modules：v2 resolveSync 位置参数（boot graph 清零修复）');
 }
 

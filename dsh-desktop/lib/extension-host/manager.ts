@@ -194,6 +194,10 @@ export class ExtensionHostManager {
         // 退避窗口未到（启动链遇到上次失败/崩溃的排期）：顺延到窗口后再试。
         const delay = backoffLeft + 250;
         log('ext-host', `${id}: 退避窗口未到，${delay}ms 后再拉起`);
+        // 先取消已排期的旧定时器再挂新的：并发两次进入会叠两个定时器，
+        // 到点后各自再拉一次 startPlugin。
+        const prev = this.pendingRestarts.get(id);
+        if (prev) clearTimeout(prev);
         const timer = setTimeout(() => {
           this.pendingRestarts.delete(id);
           void this.startPlugin(id);
@@ -263,7 +267,15 @@ export class ExtensionHostManager {
       rt.initDone = true;
       rt.heartbeat = setInterval(() => void this.heartbeatTick(id), this.o.heartbeatIntervalMs);
       rt.heartbeat.unref();
-      applyTransition(id, { type: 'started', stableForMs: 0 });
+      const started = applyTransition(id, { type: 'started', stableForMs: 0 });
+      if (!started.changed && started.reason !== 'registry-write-failed') {
+        // 状态机拒绝 started（如握手期间已被 quarantine/failed）：握手成功
+        // 也不能让 Host 继续运行 —— 立即终止并按失败处理。registry 写盘
+        // 瞬时失败除外：状态机语义仍是 running，杀掉健康 Host 反而过度。
+        log('ext-host', `${id}: started 转移被拒（${started.reason}，state=${started.to}），终止 Host`);
+        try { handle.kill(); } catch { /* 尽力而为 */ }
+        return false;
+      }
       log('ext-host', `${id}: Host 已运行（pid=${handle.pid}，tools=[${rt.tools.map((t) => t.name).join(',')}]，围栏=${handle.mode}）`);
       return true;
     } catch (err) {

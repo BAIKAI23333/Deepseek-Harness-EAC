@@ -34,7 +34,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use futures_util::{SinkExt, StreamExt};
@@ -50,6 +50,17 @@ use tokio_tungstenite::tungstenite::Message;
 const BRIDGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/bridge-bundle.js"));
 const WS_PORT: u16 = 19873;
 static CHINESE_UI: OnceLock<bool> = OnceLock::new();
+
+// 桥端口回退：19873 被占（他程序占用/异常残留监听）时向上探测 25 个候选，
+// 全失败退回 OS 分配（端口 0）。实际端口必须先于任何窗口 URL 定稿
+//（loading/died/recovery/浮窗都指向这里），故绑定挪到 setup 任务最前面。
+// 页面侧注入的 __DSH_BRIDGE_WS__ 恒为 ws_port()；ws-jsonrpc-client.js 里的
+// 19873 仅为无注入环境的兜底默认值，不与本机制耦合。
+static WS_PORT_EFFECTIVE: AtomicU16 = AtomicU16::new(WS_PORT);
+
+fn ws_port() -> u16 {
+    WS_PORT_EFFECTIVE.load(Ordering::SeqCst)
+}
 
 fn locale_tag_is_chinese(tag: &str) -> bool {
     tag.trim()
@@ -489,13 +500,16 @@ fn resolved_initial_bounds(
             let eff_min_h = min_h.min(work_h - FIRST_RUN_MARGIN).max(1.0);
             let w = st.w.clamp(eff_min_w, work_w.max(eff_min_w));
             let h = st.h.clamp(eff_min_h, work_h.max(eff_min_h));
-            let min_vis = MIN_VISIBLE_W.max(w * 0.4);
+            // min_vis / 40px 兜底由逻辑尺寸推导，而 wa.* 是物理像素：高 DPI 屏
+            // 不做 scale 换算会把「至少可见 40%/40px」的保障按 1/scale 缩水
+            //（150% 屏实际只保证 ~27% 可见）。
+            let min_vis = MIN_VISIBLE_W.max(w * 0.4) * mscale;
             let x = (st.x as f64)
                 .max(wa.position.x as f64)
                 .min(wa.position.x as f64 + wa.size.width as f64 - min_vis);
             let y = (st.y as f64)
                 .max(wa.position.y as f64)
-                .min(wa.position.y as f64 + wa.size.height as f64 - 40.0);
+                .min(wa.position.y as f64 + wa.size.height as f64 - 40.0 * mscale);
             out_w = w;
             out_h = h;
             out_pos = Some((x / mscale, y / mscale));
@@ -505,6 +519,22 @@ fn resolved_initial_bounds(
     }
 
     (out_w, out_h, out_pos, out_max)
+}
+
+/// builder.min_inner_size 用的下限：极小 work area 屏上全局 480×360 会把
+/// 窗口顶得显示不全，与 resolved_initial_bounds 的 eff_min 同一算法折算
+/// 主屏 work area（OS 下限跟随实际屏幕，而不是固定常量）。
+fn effective_min_inner(app: &tauri::AppHandle) -> (f64, f64) {
+    let (mut mw, mut mh) = (min_inner_w(), min_inner_h());
+    if let Ok(Some(m)) = app.primary_monitor() {
+        let mscale = m.scale_factor();
+        let wa = m.work_area();
+        let work_w = wa.size.width as f64 / mscale;
+        let work_h = wa.size.height as f64 / mscale;
+        mw = mw.min(work_w - FIRST_RUN_MARGIN).max(1.0);
+        mh = mh.min(work_h - FIRST_RUN_MARGIN).max(1.0);
+    }
+    (mw, mh)
 }
 
 /// 解析 Node 运行时：优先内置 vendor/node（与 Electron 壳共用一份），回退 PATH。
@@ -524,7 +554,9 @@ fn resolve_node() -> String {
 
 /// L1 ↔ L2 sidecar 异步客户端：行分隔 JSON-RPC over stdio。
 struct Sidecar {
-    child: Child,
+    // 退出兜底需经 Arc 共享句柄轮询/击杀进程：tokio Child::kill/try_wait 要求
+    // &mut，裸字段无法从 &self 访问。
+    child: AMutex<Child>,
     writer: Arc<AMutex<ChildStdin>>,
     next_id: Arc<AtomicU64>,
     pending: Arc<AMutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
@@ -559,7 +591,9 @@ impl Sidecar {
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let (notify_tx, _rx) = broadcast::channel::<Value>(64);
         let sc = Sidecar {
-            child,
+            // 退出兜底需要经 Arc 共享句柄轮询/击杀进程，child 必须可从 &self
+            // 访问（tokio Child::kill/try_wait 均要求 &mut，裸字段做不到）。
+            child: AMutex::new(child),
             writer: Arc::new(AMutex::new(stdin)),
             next_id: Arc::new(AtomicU64::new(0)),
             pending: Arc::new(AMutex::new(HashMap::new())),
@@ -603,6 +637,17 @@ impl Sidecar {
                     let _ = notify_tx.send(v);
                 }
             }
+            // reader 退出 = sidecar 进程死亡（EOF/读错误）。不清尾的后果：
+            // 在途 RPC 各挂满 180s 超时、UI 静默卡死无任何恢复入口。
+            // 1) 立即回绝全部在途调用；2) 广播 boot.server-died，复用现有
+            // 死亡导航链路把主窗引到 /died（sidecar 崩溃时没人会替它发这个帧）。
+            for (_, tx) in pending.lock().await.drain() {
+                let _ = tx.send(Err("sidecar exited".into()));
+            }
+            let _ = notify_tx.send(serde_json::json!({
+                "method": "boot.server-died",
+                "params": { "code": "sidecar-exited", "logPath": "" }
+            }));
         });
     }
 
@@ -611,22 +656,38 @@ impl Sidecar {
         let req = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
-        let mut w = self.writer.lock().await;
-        let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
-        line.push('\n');
-        w.write_all(line.as_bytes()).await.map_err(|e| format!("write rpc: {}", e))?;
-        w.flush().await.map_err(|e| format!("flush rpc: {}", e))?;
-        drop(w);
+        // 序列化/写/flush 失败或超时的路径必须清掉 pending 表项，否则
+        // sidecar 死亡后每次调用泄漏一个 entry（HashMap 永久增长）。
+        let write_res: Result<(), String> = async {
+            let mut w = self.writer.lock().await;
+            let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
+            line.push('\n');
+            w.write_all(line.as_bytes()).await.map_err(|e| format!("write rpc: {}", e))?;
+            w.flush().await.map_err(|e| format!("flush rpc: {}", e))?;
+            Ok(())
+        }
+        .await;
+        if let Err(e) = write_res {
+            self.pending.lock().await.remove(&id);
+            return Err(e);
+        }
         match tokio::time::timeout(std::time::Duration::from_secs(180), rx).await {
             Ok(Ok(res)) => res,
-            Ok(Err(_)) => Err("sidecar dropped reply channel".into()),
-            Err(_) => Err("sidecar call timeout (180s)".into()),
+            Ok(Err(_)) => {
+                self.pending.lock().await.remove(&id);
+                Err("sidecar dropped reply channel".into())
+            }
+            Err(_) => {
+                self.pending.lock().await.remove(&id);
+                Err("sidecar call timeout (180s)".into())
+            }
         }
     }
 
-    async fn kill(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+    async fn kill(&self) {
+        let mut c = self.child.lock().await;
+        let _ = c.kill().await;
+        let _ = c.wait().await;
     }
 }
 
@@ -642,17 +703,40 @@ struct BridgeState {
 ///   GET /bootstrap          → 探针页（P2 冒烟遗留）
 ///   GET /inject/bridge.js   → 桥脚本
 ///   其余（Upgrade: websocket）→ JSON-RPC 中继（壳层拦截 + sidecar 转发）
-async fn serve_ws(state: BridgeState, app: tauri::AppHandle) {
-    let listener = match TcpListener::bind(("127.0.0.1", WS_PORT)).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!("[ws] bind {} failed: {}", WS_PORT, e);
-            return;
+/// 绑定桥端口：固定端口被占时向上探测，再失败退回 OS 分配。
+/// 成功即把实际端口写入 WS_PORT_EFFECTIVE（所有 URL 构造经 ws_port() 读取）。
+async fn bind_ws_listener() -> Option<TcpListener> {
+    let mut candidates: Vec<u16> = (WS_PORT..WS_PORT.saturating_add(25)).collect();
+    candidates.push(0); // OS 分配兜底
+    for port in candidates {
+        match TcpListener::bind(("127.0.0.1", port)).await {
+            Ok(l) => {
+                let real = l.local_addr().map(|a| a.port()).unwrap_or(port);
+                if real != WS_PORT {
+                    eprintln!("[ws] port {} occupied, bridge fallback to {}", port, real);
+                }
+                WS_PORT_EFFECTIVE.store(real, Ordering::SeqCst);
+                return Some(l);
+            }
+            Err(e) => {
+                if port == 0 {
+                    eprintln!("[ws] bind fallback failed: {}", e);
+                    return None;
+                }
+            }
         }
-    };
-    println!("[ws] bridge listening on http://127.0.0.1:{}/bootstrap", WS_PORT);
+    }
+    None
+}
+
+async fn serve_ws(state: BridgeState, app: tauri::AppHandle, listener: TcpListener) {
+    println!("[ws] bridge listening on http://127.0.0.1:{}/bootstrap", ws_port());
     loop {
-        let Ok((stream, _)) = listener.accept().await else { continue };
+        let Ok((stream, _)) = listener.accept().await else {
+            // 持续性 accept 错误（监听句柄异常）若紧循环会打满 CPU：退避后再试。
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
+        };
         let state = BridgeState {
             sidecar: state.sidecar.clone(),
         };
@@ -703,7 +787,16 @@ async fn sidecar_exit_action(_app: &tauri::AppHandle) -> Option<String> {
         sidecar: Arc::new(AMutex::new(None)),
     });
     let sc = state.sidecar.lock().await.clone()?;
-    let r = sc.call("chrome.init", serde_json::json!({})).await.ok()?;
+    // 关窗路径同步等这个返回值（prevent_close 已拦），sidecar 活着但挂死时
+    // 走 call 默认 180s 超时 = 用户点 X 后界面最长僵死 3 分钟。exitAction
+    // 只是读配置，2s 足够；失败按无配置走默认策略。
+    let r = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        sc.call("chrome.init", serde_json::json!({})),
+    )
+    .await
+    .ok()?
+    .ok()?;
     r.get("exitAction").and_then(|v| v.as_str()).map(|s| s.to_string())
 }
 
@@ -943,7 +1036,8 @@ async fn handle_shell_method(
         }
         "recovery.restart" => {
             // 整应用重启（= Electron app.relaunch+exit）。
-            app.restart();
+            app.request_restart();
+            Ok(None)
         }
         "rc.open" => {
             // 恢复中心：托盘菜单 / 启动失败链 / DSH_DESKTOP_RECOVERY 共用入口。
@@ -954,7 +1048,8 @@ async fn handle_shell_method(
             // 安全模式 relaunch（恢复中心 safe-mode 动作 → sidecar 通知）：
             // 注入环境标记后整壳重启，新进程的 sidecar 继承该 env。
             std::env::set_var("DSH_DESKTOP_SAFE_MODE", "1");
-            app.restart();
+            app.request_restart();
+            Ok(None)
         }
         _ => Err(()),
     }
@@ -1208,6 +1303,16 @@ fn sanitize_label(s: &str) -> String {
     }
 }
 
+/// FNV-1a 32 位（窗口标签去重用，无需密码学强度）。
+fn fnv1a_hex8(s: &str) -> String {
+    let mut hash: u32 = 0x811c_9dc5;
+    for b in s.as_bytes() {
+        hash ^= u32::from(*b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    format!("{:08x}", hash)
+}
+
 /// Windows 任务栏 Big 图标：tauri 的 set_icon 只走 tao set_window_icon
 /// （IconType::Small —— 标题栏/Alt+Tab），而任务栏读取的是 ICON_BIG；
 /// tao 注册的窗口 class 不带图标（hIcon NULL）且 tauri 未暴露
@@ -1272,7 +1377,7 @@ fn apply_window_icon(win: &tauri::WebviewWindow, app: &tauri::AppHandle) {
 /// 同一会话复用同一标签 → 单浮窗；返回 false 表示已存在（show+focus）。
 fn open_float_window(app: &tauri::AppHandle, session_id: &str) -> Result<bool, String> {
     use tauri::Manager;
-    let label = format!("float-{}", sanitize_label(session_id));
+    let label = format!("float-{}-{}", sanitize_label(session_id), fnv1a_hex8(session_id));
     if let Some(existing) = app.get_webview_window(&label) {
         let _ = existing.show();
         let _ = existing.set_focus();
@@ -1332,7 +1437,7 @@ fn open_recovery_center_window(app: &tauri::AppHandle) -> bool {
         let _ = existing.set_focus();
         return false;
     }
-    let url_str = format!("http://127.0.0.1:{}/recovery-center", WS_PORT);
+    let url_str = format!("http://127.0.0.1:{}/recovery-center", ws_port());
     let Ok(url) = tauri::Url::parse(&url_str) else {
         return false;
     };
@@ -1457,14 +1562,14 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
 
     // 单一写任务：回复与通知统一经 out_tx 出站（SplitSink 不可克隆）。
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
-    tauri::async_runtime::spawn(async move {
+    let writer_task = tauri::async_runtime::spawn(async move {
         while let Some(m) = out_rx.recv().await {
             let _ = sink.send(m).await;
         }
     });
 
     // sidecar 通知 + 壳层通知 → 出站。
-    {
+    let fwd_shell = {
         let mut rx = shell_notify().subscribe();
         let tx = out_tx.clone();
         tauri::async_runtime::spawn(async move {
@@ -1477,12 +1582,12 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
                     Err(_) => break,
                 }
             }
-        });
-    }
-    if let Some(sc) = state.sidecar.lock().await.clone() {
+        })
+    };
+    let fwd_sidecar = if let Some(sc) = state.sidecar.lock().await.clone() {
         let mut rx = sc.notify_tx.subscribe();
         let tx = out_tx.clone();
-        tauri::async_runtime::spawn(async move {
+        Some(tauri::async_runtime::spawn(async move {
             loop {
                 match rx.recv().await {
                     Ok(v) => {
@@ -1492,8 +1597,10 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
                     Err(_) => break,
                 }
             }
-        });
-    }
+        }))
+    } else {
+        None
+    };
 
     while let Some(msg) = source.next().await {
         let msg = match msg {
@@ -1526,6 +1633,16 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
             let _ = out_tx.send(Message::Text(reply.to_string()));
         }
     }
+    // 连接结束必须收割 3 个任务：两个转发任务的 broadcast 接收端永不枯竭
+    //（广播端与壳/sidecar 同生命周期），写任务的 out_rx 又因转发任务持有
+    // out_tx 克隆而不结束 —— 不 abort 则页面每次刷新/导航泄漏 3 个任务。
+    // abort 即 drop 转发任务的 out_tx 克隆，写任务随 out_tx 全体 drop 自尽
+    //（这里一并 abort 属双保险）。
+    fwd_shell.abort();
+    if let Some(h) = fwd_sidecar {
+        h.abort();
+    }
+    writer_task.abort();
     Ok(())
 }
 
@@ -1547,7 +1664,7 @@ fn loading_page() -> String {
          animation:dshspin 1s linear infinite\"></div></div>\
          <style>@keyframes dshspin{{to{{transform:rotate(360deg)}}}}</style>\
          <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script>",
-        ui_text("正在启动服务…", "Starting services..."), WS_PORT, BRIDGE_JS
+        ui_text("正在启动服务…", "Starting services..."), ws_port(), BRIDGE_JS
     )
 }
 
@@ -1588,7 +1705,7 @@ fn died_page(log_path: &str, code: &str) -> String {
         esc(log_path),
         ui_text("重新启动", "Restart"),
         ui_text("安全模式重启", "Restart in safe mode"),
-        WS_PORT,
+        ws_port(),
         BRIDGE_JS,
         ui_text("正在重启…", "Restarting..."),
         ui_text("重启失败，请重试", "Restart failed. Try again."),
@@ -1677,7 +1794,7 @@ fn update_page(version: &str, kind: &str) -> String {
         esc(version),
         ui_text("更新完成后应用会自动重启；插件、皮肤与会话全部保留。", "The app restarts automatically when the update finishes. Plugins, skins, and sessions are preserved."),
         ui_text("准备中…", "Preparing..."),
-        WS_PORT,
+        ws_port(),
         BRIDGE_JS,
         if use_chinese_ui() { "false" } else { "true" },
     )
@@ -1707,7 +1824,7 @@ fn about_page() -> String {
         ui_text("Tauri 壳（Rust L1）· Node sidecar（L2）· dsh 内核零改动（L3）", "Tauri shell (Rust L1) · Node sidecar (L2) · unchanged dsh core (L3)"),
         ui_text("本项目为社区增强封装，与官方 DeepSeek 无隶属关系。", "This community enhancement is not affiliated with official DeepSeek."),
         ui_text("返回", "Back"),
-        WS_PORT,
+        ws_port(),
         BRIDGE_JS,
         ui_text("封装", "App"),
         ui_text("dsh 内核", "dsh core"),
@@ -1735,14 +1852,9 @@ fn wizard_page() -> String {
            close:function(){{window.dshDesktop._call('onboard.close',{{}});}}\
          }};</script>\
          <style>.bar{{display:none!important}}</style>",
-        WS_PORT, BRIDGE_JS
+        ws_port(), BRIDGE_JS
     );
-    let marker = "<meta charset=\"utf-8\" />";
-    if html.contains(marker) {
-        html.replacen(marker, &format!("{}{}", marker, injection), 1)
-    } else {
-        format!("{}{}", injection, html)
-    }
+    inject_after_doctype(html, &injection)
 }
 
 /// 恢复中心页：serve 真实 assets/recovery-center.html，注入回环 WS 地址 +
@@ -1763,14 +1875,27 @@ fn recovery_center_page() -> String {
     let preload = format!("{}\n{}", ws_rpc, preload);
     let injection = format!(
         "<script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\n{}</script>",
-        WS_PORT, preload
+        ws_port(), preload
     );
-    let marker = "<meta charset=\"utf-8\" />";
-    if html.contains(marker) {
-        html.replacen(marker, &format!("{}{}", marker, injection), 1)
-    } else {
-        format!("{}{}", injection, html)
+    inject_after_doctype(html, &injection)
+}
+
+/// 资产页桥注入定位：优先插在 charset meta 之后；旧实现 marker 硬编码自闭合
+/// 斜杠写法（<meta charset="utf-8" />），实际资产用无斜杠写法 → 恒匹配失败 →
+/// 注入被整体前置到 <!doctype html> 之前，页面以 quirks mode 渲染且 charset
+/// meta 后移。两种写法都认；都没有时插到 doctype 之后（绝不污染文档序言）。
+fn inject_after_doctype(html: String, injection: &str) -> String {
+    let markers = ["<meta charset=\"utf-8\" />", "<meta charset=\"utf-8\">"];
+    for m in markers {
+        if html.contains(m) {
+            return html.replacen(m, &format!("{}{}", m, injection), 1);
+        }
     }
+    let doctype = "<!doctype html>";
+    if html.len() >= doctype.len() && html[..doctype.len()].eq_ignore_ascii_case(doctype) {
+        return format!("{}{}{}", &html[..doctype.len()], injection, &html[doctype.len()..]);
+    }
+    format!("{}{}", injection, html)
 }
 
 async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
@@ -1845,7 +1970,7 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
              <body style=\"font-family:Consolas,monospace;background:#0b1220;color:#dfe6ff\">\
              <h3>DSH EAC — Tauri ShellHost</h3><pre id=out>connecting…</pre>\
              <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script>",
-            WS_PORT, BRIDGE_JS
+            ws_port(), BRIDGE_JS
         );
         (page, "text/html; charset=utf-8")
     };
@@ -1868,7 +1993,7 @@ fn run_bridge_test() -> i32 {
         .build()
         .expect("tokio runtime");
     let code = rt.block_on(async move {
-        let mut sc = match Sidecar::spawn().await {
+        let sc = match Sidecar::spawn().await {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("[bridge] FAIL spawn: {}", e);
@@ -1967,7 +2092,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             println!("[shell] server-died code={} log={}", code, log);
             let href = format!(
                 "http://127.0.0.1:{}/died?code={}&log={}",
-                WS_PORT,
+                ws_port(),
                 encode_query(&code),
                 encode_query(&log)
             );
@@ -1988,7 +2113,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             let kind = params.get("kind").and_then(|k| k.as_str()).unwrap_or("client");
             println!("[shell] update window show v={} kind={}", version, kind);
             let back = current_web_url().map(|u| encode_back(&u)).unwrap_or_default();
-            navigate_main(app, format!("http://127.0.0.1:{}/update?v={}&kind={}&back={}", WS_PORT, encode_back(version), encode_back(kind), back));
+            navigate_main(app, format!("http://127.0.0.1:{}/update?v={}&kind={}&back={}", ws_port(), encode_back(version), encode_back(kind), back));
         }
         "client-update.hide" => {
             if let Some(url) = current_web_url() {
@@ -1997,12 +2122,12 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
         }
         "shell.about" => {
             let back = current_web_url().map(|u| encode_back(&u)).unwrap_or_default();
-            navigate_main(app, format!("http://127.0.0.1:{}/about?back={}", WS_PORT, back));
+            navigate_main(app, format!("http://127.0.0.1:{}/about?back={}", ws_port(), back));
         }
         "wizard.show" => {
             println!("[shell] wizard show mode={:?}", params.get("mode"));
             let back = current_web_url().map(|u| encode_back(&u)).unwrap_or_default();
-            navigate_main(app, format!("http://127.0.0.1:{}/wizard?back={}", WS_PORT, back));
+            navigate_main(app, format!("http://127.0.0.1:{}/wizard?back={}", ws_port(), back));
         }
         "wizard.close" => {
             if let Some(url) = current_web_url() {
@@ -2012,7 +2137,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
         "shell.relaunch" => {
             // agent 更新完成后整壳重启（Tauri restart 会退出并重新拉起自身）。
             println!("[shell] relaunch requested (agent update)");
-            app.restart();
+            app.request_restart();
         }
         "shell.show-main-window" => {
             // 通知点击/任务完成等场景聚焦主窗（= Electron second-instance 行为）。
@@ -2091,6 +2216,12 @@ fn main() {
                 };
                 let app_handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
+                    // 先绑桥端口（可能回退到非默认端口）：下面所有窗口 URL
+                    // （loading / died / recovery）都指向桥端口，必须先定稿。
+                    let Some(listener) = bind_ws_listener().await else {
+                        eprintln!("[ws] bridge listener bind failed; aborting shell startup");
+                        return;
+                    };
                     match Sidecar::spawn().await {
                         Ok(sc) => {
                             let mut notify = sc.notify_tx.subscribe();
@@ -2121,7 +2252,7 @@ fn main() {
                                 let _ = app_rc.run_on_main_thread(move || {
                                     open_recovery_center_window(&app_rc_inner);
                                 });
-                                serve_ws(st, app_handle).await;
+                                serve_ws(st, app_handle, listener).await;
                                 return;
                             }
 
@@ -2130,10 +2261,11 @@ fn main() {
                             let app_win_inner = app_win.clone();
                             let _ = app_win.run_on_main_thread(move || {
                                 let app_win = app_win_inner;
-                                let loading = format!("http://127.0.0.1:{}/loading", WS_PORT);
+                                let loading = format!("http://127.0.0.1:{}/loading", ws_port());
                                 if let Ok(url) = tauri::Url::parse(&loading) {
                                     let (sim_w, sim_h, sim_pos, sim_max) =
                                         resolved_initial_bounds(&app_win);
+                                    let (eff_min_w, eff_min_h) = effective_min_inner(&app_win);
                                     let mut builder = tauri::webview::WebviewWindowBuilder::new(
                                         &app_win,
                                         "main",
@@ -2141,7 +2273,7 @@ fn main() {
                                     )
                                     .title("Deepseek Harness EAC")
                                     .inner_size(sim_w, sim_h)
-                                    .min_inner_size(min_inner_w(), min_inner_h())
+                                    .min_inner_size(eff_min_w, eff_min_h)
                                     .decorations(false)
                                     // 关闭窗口级 drag&drop handler，放行页面 HTML5 拖拽
                                     //（否则图片/文件拖不进输入框，页面 dragover/drop 收不到）。
@@ -2149,8 +2281,11 @@ fn main() {
                                     // dsh-stt 语音识别：WebView2 在无用户手势下 getUserMedia
                                     // 可能被拒，放开 autoplay 策略。WebView2 的麦克风权限本身
                                     // 走 Windows 系统隐私设置，无需额外 permission 授权。
-                                    // ⚠️ 未验证（本机无 cargo 工具链，需装 rustup 后构建确认）。
-                                    .additional_browser_args("--autoplay-policy=no-user-gesture-required")
+                                    // additional_browser_args 是整体替换语义（wry）：必须
+                                    // 带上 Tauri 默认的 disable-features，否则主窗丢掉
+                                    // msWebOOUI/msPdfOOUI/msSmartScreenProtection 禁用项，
+                                    // 与浮窗（显式拼接该前缀）行为分裂。
+                                    .additional_browser_args("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required")
                                     .initialization_script(BRIDGE_JS);
                                     if let Some((px, py)) = sim_pos {
                                         builder = builder.position(px, py);
@@ -2196,7 +2331,7 @@ fn main() {
                                         let msg = e.replace('"', "'").replace('\n', " ");
                                         let href = format!(
                                             "http://127.0.0.1:{}/died?code=boot&log={}",
-                                            WS_PORT, msg
+                                            ws_port(), encode_query(&msg)
                                         );
                                         let app3 = app_nav.clone();
                                         let _ = app_nav.run_on_main_thread(move || {
@@ -2212,7 +2347,7 @@ fn main() {
                                 }
                             });
 
-                            serve_ws(st, app_handle).await;
+                            serve_ws(st, app_handle, listener).await;
                         }
                         Err(e) => {
                             // issue #210：resources 装配失败 / node sidecar 缺失时，
@@ -2228,12 +2363,13 @@ fn main() {
                                 let app_died = app_died_inner;
                                 let died = format!(
                                     "http://127.0.0.1:{}/died?code=sidecar-spawn&log={}",
-                                    WS_PORT, msg
+                                    ws_port(), encode_query(&msg)
                                 );
                                 if let Ok(url) = tauri::Url::parse(&died) {
                                     if app_died.get_webview_window("main").is_none() {
                                         let (sim_w, sim_h, sim_pos, sim_max) =
                                             resolved_initial_bounds(&app_died);
+                                        let (eff_min_w, eff_min_h) = effective_min_inner(&app_died);
                                         let mut builder = tauri::webview::WebviewWindowBuilder::new(
                                             &app_died,
                                             "main",
@@ -2241,7 +2377,7 @@ fn main() {
                                         )
                                         .title("Deepseek Harness EAC")
                                         .inner_size(sim_w, sim_h)
-                                        .min_inner_size(min_inner_w(), min_inner_h())
+                                        .min_inner_size(eff_min_w, eff_min_h)
                                         .decorations(false);
                                         if let Some((px, py)) = sim_pos {
                                             builder = builder.position(px, py);
@@ -2261,6 +2397,10 @@ fn main() {
                                     }
                                 }
                             });
+                            // issue #210 修复完整性：/died 页与托盘「恢复中心」都挂在
+                            // 桥端口上 —— spawn 失败分支同样必须起 serve_ws，否则
+                            // 诊断页指向无人监听的端口，WebView2 只会显示「无法访问」。
+                            serve_ws(st, app_handle, listener).await;
                         }
                     }
                 });
@@ -2416,21 +2556,26 @@ fn main() {
                         // 5.3.2 及以前固定睡 500ms 就杀，stopServer 被拦腰
                         // 砍断，dsh web 变孤儿占着端口。有界轮询 ~9s 覆盖
                         // stopServer 上界 + 边距。
-                            if let Some(mut owned) = Arc::into_inner(sc) {
-                                let started = std::time::Instant::now();
-                                let mut exited = false;
-                                while started.elapsed() < std::time::Duration::from_secs(9) {
-                                    if let Ok(Some(_)) = owned.child.try_wait() {
-                                        exited = true;
-                                        break;
-                                    }
-                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                                }
-                                if !exited {
-                                    println!("[shell] sidecar did not exit in time; killing");
-                                    let _ = owned.kill().await;
-                                }
+                        //
+                        // 先清空槽位再轮询：旧实现走 Arc::into_inner(sc)，但槽位
+                        // 永远持有同一个 Arc（强计数 ≥2），into_inner 恒 None ——
+                        // 9s 轮询 + 兜底 kill 整段从未生效，sidecar 挂死时整棵
+                        // node/dsh web 进程树孤儿化。child 已改为 AMutex<Child>，
+                        // 直接经共享句柄轮询即可。
+                        *st.sidecar.lock().await = None;
+                        let started = std::time::Instant::now();
+                        let mut exited = false;
+                        while started.elapsed() < std::time::Duration::from_secs(9) {
+                            if let Ok(Some(_)) = sc.child.lock().await.try_wait() {
+                                exited = true;
+                                break;
                             }
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        }
+                        if !exited {
+                            println!("[shell] sidecar did not exit in time; killing");
+                            sc.kill().await;
+                        }
                     }
                 });
                 println!("[shell] sidecar reaped; exiting");

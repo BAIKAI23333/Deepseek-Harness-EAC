@@ -371,7 +371,10 @@ export function builtinPluginSourceDir(dirName: string): string {
   // 覆盖层版本 >= 资产版本才优先：应用自身升级后，新资产自动接管覆盖层。
   const vOverlay = pluginUpdater.versionOfDir(overlay);
   const vAssets = pluginUpdater.versionOfDir(assets);
-  if (vOverlay && vAssets && updater.compareVersions(vOverlay, vAssets) < 0) return assets;
+  // 覆盖层版本不可读（半写坏档）时回退资产版本：否则损坏的旧覆盖层永久
+  // 遮蔽新资产，该插件停在坏版本且每次启动被压住。
+  if (!vOverlay) return assets;
+  if (vAssets && updater.compareVersions(vOverlay, vAssets) < 0) return assets;
   return overlay;
 }
 
@@ -833,7 +836,9 @@ function ensurePluginHostDeps(profileDirP: string): void {
       let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
       if (p.config) block += configLinesFor(p.config);
       if (p.disabled) block += `      disabled: true\n`;
-      if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/\[\]/m, block);
+      // 替换锚定与检测一致：裸 /\[\]/m 会命中更早位置的内联 []
+      //（如 config 行的 key: []），把块插错位置造成 YAML 损坏。
+      if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/^\s*\[\]\s*$/m, block);
       else if (patch.trim() === '') patch = '# dsh web profile patch（由 DSH Desktop 维护）\n' + block;
       else patch = patch.replace(/\s*$/, '\n') + block;
       changed = true;

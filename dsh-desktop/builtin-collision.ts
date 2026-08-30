@@ -14,6 +14,7 @@
 // 只动插件层/配置层（package.json / cordis.patch.yml），与保护中心一致。
 
 import fs = require('node:fs');
+import { writeFileAtomic } from './lib/atomic-json';
 import path = require('node:path');
 
 // 解析一行块内的 name（跟随 id 行的缩进行里找 name:）。
@@ -142,7 +143,7 @@ function removeMarketDuplicate(profileDir: string, builtinName: string, opts: { 
         dirty = true;
       }
       if (dirty) {
-        fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+        writeFileAtomic(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
         changed = true;
         log(`移除市场版依赖残留 ${builtinName}（package.json）`);
       }
@@ -152,7 +153,7 @@ function removeMarketDuplicate(profileDir: string, builtinName: string, opts: { 
       const patch = fs.readFileSync(patchFile, 'utf8');
       const { patch: patched, removed } = stripPatchRows(patch, builtinName, String(builtinName.split('/').pop() || ''));
       if (removed.length) {
-        fs.writeFileSync(patchFile, patched, 'utf8');
+        writeFileAtomic(patchFile, patched);
         removedRows = removed;
         changed = true;
         log(`移除市场版 patch 残留行: ${removed.join(', ')}`);

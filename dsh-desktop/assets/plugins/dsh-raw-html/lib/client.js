@@ -570,11 +570,33 @@ window.__ModuleLoader__.load({
       return segments
     }
 
+    // CSS url() 白名单：模型可控 CSS 里的外链 url（background:url(//evil.com/…)、
+    // url(http://…) 等）会随渲染向第三方发起请求，可做追踪像素/数据外带。
+    // 因此只放行不产生跨域请求的形态：
+    //   · #…            同文档引用：SVG 渐变/裁剪 url(#g)、应用内 #/ 路由相对路径
+    //   · /…（非 //）   同源根相对路径：插件文档约定的 /fonts/… 字体契约
+    //                  （DESIGN.md / VCP-INTERACTIONS §8，下载内嵌也依赖它），
+    //                  同源请求无第三方外带面；协议相对 //… 明确不放行
+    //   · data:image/…  内联图片数据；data:text/html 等其余 data: 一律不放行
+    // 其余（http(s)、协议相对 //、javascript:、未知协议、其余 data:）整体替换为
+    // url(about:blank)，三种引号形态（"…"、'…'、无引号）均覆盖。白名单按原始
+    // 文本判定：浏览器会解码 CSS 转义（如 url(java\73 cript:…)），转义形态无法
+    // 命中白名单，只会落入替换分支，天然免疫转义绕过。
+    function sanitizeCssUrl(all, dq, sq, bare) {
+      var value = dq != null ? dq : sq != null ? sq : bare
+      value = String(value == null ? '' : value).trim()
+      if (!value) return 'url()'
+      if (value.charAt(0) === '#') return all
+      if (value.charAt(0) === '/' && value.charAt(1) !== '/') return all
+      if (/^data:image\//i.test(value)) return all
+      return 'url(about:blank)'
+    }
+
     function sanitizeCss(css) {
       return String(css || '')
         .replace(/@import\b[^;]*;?/gi, '')
         .replace(/expression\s*\([^)]*\)/gi, '')
-        .replace(/url\s*\(\s*(['"]?)\s*javascript:[^)]*\)/gi, 'url()')
+        .replace(/url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"]*))\s*\)/gi, sanitizeCssUrl)
         .replace(/(^|[;{])\s*(?:behavior|-moz-binding)\s*:[^;}]*(?=[;}])/gi, '$1')
         .replace(/(^|[;{])\s*position\s*:\s*(?:fixed|sticky)\s*;?/gi, '$1')
         .replace(/(^|[;{])\s*content\s*:[^;}]*(?=[;}])/gi, '$1')
@@ -595,54 +617,83 @@ window.__ModuleLoader__.load({
       return !/^[a-z][a-z0-9+.-]*:/i.test(raw)
     }
 
+    // 脚本/嵌套浏览上下文类标签整体移除。SMIL 动画元素（animate/set/animateTransform）
+    // 会在渲染期间动态改写其他元素的属性（如把 <a> 的 href 动画成 javascript: 协议），
+    // 让静态属性净化失效，因此与脚本类标签一并整体禁止。animateTransform 用
+    // 两种大小写形态登记：SVG 命名空间内解析器会调整为驼峰 localName（大小写敏感），
+    // SVG 外的未知元素归 HTML 命名空间（大小写不敏感匹配），双写确保两条路径都命中。
+    var VCP_BLOCKED_TAGS =
+      'script,iframe,object,embed,base,meta,link,animate,set,animatetransform,animateTransform'
+
+    // 单元素净化：内联样式清洗 + 属性白名单化 + 外链隔离。
+    // 抽成独立函数，供 sanitizeVcpTree 对 <template> content 子树复用。
+    function sanitizeVcpElement(el) {
+      if (el.localName === 'style') {
+        el.textContent = sanitizeCss(el.textContent)
+        return
+      }
+      var attrs = Array.prototype.slice.call(el.attributes || [])
+      for (var ai = 0; ai < attrs.length; ai++) {
+        var attr = attrs[ai]
+        var name = attr.name.toLowerCase()
+        var value = attr.value
+        if (name === 'onclick') {
+          var inputMatch = /^input\s*\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?\s*$/.exec(value)
+          if (inputMatch) el.setAttribute('data-vcp-input', inputMatch[2])
+          el.removeAttribute(attr.name)
+          continue
+        }
+        if (/^on/i.test(name) || name === 'srcdoc' || name === 'srcset' || name === 'action' || name === 'formaction') {
+          el.removeAttribute(attr.name)
+          continue
+        }
+        if (name === 'style') {
+          var safeStyle = sanitizeCss(value)
+          if (safeStyle.trim()) el.setAttribute('style', safeStyle)
+          else el.removeAttribute('style')
+          continue
+        }
+        if (name === 'href' || name === 'xlink:href') {
+          if (!isAllowedUrl(value, false)) el.removeAttribute(attr.name)
+          continue
+        }
+        if (name === 'src' || name === 'poster') {
+          if (!isAllowedUrl(value, true)) el.removeAttribute(attr.name)
+        }
+      }
+      if (el.localName === 'a') {
+        // http(s) 外链若在当前窗口点击，会把整个 Web UI 导航离站：统一改为新窗口
+        // 打开；rel="noopener noreferrer" 切断新窗口对 window.opener 的访问，
+        // 防止外站反向操控本页（反向标签劫持）。
+        var linkHref = (el.getAttribute('href') || '').trim()
+        if (/^https?:/i.test(linkHref)) el.setAttribute('target', '_blank')
+        if (el.getAttribute('target') === '_blank') {
+          el.setAttribute('rel', 'noopener noreferrer')
+        }
+      }
+    }
+
+    // 子树净化。<template> 的 content 是独立 DocumentFragment，
+    // querySelectorAll('*') 不会进入其中——模板内的节点原本会整体绕过属性净化，
+    // 在模板被克隆/实例化时原样生效，必须对每个 template 的 content 显式递归
+    // （嵌套模板同样覆盖）。危险标签移除也按子树执行，模板内的脚本类/SMIL
+    // 元素同样无处遁形。
+    function sanitizeVcpTree(root) {
+      var blocked = root.querySelectorAll(VCP_BLOCKED_TAGS)
+      for (var bi = 0; bi < blocked.length; bi++) blocked[bi].remove()
+      var elements = root.querySelectorAll('*')
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i]
+        sanitizeVcpElement(el)
+        if (el.localName === 'template' && el.content) sanitizeVcpTree(el.content)
+      }
+    }
+
     function sanitizeVcpHtml(rawHtml) {
       var parser = new window.DOMParser()
       var doc = parser.parseFromString(String(rawHtml || ''), 'text/html')
       if (!doc.body || !doc.body.querySelector('[id="vcp-root"]')) return ''
-
-      var blocked = doc.body.querySelectorAll('script,iframe,object,embed,base,meta,link')
-      for (var bi = 0; bi < blocked.length; bi++) blocked[bi].remove()
-
-      var elements = doc.body.querySelectorAll('*')
-      for (var i = 0; i < elements.length; i++) {
-        var el = elements[i]
-        if (el.localName === 'style') {
-          el.textContent = sanitizeCss(el.textContent)
-          continue
-        }
-        var attrs = Array.prototype.slice.call(el.attributes || [])
-        for (var ai = 0; ai < attrs.length; ai++) {
-          var attr = attrs[ai]
-          var name = attr.name.toLowerCase()
-          var value = attr.value
-          if (name === 'onclick') {
-            var inputMatch = /^input\s*\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?\s*$/.exec(value)
-            if (inputMatch) el.setAttribute('data-vcp-input', inputMatch[2])
-            el.removeAttribute(attr.name)
-            continue
-          }
-          if (/^on/i.test(name) || name === 'srcdoc' || name === 'srcset' || name === 'action' || name === 'formaction') {
-            el.removeAttribute(attr.name)
-            continue
-          }
-          if (name === 'style') {
-            var safeStyle = sanitizeCss(value)
-            if (safeStyle.trim()) el.setAttribute('style', safeStyle)
-            else el.removeAttribute('style')
-            continue
-          }
-          if (name === 'href' || name === 'xlink:href') {
-            if (!isAllowedUrl(value, false)) el.removeAttribute(attr.name)
-            continue
-          }
-          if (name === 'src' || name === 'poster') {
-            if (!isAllowedUrl(value, true)) el.removeAttribute(attr.name)
-          }
-        }
-        if (el.localName === 'a' && el.getAttribute('target') === '_blank') {
-          el.setAttribute('rel', 'noopener noreferrer')
-        }
-      }
+      sanitizeVcpTree(doc.body)
       return doc.body.innerHTML
     }
 

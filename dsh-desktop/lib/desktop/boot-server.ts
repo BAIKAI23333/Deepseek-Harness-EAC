@@ -17,6 +17,7 @@ import http = require('node:http');
 import os = require('node:os');
 import path = require('node:path');
 import cp = require('node:child_process');
+import { writeFileAtomic } from '../atomic-json';
 import type { ChildProcess } from 'node:child_process';
 
 // 兄弟 / 根模块窄签名消费（Wave 3 收编完成后改为具名类型化导入）。
@@ -107,7 +108,8 @@ export function healCredentialsVersion(): void {
       }
     }
     if (fixed !== text) {
-      fs.writeFileSync(file, fixed);
+      // .credentials.yaml 截断 = 凭据全丢：必须原子写。
+      writeFileAtomic(file, fixed);
       ctx.log('dsh', '已自愈 .credentials.yaml 版式（0.1.2 只认 version:1 + refs:/records:；引号 version 或 rc.2 扁平文件会被拒启）');
     }
   } catch { /* 自愈失败交由内核报错路径展示 */ }

@@ -34,8 +34,6 @@ const NPM_MIRRORS: string[] = ['https://registry.npmmirror.com', 'https://regist
 //（npm 解析依赖时可能长时间静默，阈值取 300 秒）。
 const NPM_STALL_MS = 300 * 1000;
 
-let activeProc: cp.ChildProcess | null = null;
-
 const { readJsonFile } = require('./lib/plugin-copy') as {
   readJsonFile(file: string): Record<string, unknown> | null;
 };
@@ -84,31 +82,49 @@ function bundledVersion(): string | null {
 
 function activeVersion(ctx: UpdaterCtx): string | null { return overlayVersion(ctx) || bundledVersion(); }
 
-// --- semver-ish compare (handles 0.1.0-rc.N style prereleases) -------------
+// --- semver-ish compare (handles 0.1.2-alpha.1 style prereleases) ----------
 
 interface ParsedVersion {
   nums: number[];
-  pre: string;
-  preNum: number;
+  pre: string[];
   hasPre: boolean;
 }
+function parseVersion(v: string): ParsedVersion {
+  const [rawCore = '', rawPre = ''] = String(v).trim().replace(/^v/i, '').split('-');
+  const coreParts = rawCore.split('.');
+  // 补齐缺省段，保证 4.4 与 4.4.0 的比较结果为相等而不是 NaN。
+  const nums = Array.from({ length: 3 }, (_, i) => parseInt(coreParts[i]!, 10) || 0);
+  const pre = rawPre === '' ? [] : rawPre.split('.');
+  return { nums, pre, hasPre: rawPre !== '' };
+}
+// semver 规范的 prerelease 标识符比较：纯数字段按数值比（rc.1.10 > rc.1.2），
+// 数字段恒小于字母段（1.0.0-1 < 1.0.0-alpha），字母段按 ASCII 字典序
+//（alpha < beta < rc）。旧实现取"pre 里第一个数字"当序号，beta.2 会 > rc.1。
+function comparePreIdentifier(ai: string, bi: string): number {
+  const isNum = (x: string): boolean => /^\d+$/.test(x);
+  if (isNum(ai) && isNum(bi)) {
+    const na = parseInt(ai, 10);
+    const nb = parseInt(bi, 10);
+    return na === nb ? 0 : na < nb ? -1 : 1;
+  }
+  if (isNum(ai)) return -1;
+  if (isNum(bi)) return 1;
+  return ai < bi ? -1 : ai > bi ? 1 : 0;
+}
 function compareVersions(a: string, b: string): number {
-  const parse = (v: string): ParsedVersion => {
-    const [rawCore = '', pre = ''] = String(v).trim().replace(/^v/i, '').split('-');
-    const coreParts = rawCore.split('.');
-    // 补齐缺省段，保证 4.4 与 4.4.0 的比较结果为相等而不是 NaN。
-    const nums = Array.from({ length: 3 }, (_, i) => parseInt(coreParts[i]!, 10) || 0);
-    const preNum = parseInt((pre.match(/\d+/) || [''])[0]!, 10);
-    return { nums, pre, preNum: Number.isNaN(preNum) ? -1 : preNum, hasPre: !!pre };
-  };
-  const A = parse(a), B = parse(b);
+  const A = parseVersion(a), B = parseVersion(b);
   for (let i = 0; i < 3; i++) {
     if (A.nums[i] !== B.nums[i]) return A.nums[i]! - B.nums[i]!;
   }
   if (A.hasPre !== B.hasPre) return A.hasPre ? -1 : 1; // prerelease < release
-  if (A.hasPre && A.pre !== B.pre) {
-    if (A.preNum >= 0 && B.preNum >= 0 && A.preNum !== B.preNum) return A.preNum - B.preNum;
-    return A.pre < B.pre ? -1 : A.pre > B.pre ? 1 : 0;
+  if (A.hasPre) {
+    const n = Math.max(A.pre.length, B.pre.length);
+    for (let i = 0; i < n; i++) {
+      if (A.pre[i] === undefined) return -1; // 段数少者为低（alpha < alpha.1）
+      if (B.pre[i] === undefined) return 1;
+      const c = comparePreIdentifier(A.pre[i]!, B.pre[i]!);
+      if (c !== 0) return c;
+    }
   }
   return 0;
 }
@@ -140,7 +156,16 @@ function killProc(proc: cp.ChildProcess | null): Promise<void> {
   });
 }
 
-function abort(): void { killProc(activeProc); activeProc = null; }
+// 活跃 npm 子进程集合：plugin-updater 的 checkPluginUpdates 会并发检测全部
+// 更新源（每源先 currentRegistry 再 npm view），旧实现的模块级单例 activeProc
+// 被并发进程互相覆盖 —— abort() 只能杀到最后一个，其余变孤儿跑满超时。
+// 改为集合跟踪，abort/超时/停滞都遍历全量收割。
+const activeProcs = new Set<cp.ChildProcess>();
+
+function abort(): void {
+  for (const p of [...activeProcs]) void killProc(p);
+  activeProcs.clear();
+}
 
 interface RunNpmOpts {
   timeoutMs?: number;
@@ -168,10 +193,10 @@ function runNpm(ctx: UpdaterCtx, args: string[], { timeoutMs = 30 * 60 * 1000, l
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    activeProc = proc;
+    activeProcs.add(proc);
     let settled = false;
     let stdoutBuf = '';
-    const finish = (fn: (value: any) => void, value: any) => { if (!settled) { settled = true; clearTimeout(timer); if (stallTimer) clearTimeout(stallTimer); activeProc = null; fn(value); } };
+    const finish = (fn: (value: any) => void, value: any) => { if (!settled) { settled = true; clearTimeout(timer); if (stallTimer) clearTimeout(stallTimer); activeProcs.delete(proc); fn(value); } };
     const finishAfterKill = async (error: Error) => {
       if (settled) return;
       // Lock the result before taskkill: on Windows the child can emit
@@ -180,7 +205,7 @@ function runNpm(ctx: UpdaterCtx, args: string[], { timeoutMs = 30 * 60 * 1000, l
       settled = true;
       clearTimeout(timer);
       if (stallTimer) clearTimeout(stallTimer);
-      activeProc = null;
+      activeProcs.delete(proc);
       await killProc(proc);
       reject(error);
     };

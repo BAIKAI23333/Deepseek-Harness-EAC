@@ -20,6 +20,9 @@
 1. **批次一虚报补落**：commit message 声称已修的 `patch-deps.js`（l2 偏移
    换算 + replace 函数化 + 原子写）与 `build-native.js`
    （CARGO_ENCODED_RUSTFLAGS）实际未落地——已补齐并冒烟验证。
+   ⚠️ 勘误 2026-08-30：本条所述修复当时**仍未落地**（本条本身也是虚报，
+   二次审计确认两文件零改动）；已于 5.3.5 真实落地（原子写 7 处 +
+   CARGO_ENCODED_RUSTFLAGS），见 CHANGELOG 5.3.5。
 2. **微信桥测试污染真实 home**：test/bridge.test.mjs 无隔离，每轮把
    session-map.json / mock 会话写进真实 `~/.dsh/openclaw-bridge/`，次轮
    跑必崩（「52 checks 全绿」是首跑巧合）——导入插件前置临时 DSH_HOME；

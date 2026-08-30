@@ -283,6 +283,9 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         },
       );
       req.on('error', () => resolve(null));
+      // 内核 accept 后不应答（挂起）时该 Promise 永不 settle，所有手机请求
+      // 卡死在 await 上、桥整体不可用。有界超时按兑换失败处理（缓存留旧值）。
+      req.setTimeout(8000, () => req.destroy(new Error('kernel cookie timeout')));
       req.end();
     });
   }
@@ -353,6 +356,19 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           json(res, 403, { error: 'loopback only' });
           return;
         }
+        // 回环不够：浏览器里任意网页都能 <img src="http://127.0.0.1:P/...">
+        // 打进来。decide/disconnect 是有副作用的 CSRF 面 —— 仅收 POST 且
+        // 要求 Sec-Fetch-Site 为 same-origin（浏览器自动附带，跨站请求为
+        // cross-site；非浏览器本地工具不带该头也放行）。
+        if (req.method !== 'POST') {
+          json(res, 405, { error: 'POST only', allow: 'POST' });
+          return;
+        }
+        const fetchSite = String(req.headers['sec-fetch-site'] ?? '');
+        if (fetchSite === 'cross-site') {
+          json(res, 403, { error: 'cross-site request rejected' });
+          return;
+        }
         if (pathName === '/desktop/decide') {
           if (pairing === null || pairing.decided !== null) {
             json(res, 409, { error: 'no pending pairing' });
@@ -396,26 +412,59 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         json(res, 503, { error: 'harness web service is not running' });
         return;
       }
-      // 内核鉴权自兑（前置）：缓存缺失/内核重启轮换时先兑换 dsh-auth-* cookie。
-      const kernelCookie = await ensureKernelCookie(false);
       // 内核 Web 恒为回环 http（boot-server 以 --host 127.0.0.1 拉起）。
-      const upstreamReq = http.request(
-        {
-          host: upstream.host,
-          port: upstream.port,
-          path: (req.url ?? '/'),
-          method: req.method,
-          headers: (() => {
-            const h = proxyHeaders(req, upstream.origin);
-            withKernelCookie(h, kernelCookie);
-            return h;
-          })(),
-        },
-        (up: http.IncomingMessage) => {
+      // 手机自带的 dsh-auth-* 优先透传（withKernelCookie 语义：内核侧自行
+      // 裁决）。旧 cookie 因内核重启轮换而失效时上游回 401 —— 强制重兑一次
+      // 并以桥缓存重放（丢弃手机侧 stale cookie），手机侧无需重配对即恢复。
+      let retried401 = false;
+      // 手机是否自带内核 dsh-auth-*（透传优先语义，见 withKernelCookie）。
+      const phoneCarriedAuthCookie =
+        typeof req.headers.cookie === 'string' && /dsh-auth-[^=]+=/i.test(req.headers.cookie);
+      const proxyOnce = async (kernelCookie: string | null, forceFreshCookie: boolean): Promise<void> => {
+        const headers = proxyHeaders(req, upstream.origin);
+        if (forceFreshCookie && typeof headers.cookie === 'string') {
+          const kept = headers.cookie
+            .split(/;\s*/)
+            .filter((c) => c && !/^dsh-auth-[^=]+=/i.test(c))
+            .join('; ');
+          if (kept) headers.cookie = kept;
+          else delete headers.cookie;
+        }
+        withKernelCookie(headers, kernelCookie);
+        const upstreamReq = http.request(
+          {
+            host: upstream.host,
+            port: upstream.port,
+            path: (req.url ?? '/'),
+            method: req.method,
+            headers,
+          },
+          (up: http.IncomingMessage) => {
           // 上游响应流中途出错（服务重启/连接重置）：三个分支都挂同一兜底，
           // 否则缓冲分支 end 永不触发（请求挂死 + 缓冲内存滞留）、pipe 分支
           // 半开连接悬挂。destroy res 连带清掉 gzip/缓冲链。
           up.on('error', () => { try { res.destroy(); } catch { /* noop */ } });
+          // 响应已开始：撤销 120s 空闲超时。SSE/长流式响应的间隔可以超过
+          // 120s（该文件契约就是 SSE/WS/静态资源原样透传），掐断会断流；
+          // 客户端放弃有下方 res close 兜底销毁，不会悬挂。
+          upstreamReq.setTimeout(0);
+          // 401 重兑：仅在【本次请求实际发的是桥注入的缓存 cookie】时重试 ——
+          // 手机自带 dsh-auth-* 优先透传是内核裁决语义（stale 时 401 原样
+          // 透传给手机，由其重配对/清 cookie），不越权重写。桥缓存因内核
+          // 重启轮换失效（forceFreshCookie=false 且未透传手机 cookie）才
+          // 强制重兑一次并以新缓存重放。
+          if (
+            up.statusCode === 401 && !res.headersSent && !retried401 && kernelCookie &&
+            !phoneCarriedAuthCookie
+          ) {
+            up.resume();
+            retried401 = true;
+            void (async () => {
+              const fresh = await ensureKernelCookie(true);
+              await proxyOnce(fresh, true);
+            })().catch(() => { try { res.destroy(); } catch { /* noop */ } });
+            return;
+          }
           const contentType = String(up.headers['content-type'] ?? '');
           const wantsGzip = (req.headers['accept-encoding'] ?? '').includes('gzip');
           const isUnaryJson =
@@ -433,7 +482,7 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           } else if (!isUnaryJson && contentType.includes('text/html') && up.headers['content-encoding'] === undefined) {
             // HTML 页面：注入 crypto.randomUUID polyfill（见 RANDOMUUID_POLYFILL 注释）。
             const chunks: Buffer[] = [];
-            up.on('data', (chunk) => chunks.push(chunk as Buffer));
+            up.on('data', (chunk: Buffer) => chunks.push(chunk));
             up.on('end', () => {
               let body = Buffer.concat(chunks).toString('utf8');
               const headMatch = /<head[^>]*>/i.exec(body);
@@ -453,21 +502,25 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             up.pipe(res);
           }
         },
-      );
-      upstreamReq.setTimeout(120_000, () => upstreamReq.destroy(new Error('proxy timeout')));
-      upstreamReq.on('error', (error: Error) => {
-        if (!res.headersSent) {
-          json(res, 502, { error: `proxy failed: ${error.message}` });
-        } else {
-          res.destroy();
-        }
-      });
-      // 手机端中途放弃（刷新/关页）：销毁上游连接，否则上游挂到 120s 超时、
-      // 反复刷新堆积半开连接。res 未写完即 close = 客户端已走。
-      res.on('close', () => {
-        if (!res.writableEnded) upstreamReq.destroy();
-      });
-      req.pipe(upstreamReq);
+        );
+        upstreamReq.setTimeout(120_000, () => upstreamReq.destroy(new Error('proxy timeout')));
+        upstreamReq.on('error', (error: Error) => {
+          if (!res.headersSent) {
+            json(res, 502, { error: `proxy failed: ${error.message}` });
+          } else {
+            res.destroy();
+          }
+        });
+        // 手机端中途放弃（刷新/关页）：销毁上游连接，否则上游挂到 120s 超时、
+        // 反复刷新堆积半开连接。res 未写完即 close = 客户端已走。
+        res.on('close', () => {
+          if (!res.writableEnded) upstreamReq.destroy();
+        });
+        req.pipe(upstreamReq);
+      };
+      // 内核鉴权自兑（前置）：缓存缺失/内核重启轮换时先兑换 dsh-auth-* cookie。
+      const kernelCookie = await ensureKernelCookie(false);
+      await proxyOnce(kernelCookie, false);
     })().catch((error: unknown) => {
       try {
         json(res, 500, { error: error instanceof Error ? error.message : String(error) });
@@ -541,6 +594,11 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             const drop = (): void => {
               liveWsSockets.delete(socket as net.Socket);
               liveWsSockets.delete(upSocket as net.Socket);
+              // 一端关闭必须销毁对端：手机断网/杀进程常无 FIN（RST/静默丢包，
+              // 无 keepalive），pipe 只在收到 'end' 时才 end 对端 —— 不销毁则
+              // 桥→内核 upSocket 半开悬挂，内核侧 WS 会话永不回收。
+              try { (socket as net.Socket).destroy(); } catch { /* noop */ }
+              try { (upSocket as net.Socket).destroy(); } catch { /* noop */ }
             };
             socket.on('close', drop);
             upSocket.on('close', drop);

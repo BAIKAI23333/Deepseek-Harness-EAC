@@ -341,6 +341,26 @@ test('phone bridge: 服务未就绪时代理返回 503', async () => {
   await bridge.stop()
 })
 
+test('phone bridge: /desktop/decide|disconnect 拒绝 GET 与跨站请求（CSRF 加固）', async () => {
+  const { bridge } = launch(null)
+  const info = await bridge.start()
+  const base = `http://127.0.0.1:${info.port}`
+  // GET 打空 body = JSON.parse('{}') = approved:false：浏览器里 <img src=...>
+  // 就能把待决配对悄悄改成拒绝 —— 仅收 POST。
+  const get = await request(base + '/desktop/decide')
+  assert.equal(get.status, 405)
+  const getDisc = await request(base + '/desktop/disconnect')
+  assert.equal(getDisc.status, 405)
+  // Sec-Fetch-Site: cross-site = 浏览器判定的跨站发起（任意网页 fetch/form）。
+  const csrf = await request(base + '/desktop/decide', { method: 'POST', body: { approved: true }, headers: { 'sec-fetch-site': 'cross-site' } })
+  assert.equal(csrf.status, 403)
+  assert.equal(bridge.status().pairing.state, 'waiting', '被拒请求不得改动配对状态')
+  // 非浏览器本地工具（无 Sec-Fetch-Site 头）的 POST 仍然放行。
+  const ok = await request(base + '/desktop/decide', { method: 'POST', body: { approved: true } })
+  assert.equal(ok.status, 200)
+  await bridge.stop()
+})
+
 test('phone bridge: /desktop/decide HTTP 面与状态一致', async () => {
   const { bridge } = launch(null)
   const info = await bridge.start()

@@ -10,6 +10,7 @@ import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
 import { spawn } from 'node:child_process';
+import { writeFileAtomic } from '../atomic-json';
 import type { ChildProcess } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { nodeExe, dshBin, APP_ROOT } from './runtime-paths';
@@ -123,7 +124,7 @@ export function finishMarketMarker(marker: string, job: MarketJob, attempts: num
     removeMarkerFile(marker);
     return;
   }
-  try { fs.writeFileSync(marker, JSON.stringify({ ...job, attempts }, null, 2)); } catch { /* 尽力重试 */ }
+  try { writeFileAtomic(marker, JSON.stringify({ ...job, attempts }, null, 2)); } catch { /* 尽力重试 */ }
   ctx.log('market-pending', '排队任务失败（下次启动重试）: ' + (job.label || job.target));
 }
 

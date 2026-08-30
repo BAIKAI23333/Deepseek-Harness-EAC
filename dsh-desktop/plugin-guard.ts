@@ -24,8 +24,9 @@ import fs = require('node:fs');
 import path = require('node:path');
 import os = require('node:os');
 
-const { writeJsonAtomic } = require('./lib/atomic-json') as {
+const { writeJsonAtomic, writeFileAtomic } = require('./lib/atomic-json') as {
   writeJsonAtomic(file: string, value: unknown): void;
+  writeFileAtomic(file: string, content: string | Buffer): void;
 };
 const { healProfileModuleShadowing } = require('./profile-module-heal') as {
   healProfileModuleShadowing(home: string, profile?: string, log?: (m: string) => void): string[];
@@ -217,7 +218,9 @@ function createGuard(opts: GuardOpts): GuardApi {
       for (const name of GUARD_FILES) {
         const src = path.join(snapDir, name);
         if (!fs.existsSync(src)) continue;
-        fs.copyFileSync(src, path.join(dir, name));
+        // restore 目标是 cordis.patch.yml 等启动关键文件：copyFileSync 裸写
+        // 中断即截断。读出字节后走原子写（保内容逐字节一致）。
+        writeFileAtomic(path.join(dir, name), fs.readFileSync(src));
         restored.push(name);
       }
       log('guard', `已回滚 profile 到快照 ${id}（${restored.join(', ')}）`);
@@ -497,7 +500,8 @@ function createGuard(opts: GuardOpts): GuardApi {
           patch = deduped;
           applied.push('移除与 bundle 重复的 patch 行: ' + removed.join(', '));
         }
-        if (healed.healed.length || removed.length) fs.writeFileSync(file, patch);
+        // cordis.patch.yml 是启动关键文件：裸写中断即截断 → boot 死循环。
+        if (healed.healed.length || removed.length) writeFileAtomic(file, patch);
       } catch (err) {
         log('guard', '修复 patch 行失败: ' + (err as Error).message);
       }
@@ -602,7 +606,7 @@ function createGuard(opts: GuardOpts): GuardApi {
         '```',
         '',
       ].join('\n');
-      fs.writeFileSync(file, body);
+      writeFileAtomic(file, body);
       return { ok: true, file };
     } catch (err) {
       return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };

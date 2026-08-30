@@ -6,7 +6,8 @@
  * Rust 工具链自带的 rust-lld（LLVM lld-link，MSVC 兼容驱动）完全胜任本
  * crate 的链接（仅依赖 kernel32），故构建统一走 lld-link：
  *   1. `rustc --print sysroot` 定位工具链内 rust-lld.exe；
- *   2. 复制为 target/lld-link.exe（argv0 即 flavor，免 -flavor 参数）；
+ *   2. 复制为 %TEMP%/dsh-lld-link/lld-link.exe（argv0 即 flavor，免 -flavor
+ *      参数；放 TEMP 避开仓库路径空格 —— CARGO_ENCODED_RUSTFLAGS 见下）；
  *   3. 以 RUSTFLAGS=-C linker=... 调 cargo（build/test/clippy 统一入口）。
  *
  * 用法（module 缺省 supervisor，保持既有调用零改动）：
@@ -70,9 +71,12 @@ function runCargo(sub: string, rest: string[]): number {
   const env = { ...process.env };
   if (process.platform === 'win32') {
     const linker = prepareLldLink();
-    // 路径含空格（如 "DeepSeek Harness\dsh max"）时必须以引号包住 linker 值，
-    // 否则 rustc 的 RUSTFLAGS 按空白拆分会把路径截断成多个输入文件。
-    env.RUSTFLAGS = `-C linker=${linker}`;
+    // RUSTFLAGS 按空白拆分：linker 路径含空格（仓库路径 "DeepSeek Harness\
+    // dsh max"，或 %TEMP% 本身含空格的用户名）会被截成多个参数。引号方案
+    // 在 rustc 的 flags 解析里同样不可靠 —— 改用 CARGO_ENCODED_RUSTFLAGS
+    //（\x1f 分隔的参数表，无空白歧义），并清掉 RUSTFLAGS 防止双重应用。
+    env.CARGO_ENCODED_RUSTFLAGS = ['-C', `linker=${linker}`].join('\x1f');
+    delete env.RUSTFLAGS;
   }
   const r = cp.spawnSync('cargo', [sub, '--manifest-path', manifest, ...rest], {
     stdio: 'inherit',

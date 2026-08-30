@@ -191,7 +191,8 @@ export function pluginManagerSetRemoved(id: string, removed: boolean): { ok: boo
       let text = '';
       try { text = fs.readFileSync(patchFile, 'utf8'); } catch { /* 缺省空 */ }
       const patched = removePluginFromPatch(text, id);
-      if (patched !== text) fs.writeFileSync(patchFile, patched, 'utf8');
+      // cordis.patch.yml 是启动关键文件：裸写在断电/被杀时截断 = boot 死循环。
+      if (patched !== text) writeFileAtomic(patchFile, patched);
       // 2) 删 profile node_modules 里的包副本（copyPluginPackage 的产物）
       const pkgDir = path.join(desktopProfileDir(), 'node_modules', p.name);
       fs.rmSync(pkgDir, { recursive: true, force: true });
@@ -292,9 +293,8 @@ export function pluginManagerSetEnabled(id: string, enabled: boolean): { ok: boo
   }
   if (patched !== text) {
     try {
-      const tmp = file + '.tmp';
-      fs.writeFileSync(tmp, patched, 'utf8');
-      fs.renameSync(tmp, file);
+      // writeFileAtomic 带随机 tmp 后缀：固定名 .tmp 在并发 IPC 下会 EBUSY/EPERM。
+      writeFileAtomic(file, patched);
     } catch (err) {
       return { ok: false, error: String(((err as Error).message) || err) };
     }

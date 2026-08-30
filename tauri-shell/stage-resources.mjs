@@ -25,6 +25,14 @@ const targetPlatform = targetArg ? targetArg.slice('--target='.length) : process
 if (targetPlatform !== 'win32' && targetPlatform !== 'linux' && targetPlatform !== 'darwin') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
+// 交叉打包显式不支持（解析处校验）：native/*.node 与各包 prebuilds 均按本机
+// platform/arch 装配，target 与本机不一致会产出缺原生包的坏树 —— 解析处 fail-fast。
+if (targetPlatform !== process.platform) {
+  throw new Error(
+    `[stage] 交叉打包不支持：--target=${targetPlatform} ≠ 本机 ${process.platform}/${process.arch}`
+    + '（原生模块按本机架构装配，target 必须与本机一致）',
+  );
+}
 
 // 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 与其
 // 独享模块 error-detail / koffi-preflight / renderer-recovery / watchdog /
@@ -284,8 +292,13 @@ copyRequired(
 if (targetPlatform === 'linux' || targetPlatform === 'darwin') {
   chmodSync(path.join(staged, 'dsh-desktop', 'vendor', 'node', runtimeName), 0o755);
 }
-if (existsSync(path.join(dd, 'vendor', 'npm'))) {
-  cpSync(path.join(dd, 'vendor', 'npm'), path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
+// vendor/npm 与 vendor/node、vendor/kernel 同为必需项：随包 node 运行内核需要
+// npm，静默跳过会产出缺 npm 的坏树 —— 与其他 vendor 项一致 fail-fast。
+const npmCache = path.join(dd, 'vendor', 'npm');
+if (existsSync(npmCache)) {
+  cpSync(npmCache, path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
+} else {
+  throw new Error('[stage] vendor/npm 缺失：先运行 npm run fetch-npm 重建 npm 运行时缓存');
 }
 
 // 内核 tarball 缓存（0.1.2 起内核不在 npm registry 上：package.json 的
@@ -330,6 +343,11 @@ if (targetPlatform === 'darwin') {
 }
 // node-pty 双二进制防护（issue #206）：全平台统一执行（Linux 分支已清除
 // 非 linux prebuilds，win 分支保留原 prebuilds）。
+// 实际使用处二次校验（约束：交叉打包显式不支持）：这里按 targetPlatform ×
+// process.arch 选 prebuilds 并落平台戳，与解析处护栏呼应，防后续改动绕过。
+if (targetPlatform !== process.platform) {
+  throw new Error(`[stage] 目标平台 ${targetPlatform} 与本机 ${process.platform}/${process.arch} 不一致，拒绝装配原生载荷`);
+}
 healNodePtyPlugin(nmDest, targetPlatform, process.arch);
 writeStagedPlatformStamp(platformStamp, targetPlatform);
 
@@ -387,7 +405,9 @@ console.log('[stage] 完成：' + staged);
 // WebView2Loader.dll：webview2-com-sys 提供的 x64 loader，必须与壳 exe 同级
 // （否则 dsh-eac-shell.exe 启动即 0xC0000135 崩）。从 cargo registry 的
 // webview2-com-sys 包定位（tauri build 不再重新生成该文件）。
-{
+// 约束：仅 win32 装配 —— 只有 tauri.windows.conf.json 引用该 DLL，linux/darwin
+// 的 cargo registry 里根本没有 webview2-com-sys，整块跳过（否则必然误杀 exit(1)）。
+if (targetPlatform === 'win32') {
   const loader = (() => {
     const homeDir = process.env.USERPROFILE || process.env.HOME || '';
     const roots = [

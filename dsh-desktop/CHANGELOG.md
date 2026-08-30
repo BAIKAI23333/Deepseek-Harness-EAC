@@ -44,6 +44,94 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
+## 5.3.5（本版：全库 bug 大扫除 —— 壳韧性/安全围栏/更新器/原子写/插件泄漏 45 项根治）· 2026-08-30
+
+### 概述
+
+五域并行审查（Rust 壳 / Node sidecar / 核心包装层 / 自有插件 / 打包链）+
+逐条验证后落地的修复批次。全量测试 727→741 用例：736 过 / 0 挂 / 5 skip，
+新增 14 个回归测试。
+
+### 壳韧性（tauri-shell/src/main.rs）
+
+- sidecar spawn 失败分支补起 serve_ws：/died 诊断页此前指向无人监听的
+  端口（issue #210 修复在真实故障现场必然复现原 bug）。
+- 退出兜底 kill 死代码修复：Arc::into_inner 因槽位持有克隆恒 None，
+  9s 轮询+击杀从未生效（sidecar 挂死 → node/dsh web 进程树孤儿化）。
+  child 改 AMutex<Child> 经共享句柄轮询。
+- sidecar 崩溃黑洞：reader 退出时回绝全部在途 RPC（不再各挂 180s）并
+  广播 boot.server-died 走 /died 恢复链。
+- 每条 WS 连接泄漏 3 个常驻任务（writer + 双转发）：连接结束统一收割。
+- Sidecar::call 写失败/超时路径清理 pending 表项（HashMap 泄漏）。
+- exitAction 读参加 2s 短超时（关窗路径最长僵死 3 分钟 → 2s 回退默认）。
+- app.restart()（非主线程分支永久停车一个 worker）→ request_restart()。
+- 桥端口被占回退链：19873 → +25 候选 → OS 分配；全部 URL 构造经
+  ws_port() 读取；绑定挪到窗口创建前。
+- DPI 混算修正（恢复位 clamp 的 min_vis/40px 兜底乘 scale）；builder
+  min_inner_size 按主屏 work area 折算；恢复中心/onboarding 桥注入 marker
+  双写法匹配（此前恒失配 → quirks mode 渲染）；主窗 additional_browser_args
+  补回 Tauri 默认 disable-features；浮窗标签加 FNV 哈希后缀防跨会话撞窗；
+  /died URL 参数走 encode_query；accept 循环错误退避；退出 overlay 样式
+  按 id 复用（head 内 style 无限堆积）。
+
+### 安全围栏（sidecar / 壳）
+
+- files.authorize-open 路径穿越：`..`/符号链接/大小写变体可骗过字面前缀
+  命中 → 壳层 ShellExecuteW 打开任意文件。realpath 归一化 + 大小写折叠
+  后再比对，DANGEROUS_EXT 对归一化路径判定。
+- 预览静态服务（staticPort 经 chrome.init 主动下发页面）此前接受任意绝对
+  路径 = 全盘任意文件读原语：白名单围栏（会话 cwd fileRoots + skills 根，
+  .credentials* 一律拒绝）+ Host 头校验（DNS rebinding 免疫）。
+- /desktop/decide|disconnect 仅收 POST 且拒 Sec-Fetch-Site cross-site
+  （此前 <img src> 即可把待决配对悄悄改拒绝/踢掉手机）。
+- 手机桥 401 强制重兑重放：手机侧 stale dsh-auth-* 因内核轮换长期 401
+  且重配对不清 —— 桥缓存路径下自动重兑一次恢复（透传语义不越权重写）。
+- ensureKernelCookie 加 8s 超时（内核挂起时桥整体卡死）。
+
+### 更新器 / 数据完整性
+
+- 安装版自更新全量镜像备份（<userData>/backups/<ts>）此前无任何清理方
+  （V4.3 承诺的 cleanupClientBackupIfHealthy 一直未实现，交接文档两次
+  虚报）—— 现随健康启动落地：超 24h 静默删、清完回收 marker；便携
+  .bak/.bak.marker 保险丝同链清理。
+- writeFileAtomic 两步换入：旧「先删旧目标再 rename」在两步间被杀 =
+  启动关键文件消失（settings.yaml / .credentials.yaml / cordis.patch.yml
+  裸写残留 → boot 死循环）。全部 13 处裸写点收编原子写（含 patch-deps
+  对内核包的 7 处）；签名扩 Buffer（restore 快照逐字节保真）。
+- semver prerelease 按规范比较（旧实现 beta.2 > rc.1 / rc.1.10 < rc.1.2）。
+- updater abort 并发收割（activeProc 单例 → 进程集合，checkPluginUpdates
+  并发 11 源 ×2 npm 进程的孤儿问题）；plugin-updater 检测限流 4 并发 +
+  applyBuiltinPluginUpdate 单飞闸（staging rmSync 互踩）。
+- 便携 .crash 快照改取自 .bak（旧实现复制的是已替换的新 exe，崩溃回退
+  保险丝名存实亡）；RESUME_INVALID 分支删 .part（不再空转烧完重试）。
+- 断线在途 RPC 即时回绝（ws-jsonrpc-client 单源）：sidecar 重启期间主窗
+  /恢复中心不再挂满 30-60s 超时；超时定时器 settle 即清（不再空跑累积）。
+
+### 其他
+
+- logger 启动滚动：main.00 属上一轮运行，先滚链再开新（旧实现 'w' 截断
+  = 重启即毁上次全部日志）；deepRedact getter 抛错不再二次取值漏原对象；
+  flush 半行过 shallow masker。
+- rescue retry / recovery.reload 统一走守护启动链并同步 currentWebInfo
+  （救援拉起后手机桥不再 503）；boot.stop/重启失败清 webUrl 缓存。
+- turnEndNotifyAt / session-watcher files Map 容量与清扫（慢速内存泄漏）；
+  extension-host 退避定时器防叠挂、started 被拒终止 Host；sidecar 全局
+  unhandledRejection/uncaughtException 兜底（裸崩 = 整壳失联）。
+- 插件资产：message-rewind/font-custom observer+interval 防重入、
+  eac-core-bridge interval 幂等+注入收敛+注册查重、phone 二维码脚本单例
+  + 状态死三元修正、recovery-center 错误兜底文案、onboarding busy 卡死
+  + Escape 期间不可关 + 重复按钮清理、agent-teams 源码副本双同步。
+- dsh-raw-html 净化器加固（模型可控 HTML 威胁模型）：<template> content
+  递归净化 + SMIL animate/set/animateTransform 拦截 + CSS url() 白名单
+  （#/ 相对与 data:image/）+ 外链强制 target=_blank rel=noopener。
+- 内置插件覆盖层版本损坏回退资产版本（坏 overlay 不再永久遮蔽新资产）；
+  companion-sync 空表替换锚定一致（内联 [] 不再插错位致 YAML 损坏）。
+- build-native RUSTFLAGS 空格路径改 CARGO_ENCODED_RUSTFLAGS（两代交接
+  文档虚报项落地）；stage-resources win32-only 装配/vendor/npm fail-fast/
+  交叉打包护栏；make-portable 补 WebView2Loader.dll 一致性；NSIS 剥引号
+  成对判定 + 空 InstallLocation 跳过 ExecWait；release-macos.yml 版本号
+  从 package.json 读取（5.1.0 钉死）。
+
 ## 5.3.4（本版：视口失同步自愈 —— 全屏窗口黑屏条带 / 侧边栏图标栏"消失"根治）· 2026-08-30
 
 ### 现象与根因

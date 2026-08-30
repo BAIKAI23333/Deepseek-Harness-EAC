@@ -139,6 +139,70 @@ test('sanitizeVcpHtml adds rel=noopener to _blank links', () => {
   assert.match(out, /rel="noopener noreferrer"/);
 });
 
+test('sanitizeVcpHtml sanitizes <template> content subtree (nested included)', () => {
+  // <template> 的 content 是独立 DocumentFragment，querySelectorAll('*') 不进入，
+  // 模板内节点原本会整体绕过属性净化，克隆挂载后原样生效——必须递归净化。
+  const html = [
+    '<div id="vcp-root">',
+    '<template>',
+    '<img src="a.png" onerror="steal()">',
+    '<a href="javascript:alert(1)">t</a>',
+    '<div style="position:fixed;background:url(//evil.example/px.gif)">t</div>',
+    '<template><script>alert(2)</script></template>',
+    '</template>',
+    '<p>kept</p>',
+    '</div>',
+  ].join('');
+  const out = s.sanitizeVcpHtml(html);
+  assert.match(out, /<template>/i, 'template element itself is kept');
+  assert.match(out, /kept/);
+  assert.doesNotMatch(out, /onerror\s*=/i, 'event handlers inside template must be stripped');
+  assert.doesNotMatch(out, /javascript:/i, 'javascript: href inside template must be stripped');
+  assert.doesNotMatch(out, /position\s*:\s*fixed/i, 'inline style inside template must be sanitized');
+  assert.doesNotMatch(out, /evil\.example/i, 'external css url inside template must be neutralized');
+  assert.doesNotMatch(out, /<script\b/i, 'script inside nested template must be removed');
+});
+
+test('sanitizeVcpHtml strips SMIL animation elements inside and outside <svg>', () => {
+  // SMIL 动画元素可在渲染期动态改写其他元素属性（如把 href 动画成 javascript:），
+  // 绕过静态净化，必须整体移除；链接本身保留。
+  const html =
+    '<div id="vcp-root">' +
+    '<svg><a href="https://ok.example/x">' +
+    '<animate attributeName="href" to="javascript:alert(1)"></animate>' +
+    '<set attributeName="href" to="javascript:alert(2)"></set>' +
+    '<animateTransform attributeName="href" to="javascript:alert(3)"></animateTransform>' +
+    '</a></svg>' +
+    '<animate attributeName="href" to="javascript:alert(4)"></animate>' +
+    '</div>';
+  const out = s.sanitizeVcpHtml(html);
+  assert.match(out, /ok\.example/, 'the link itself is kept');
+  for (const tag of ['animate', 'set', 'animateTransform']) {
+    assert.doesNotMatch(out, new RegExp(`<${tag}\\b`, 'i'), `${tag} must be removed`);
+  }
+});
+
+test('sanitizeVcpHtml forces external http(s) links into a new tab with noopener', () => {
+  // 外链在本窗口点击会把整个 Web UI 导航离站：统一 target=_blank；
+  // rel=noopener noreferrer 切断 window.opener 反向操控。
+  const out = s.sanitizeVcpHtml(
+    '<div id="vcp-root">' +
+      '<a href="https://example.com/a">ext-plain</a>' +
+      '<a href="http://example.com/b" target="_self">ext-self</a>' +
+      '<a href="https://example.com/c" target="_blank">ext-blank</a>' +
+      '<a href="/internal">int</a>' +
+      '<a href="#/route">route</a>' +
+      '</div>',
+  );
+  assert.equal((out.match(/target="_blank"/g) || []).length, 3,
+    'all external http(s) links must open in a new tab');
+  assert.equal((out.match(/rel="noopener noreferrer"/g) || []).length, 3,
+    'every new-tab link must cut the opener relationship');
+  assert.doesNotMatch(out, /target="_self"/i, 'in-window navigation to external origin must be overridden');
+  assert.doesNotMatch(out, /href="\/internal"[^>]*target=/i, 'internal link must not gain target');
+  assert.doesNotMatch(out, /href="#\/route"[^>]*target=/i, 'hash-route link must not gain target');
+});
+
 test('isAllowedUrl protocol allowlist', () => {
   assert.equal(s.isAllowedUrl('https://example.com'), true);
   assert.equal(s.isAllowedUrl('http://example.com'), true);
@@ -176,4 +240,39 @@ test('sanitizeCss strips dangerous CSS constructs', () => {
   assert.doesNotMatch(out, /content\s*:/i);
   assert.match(out, /color:\s*red/);
   assert.match(out, /z-index\s*:\s*99/i);
+});
+
+test('sanitizeCss url() whitelist neutralizes every external url() form', () => {
+  // 外链 url 会随渲染向第三方发请求（追踪像素/数据外带）：协议相对 //、
+  // http(s)、javascript:、其余 data:（含 data:text/html）都必须中和。
+  // 三种引号形态（无引号/"…"/'…'）都要覆盖。
+  const out = s.sanitizeCss(
+    'background:url(//evil.example/px.gif);' +
+      'background:url("http://evil.example/px.gif");' +
+      "background:url('https://evil.example/exfil');" +
+      'background:url(javascript:alert(1));' +
+      'background:url(data:text/html;base64,PGI+);',
+  );
+  assert.equal((out.match(/url\(about:blank\)/g) || []).length, 5,
+    'each of the five external url() forms must be replaced with url(about:blank)');
+  assert.doesNotMatch(out, /evil\.example/i);
+  assert.doesNotMatch(out, /javascript:/i);
+  assert.doesNotMatch(out, /data:text\/html/i);
+});
+
+test('sanitizeCss url() whitelist keeps same-document/same-origin/data-image forms', () => {
+  // 放行面：同文档引用（SVG 渐变 url(#g)、应用内 #/ 路由）、同源根相对路径
+  // （/fonts/… 字体契约，下载内嵌依赖）、data:image/ 内联图片。
+  const keep = s.sanitizeCss(
+    'background:url("#/dashboard");' +
+      "background:url('data:image/png;base64,AAAA');" +
+      'background:url(/fonts/Lanxi-WenKai.woff2);' +
+      'fill:url(#grad);',
+  );
+  assert.match(keep, /url\("#\/dashboard"\)/, 'hash-route relative url must survive');
+  assert.match(keep, /url\('data:image\/png;base64,AAAA'\)/, 'data:image url must survive');
+  assert.match(keep, /url\(\/fonts\/Lanxi-WenKai\.woff2\)/,
+    'plugin font contract (/fonts/…) must survive sanitization');
+  assert.match(keep, /url\(#grad\)/, 'SVG paint server reference must survive');
+  assert.doesNotMatch(keep, /about:blank/);
 });

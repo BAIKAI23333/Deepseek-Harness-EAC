@@ -45,6 +45,9 @@ verify-phone-pair / ui-verify-smoke / rescue-smoke。
 - 批次一遗留虚报补落：patch-deps.js（l2 偏移换算 + replace 函数化 + 原子写）、
   build-native.js（CARGO_ENCODED_RUSTFLAGS）——批次一 commit message 声称
   已修但未落地。
+  ⚠️ 勘误 2026-08-30：上述两项在 5.3.3 批次二时仍未落地（当时文档再次
+  虚报）；已于 5.3.5 真实落地，见 CHANGELOG 5.3.5。验收流程教训：文档
+  声称的修复必须对照 git 文件清单验证。
 - 微信桥测试隔离修复：test/bridge.test.mjs 导入插件前置 DSH_HOME=临时目录
   （此前每轮测试污染真实 ~/.dsh/openclaw-bridge，session-map 残留使断言崩）。
 - 批次 C 余项 7 项性能优化（注册表批量写 / companion-sync 单读 /
