@@ -639,18 +639,28 @@
     });
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
 
-    // 初始化状态
-    dshDesktop.getInfo().then(function (info: any) {
-      if (!info) return;
-      state = Object.assign({}, state, info);
-      if (info.appVersion) {
-        dshDesktop.appVersion = info.appVersion;
-        if (badge) badge.textContent = 'v' + info.appVersion;
-      }
-      if (badge && info.agentVersion) badge.title = 'agent v' + info.agentVersion + '（' + info.agentSource + '）';
-      if (badge && info.agentVersion) { badge.hidden = false; }
-      if (icon && info.iconDataUri) icon.src = info.iconDataUri;
-    }).catch(function () { /* 信息不可用不阻塞界面 */ });
+    // 初始化状态。chrome.init 在首启重载（市场播种/插件同步）下可能超时，
+    // 失败后标题栏 logo 永远停在白方块 —— 指数退避重试至拿到 iconDataUri。
+    (function initInfo(attempt: number): void {
+      dshDesktop.getInfo().then(function (info: any) {
+        if (!info) return;
+        state = Object.assign({}, state, info);
+        if (info.appVersion) {
+          dshDesktop.appVersion = info.appVersion;
+          if (badge) badge.textContent = 'v' + info.appVersion;
+        }
+        if (badge && info.agentVersion) badge.title = 'agent v' + info.agentVersion + '（' + info.agentSource + '）';
+        if (badge && info.agentVersion) { badge.hidden = false; }
+        if (icon && info.iconDataUri) {
+          icon.src = info.iconDataUri;
+        } else if (attempt < 5) {
+          window.setTimeout(function () { initInfo(attempt + 1); }, 1000 * attempt);
+        }
+      }).catch(function () {
+        // 信息不可用不阻塞界面；icon 缺失时退避重试（见上）。
+        if (attempt < 5) window.setTimeout(function () { initInfo(attempt + 1); }, 1000 * attempt);
+      });
+    })(0);
     dshDesktop.windowControls.isMaximized().then(setMaximized).catch(function () { /* 同上 */ });
     dshDesktop.windowControls.onMaximizeChange(setMaximized);
   }
