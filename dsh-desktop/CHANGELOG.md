@@ -44,13 +44,61 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
-## 5.3.5（本版：全库 bug 大扫除 —— 壳韧性/安全围栏/更新器/原子写/插件泄漏 45 项根治）· 2026-08-30
+## 5.3.5（本版：全库 bug 大扫除 —— 壳韧性/安全围栏/更新器/原子写/插件泄漏 45 项根治 + 复审接续 18 项）· 2026-08-30
 
 ### 概述
 
 五域并行审查（Rust 壳 / Node sidecar / 核心包装层 / 自有插件 / 打包链）+
-逐条验证后落地的修复批次。全量测试 727→741 用例：736 过 / 0 挂 / 5 skip，
-新增 14 个回归测试。
+逐条验证后落地的修复批次；随后第二轮复审（五个审查智能体 + 真实规模
+复现探针）又修掉 18 项（含首批引入的 2 个回归：401 重放空体、延迟清理
+残留同步 rm）。全量测试 727→748 用例：743 过 / 0 挂 / 5 skip。
+
+### 复审接续修复（第二批，均为首批未发现/新引入项）
+
+- **P0 复现探针实证「boot 应答提前」不够**：侧载序列挪 setImmediate 后，
+  同步 PowerShell .lnk 读写仍在 boot 后整段冻结事件循环（桌面每个图标
+  1-3s），用户此时点「开始配对」照旧卡死 —— .lnk 驱动全异步化 +
+  单进程批量读（N 图标 1 次 PowerShell），maintainShortcuts 全 async。
+- **401 重兑重放丢 POST 请求体**（首批 S9 引入的回归）：req 流只能消费
+  一次，重放时 content-length 照带但体为空，内核按空载荷裁决还以 200
+  —— 请求体改缓冲重发（64MB 上限，超限 413），GET/HEAD 直通。
+- 备份清理时间戳单位归一化：backups/<ts> 目录名有 Unix 秒（10 位）/
+  毫秒（13 位）/YYYYMMDDHHmmss（14 位 batch 兜底）三种格式，直接
+  parseInt 与 Date.now() 混比 —— 秒级永远「超 24h」立即删（回滚保护窗
+  失效），14 位永远不删（磁盘泄漏）。按位数归一化 + mtime 兜底 +
+  不可判定宁留勿删；补 2 个真实格式回归测试。
+- confirmPreviousAgentHealthy 仍同步 rmSync 删数百 MB agent-previous
+  （首批只异步化了 backups 清理，「30s 后冻结」残留）—— 异步化。
+- 便携保险丝删除顺序：.bak.marker 先删则 .bak 删失败（杀软占用刚换下
+  的百 MB exe）永久残留 —— marker 改最后删，各文件独立重试。
+- sidecar 死亡后 /died 页恢复死胡同（两个按钮都发往死进程）—— WS
+  转发层检出死亡即按需重生 sidecar（换槽 + 重接广播，竞态安全）；
+  优雅退出/重启置 SIDECAR_STOPPING 抑制退出瞬间的 died 页闪现。
+- raw-html 净化器 CSS 防线实为可绕：转义引号（url("//evil/\"x")）令
+  正则整体失配原样存活、@\69 mport 转义形态绕过 @import 剥离 ——
+  转义感知匹配 + 解码后判定 + 未闭合串 fail-closed + 逐字符扫描器
+  剥 @import；补 5 个回归测试。
+- 静态预览 .credentials* 拒绝可被 NTFS 8.3 短名绕过（CREDEN~1.YAM）——
+  短名形态经目录枚举 + dev/ino 比对还原真实长名再判定。
+- WS 代理补 TCP keepalive（手机切网/休眠无 FIN 的半开连接数十秒内
+  回收，内核侧会话不再永挂）。
+- 【装机冒烟抓出的历史遗留 P1，P2 时代遗留】壳 WS 桥握手 4096B 单段
+  peek +「未见 \r\n\r\n 即拒收」：浏览器 cookie 按域名不按端口隔离，
+  127.0.0.1 的 dsh-auth JWT 把握手头顶过 4KB → 桥 WS 被永久拒绝、
+  页内全部 RPC 死锁（装机版实测 152 连拒）。循环 peek 至 16KB/3s
+  fail-closed；装机版复测 0 拒绝、配对 16ms。
+- onboarding 提交进行中 ✕/跳过按钮可关窗（Escape 已守，按钮没守）；
+  dsh-phone 二维码脚本被外力移出 head 后永卡「加载中」（isConnected
+  复位重建）；eac-core-bridge interval 禁用后不死 + 宿主重载后工具
+  不重注册（effect teardown + per-apply 注册表）。
+- atomic-json 写入前清扫同目标 .old-/.tmp- 孤儿；ext-host started 被拒
+  改走 killHost 统一清理（防僵尸 Host）；打包链卫生项（release-macos
+  输入插值改 env 间接引用、preset-sync 字面 BOM 还原转义、build-native
+  过时注释修正）。
+- 已知备案：内核插件 dsh-client-ui-model-selection 在 remote.session
+  服务未就绪的 home 上经 slot inject 回调触发 cordis 深路径校验
+  （window.onerror: cannot get property "remote.session" without inject）
+  —— 内核 @deepseek-ai/* 边界内，不阻塞功能（E2E 全过），不越界修。
 
 ### 壳韧性（tauri-shell/src/main.rs）
 
@@ -96,8 +144,9 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
   .bak/.bak.marker 保险丝同链清理。
 - writeFileAtomic 两步换入：旧「先删旧目标再 rename」在两步间被杀 =
   启动关键文件消失（settings.yaml / .credentials.yaml / cordis.patch.yml
-  裸写残留 → boot 死循环）。全部 13 处裸写点收编原子写（含 patch-deps
-  对内核包的 7 处）；签名扩 Buffer（restore 快照逐字节保真）。
+  裸写残留 → boot 死循环）。全部 18 处写点收编原子写（preset-sync 2 +
+  boot-server 1 + plugin-guard 3 + builtin-collision 2 + plugin-ops 2 +
+  market 1 + patch-deps 7）；签名扩 Buffer（restore 快照逐字节保真）。
 - semver prerelease 按规范比较（旧实现 beta.2 > rc.1 / rc.1.10 < rc.1.2）。
 - updater abort 并发收割（activeProc 单例 → 进程集合，checkPluginUpdates
   并发 11 源 ×2 npm 进程的孤儿问题）；plugin-updater 检测限流 4 并发 +

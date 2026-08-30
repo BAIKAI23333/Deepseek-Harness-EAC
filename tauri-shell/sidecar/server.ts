@@ -131,34 +131,13 @@ const notifyFallback = (n: { title: string; body: string }): void => {
   notify('shell.system-notification', { title: n.title, body: n.body });
 };
 // .lnk 驱动（硬门槛④）：PowerShell WScript.Shell COM 实现，接口对齐 Electron
-// shell.readShortcutLink / writeShortcutLink（同步、失败抛错）。路径经环境
-// 变量传入，规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
-function psLnkRead(p: string): Record<string, unknown> {
-  const script = String.raw`
-$ErrorActionPreference='Stop'
-try {
-  $sh = New-Object -ComObject WScript.Shell
-  $sc = $sh.CreateShortcut($env:DSH_LNK_PATH)
-  $icon = [string]$sc.IconLocation
-  if ($icon -match ',\s*\d+$') { $icon = $icon -replace ',\s*\d+$', '' }
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-  @{ target = [string]$sc.TargetPath; args = [string]$sc.Arguments; cwd = [string]$sc.WorkingDirectory; description = [string]$sc.Description; icon = $icon } | ConvertTo-Json -Compress
-} catch { exit 1 }
-`;
-  try {
-    const out = cp.execFileSync('powershell', ['-NoProfile', '-Command', script], {
-      env: { ...process.env, DSH_LNK_PATH: p },
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 8000,
-    });
-    return JSON.parse(out) as Record<string, unknown>;
-  } catch (e) {
-    throw new Error('lnk read failed: ' + p + ' (' + String(((e as Error).message) || e).slice(0, 120) + ')');
-  }
-}
+// shell.readShortcutLink / writeShortcutLink（失败抛错）。路径经环境变量传入，
+// 规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
+// ⚠️ 全异步（execFile）：旧同步版（execFileSync/spawnSync 逐文件起 PowerShell）
+// 是真实桌面 boot 后事件循环冻结的主源 —— 桌面 N 个 .lnk × 每个 1-3s 同步
+// 阻塞，用户在 boot 后点「开始配对」的 RPC 全排在后面（5.3.5 复现实测）。
 
-function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): void {
+function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): Promise<void> {
   const script = String.raw`
 $ErrorActionPreference='Stop'
 $lnk = $env:DSH_LNK_PATH
@@ -185,10 +164,72 @@ try {
     DSH_LNK_DESC: opts.description == null ? '' : String(opts.description),
     DSH_LNK_ICON: opts.icon == null ? '' : String(opts.icon),
   };
-  const st = cp.spawnSync('powershell', ['-NoProfile', '-Command', script], { env, windowsHide: true, timeout: 10000 });
-  if (!st || st.status !== 0) {
-    throw new Error('lnk ' + String(op) + ' failed (' + String(st && st.status) + '): ' + p);
+  // 异步（execFile）：spawnSync 会整段冻结 sidecar 事件循环（boot 后用户
+  // 点「开始配对」正好撞在这串同步 PowerShell 上 —— 5.3.5 复现实测）。
+  return new Promise<void>((resolve, reject) => {
+    cp.execFile('powershell', ['-NoProfile', '-Command', script], { env, windowsHide: true, timeout: 10000 }, (err) => {
+      if (err) reject(new Error('lnk ' + String(op) + ' failed (' + String((err as { code?: unknown }).code) + '): ' + p));
+      else resolve();
+    });
+  });
+}
+
+// 批量读 .lnk：桌面/开始菜单逐个起 PowerShell（每个 1-3s 同步阻塞）是真实
+// 机器 boot 后事件循环冻结的主源 —— N 个图标一次 PowerShell 进程读完，
+// JSONL 逐行回（行序与输入路径序一致，失败行 '{}' 兜底）。整批失败按全部
+// 读不出处理（与逐个 readLnkSafe 的「读不到 = null」语义一致）。
+async function psLnkReadBatchAsync(paths: string[]): Promise<(Record<string, unknown> | null)[]> {
+  if (!paths.length) return [];
+  const script = String.raw`
+$ErrorActionPreference='Continue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$sh = New-Object -ComObject WScript.Shell
+Get-Content -LiteralPath $env:DSH_LNK_LIST -Encoding UTF8 | ForEach-Object {
+  $p = $_
+  try {
+    $sc = $sh.CreateShortcut($p)
+    $icon = [string]$sc.IconLocation
+    if ($icon -match ',\s*\d+$') { $icon = $icon -replace ',\s*\d+$', '' }
+    @{ target = [string]$sc.TargetPath; args = [string]$sc.Arguments; cwd = [string]$sc.WorkingDirectory; description = [string]$sc.Description; icon = $icon } | ConvertTo-Json -Compress
+  } catch { '{}' }
+}
+`;
+  // 路径清单走临时文件（环境变量有长度上限；逐行无引号转义坑）。
+  const listFile = path.join(os.tmpdir(), `dsh-lnklist-${process.pid}-${Date.now()}.txt`);
+  await fs.promises.writeFile(listFile, paths.join('\n'), 'utf8');
+  try {
+    const stdout: string = await new Promise((resolve, reject) => {
+      cp.execFile('powershell', ['-NoProfile', '-Command', script], {
+        env: { ...process.env, DSH_LNK_LIST: listFile },
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000,
+        maxBuffer: 16 * 1024 * 1024,
+      }, (err, out) => { if (err) reject(err); else resolve(String(out ?? '')); });
+    });
+    const lines = stdout.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+    const out: (Record<string, unknown> | null)[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const line = lines[i];
+      if (!line) { out.push(null); continue; }
+      try {
+        const rec = JSON.parse(line) as Record<string, unknown>;
+        out.push(rec && rec.target ? rec : null); // 读不出 target 视为坏链接
+      } catch { out.push(null); }
+    }
+    return out;
+  } catch {
+    return paths.map(() => null);
+  } finally {
+    try { await fs.promises.rm(listFile, { force: true }); } catch { /* noop */ }
   }
+}
+
+function psLnkRead(p: string): Promise<Record<string, unknown>> {
+  return psLnkReadBatchAsync([p]).then(([rec]) => {
+    if (!rec) throw new Error('lnk read failed: ' + p);
+    return rec;
+  });
 }
 
 procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfileFn });
@@ -208,7 +249,7 @@ shortcutsMod.init({
   getDshHome: () => dshHome,
   isPackaged: isPackagedRuntime,
   systemPath: (kind: string) => (kind === 'appData' ? appDataDir : kind === 'desktop' ? path.join(os.homedir(), 'Desktop') : ''),
-  links: { read: psLnkRead, write: psLnkWrite },
+  links: { read: psLnkRead, write: psLnkWrite, readAll: psLnkReadBatchAsync },
 });
 junctionPatrolMod.init({
   log,
@@ -278,7 +319,24 @@ previewMod.init({
   // staticPort 的页面（该端口经 chrome.init 主动下发）。
   fence: (p: string): boolean => {
     try {
-      if (/^\.credentials/i.test(path.basename(p))) return false;
+      // NTFS 8.3 短名别名绕过：.credentials-probe-zz.yaml 的短名 CREDEN~1.YAM
+      // 不匹配 dotfile 拒绝模式，且 realpath 不展开短名（实测）。短名形态
+      // （~N）时经目录枚举 + dev/ino 比对还原真实长名，再对长名做判定 ——
+      // 无 Win32 API 依赖，合法 ~N 文件名（ino 指向自身）不误伤。
+      let judge = path.basename(p);
+      if (/~\d/.test(judge)) {
+        try {
+          const want = fs.statSync(p);
+          const parent = path.dirname(p);
+          for (const entry of fs.readdirSync(parent)) {
+            try {
+              const st = fs.statSync(path.join(parent, entry));
+              if (st.dev === want.dev && st.ino === want.ino) { judge = entry; break; }
+            } catch { /* 逐项尽力 */ }
+          }
+        } catch { /* 还原失败保持原名判定（后续 stat 同样会失败，fail-closed） */ }
+      }
+      if (/^\.credentials/i.test(judge)) return false;
       if ((fileRootsMod.isUnderFileRoots as (x: string) => boolean)(p)) return true;
       const lower = (x: string): string => (process.platform === 'win32' ? x.toLowerCase() : x);
       const fpL = lower(fs.realpathSync(p));
@@ -529,7 +587,8 @@ async function guardedStartAndWait(overlays: string[]): Promise<{ webUrl: string
       setTimeout(() => {
         void (async () => {
           try {
-            (updater.confirmPreviousAgentHealthy as (c: unknown) => boolean)((pathsMod.updCtx as () => unknown)());
+            // async（fs.promises.rm）：agent-previous 数百 MB 级，严禁同步删。
+            await updater.confirmPreviousAgentHealthy((pathsMod.updCtx as () => unknown)());
           } catch (e) {
             log('update', '确认上一版健康失败: ' + String(((e as Error).message) || e));
           }
@@ -685,8 +744,13 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
         }
         // 快捷方式维护（打包态 Windows 才生效：开始菜单 + 便携版桌面）与
         // 临时目录运行告警（便携版解压在 %TEMP% 时提醒搬走）。
+        // maintainShortcuts 是 Promise（PowerShell 全异步批量）：sync try 接
+        // 不住 rejection，显式 .catch；旧同步实现逐图标起 PowerShell 冻结
+        // 事件循环数十秒（boot 后点「开始配对」必卡 —— 5.3.5 复现实测）。
         try {
-          (shortcutsMod.maintainShortcuts as () => void)();
+          void (shortcutsMod.maintainShortcuts as () => Promise<void>)().catch((e) => {
+            say('快捷方式维护失败（不影响启动）: ' + String(((e as Error).message) || e));
+          });
         } catch (e) {
           say('快捷方式维护失败（不影响启动）: ' + String(((e as Error).message) || e));
         }
@@ -1176,7 +1240,7 @@ const updater = require(path.join(DSH_DESKTOP_ROOT, 'updater.js')) as {
   saveSettings(c: unknown, s: unknown): void;
   compareVersions(a: string, b: string): number;
   applyUpdate(c: unknown, latest: string, o: { onProgress: (ev: string) => void }): Promise<void>;
-  confirmPreviousAgentHealthy(c: unknown): boolean;
+  confirmPreviousAgentHealthy(c: unknown): Promise<boolean>;
 };
 const onboardingLogic = require(path.join(DSH_DESKTOP_ROOT, 'scripts', 'onboarding.js')) as {
   CORE_PLUGIN_IDS: string[];

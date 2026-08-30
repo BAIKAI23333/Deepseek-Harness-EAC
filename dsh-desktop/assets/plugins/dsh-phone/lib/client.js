@@ -167,6 +167,12 @@ window.__ModuleLoader__.load({
           qrScriptState = "failed";
           if (aliveRef.current) setQrErr(t("qrFailed"));
         };
+        // 在途脚本被外力移出文档（head 重排/皮肤重建）：脱离文档的经典
+        // async script 不再执行，load/error 永不到来 —— 状态复位允许重建，
+        // 否则二维码区永久停在「加载中」且 failed 重试机制不可达。
+        if (qrScriptState === "loading" && qrScriptEl && !qrScriptEl.isConnected) {
+          qrScriptState = "failed";
+        }
         // 已在加载中：不重复 append，只给本挂载实例补挂同一元素的 load/error
         // 监听（一元素可多监听），避免重挂载实例错过 onload 永远停在「加载中」。
         // 首挂或先前 onerror 失败：重建元素重新挂载，失败标记允许重试。

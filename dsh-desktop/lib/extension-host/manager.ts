@@ -270,10 +270,12 @@ export class ExtensionHostManager {
       const started = applyTransition(id, { type: 'started', stableForMs: 0 });
       if (!started.changed && started.reason !== 'registry-write-failed') {
         // 状态机拒绝 started（如握手期间已被 quarantine/failed）：握手成功
-        // 也不能让 Host 继续运行 —— 立即终止并按失败处理。registry 写盘
-        // 瞬时失败除外：状态机语义仍是 running，杀掉健康 Host 反而过度。
+        // 也不能让 Host 继续运行 —— 走 killHost 统一清理（摘表 + 停心跳 +
+        // 关 peer）。裸 handle.kill() 会留 rt 在 hosts 表里成「僵尸 Host」
+        //（kill 失败/exit 事件丢失时心跳照跑、工具仍可 invoke）。registry
+        // 写盘瞬时失败除外：状态机语义仍是 running，杀掉健康 Host 反而过度。
         log('ext-host', `${id}: started 转移被拒（${started.reason}，state=${started.to}），终止 Host`);
-        try { handle.kill(); } catch { /* 尽力而为 */ }
+        await this.killHost(id);
         return false;
       }
       log('ext-host', `${id}: Host 已运行（pid=${handle.pid}，tools=[${rt.tools.map((t) => t.name).join(',')}]，围栏=${handle.mode}）`);

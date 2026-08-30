@@ -465,12 +465,15 @@ async function applyUpdate(ctx: UpdaterCtx, version: string, { onProgress = null
 }
 
 // 下次启动确认新版健康后调用：清理 agent-previous 备份。
-function confirmPreviousAgentHealthy(ctx: UpdaterCtx): boolean {
+// ⚠️ 严禁同步 rm：agent-previous 是数百 MB 级覆盖层，rmSync 会冻结 sidecar
+// 事件循环（调用方在 boot 后延迟 30s 触发，正值用户可操作窗口，同步删
+// 会复现「全部 RPC 卡死」的 5.3.5 P0 形态）。本函数必须保持 async。
+async function confirmPreviousAgentHealthy(ctx: UpdaterCtx): Promise<boolean> {
   const settings = loadSettings(ctx);
   if (!settings.previousAgent) return false;
   const prevDir = previousAgentDir(ctx);
   try {
-    if (fs.existsSync(prevDir)) fs.rmSync(prevDir, { recursive: true, force: true, maxRetries: 3 });
+    if (fs.existsSync(prevDir)) await fs.promises.rm(prevDir, { recursive: true, force: true, maxRetries: 3 });
     settings.previousAgent = null;
     saveSettings(ctx, settings);
     ctx.log('update', '新版启动确认健康，已清理上一版本备份');

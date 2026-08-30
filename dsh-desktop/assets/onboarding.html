@@ -284,8 +284,10 @@
     });
   }
 
-  $('closeBtn').addEventListener('click', function () { bridge.close(); });
-  skipBtn.addEventListener('click', function () { bridge.close(); });
+  // 提交进行中禁止一切关窗路径（✕/跳过/Escape 同款守卫）：关窗会停在
+  // 「半应用」状态（部分插件已装、wizard 未收口），Escape 已有守卫，补齐按钮。
+  $('closeBtn').addEventListener('click', function () { if (state.busy) return; bridge.close(); });
+  skipBtn.addEventListener('click', function () { if (state.busy) return; bridge.close(); });
 
   // 满血版：全部插件（含默认停用的，如 dsh-dafeiyu）。
   $('fullBtn').addEventListener('click', function () {

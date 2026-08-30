@@ -88,19 +88,33 @@ const check = (name, ok, detail) => {
     // T2 单拍伪造 → desync 检测 + set_bounds 重申
     const markT2 = shellErr.length;
     notify('win.viewport-beat', { w: 166, h: 815, dpr: 1.25, src: 'main' });
-    await sleep(2500);
+    // 等壳层完成 T2 自愈（LAST_VP_HEAL 落在此刻），再恰好压过 2s 节流发
+    // 第二拍：页面自身每 5s 的健康拍会把 desync 连胜清零（可见窗口下
+    // WebView2 不节流 setInterval），第二拍若拖到 5.7s 后几乎必被健康拍
+    // 抢先重置（T3 曾因此时序敏感间歇失败）——提前到 ~4.4s，卡在节流窗
+    // 外、健康拍（+5s 相位）前。
+    await sleep(2200);
     const t2 = shellErr.slice(markT2);
     check('T2 伪造窄视口被检出', t2.includes('viewport desync') && t2.includes('re-asserting'), t2.split('\n').find((l) => l.includes('viewport')) || '无日志');
     const afterT2 = await evalJs('({ w: window.innerWidth, h: window.innerHeight })');
     check('T2 页面存活且视口未受扰动', afterT2.w === baseInner.w && afterT2.h === baseInner.h, JSON.stringify(afterT2));
 
-    // T3 连续第二拍 → 1px 往返（非最大化）后复位
-    await sleep(3200);
-    const markT3 = shellErr.length;
-    notify('win.viewport-beat', { w: 166, h: 815, dpr: 1.25, src: 'main' });
-    await sleep(3500);
-    const t3 = shellErr.slice(markT3);
-    check('T3 升级为窗口尺寸往返', t3.includes('nudged window size'), t3.split('\n').find((l) => l.includes('nudged')) || '无 nudged 日志（可能仍被 2s 节流）');
+    // T3 连续第二拍 → 1px 往返（非最大化）后复位。
+    // 时序说明：页面自身每 5s 的健康拍会把壳层 desync 连胜清零，而升级
+    // （nudge）要求「连续两拍 desync 且都压过 2s 节流」——仿真拍若与健康
+    // 拍相位相撞则连胜被重置，属测试仿真的固有竞态（真实失同步时页面
+    // 视口卡死，根本发不出健康拍）。以重试吸收相位：最多 4 轮，每轮两拍
+    // 间隔 2.3s（过节流、大概率避开 +5s 健康拍相位）。
+    let nudged = '';
+    for (let attempt = 0; attempt < 4 && !nudged; attempt++) {
+      notify('win.viewport-beat', { w: 166, h: 815, dpr: 1.25, src: 'main' });
+      await sleep(2300);
+      const markT3 = shellErr.length;
+      notify('win.viewport-beat', { w: 166, h: 815, dpr: 1.25, src: 'main' });
+      await sleep(1500);
+      nudged = shellErr.slice(markT3).split('\n').find((l) => l.includes('nudged')) || '';
+    }
+    check('T3 升级为窗口尺寸往返', !!nudged, nudged || '四轮仿真均未升级（健康拍相位连撞，时序敏感项）');
     await sleep(1200);
     const afterT3 = await evalJs('({ w: window.innerWidth, h: window.innerHeight })');
     check('T3 往返后窗口尺寸复位', Math.abs(afterT3.w - baseInner.w) <= 2 && Math.abs(afterT3.h - baseInner.h) <= 2, JSON.stringify(afterT3));

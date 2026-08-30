@@ -74,3 +74,43 @@ test('cleanup：无 backups 目录时安全空跑', async () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('cleanup：真实时间戳格式归一化 —— Unix 秒（10位）备份 24h 窗口生效', async () => {
+  // apply 脚本主路径（PowerShell ToUnixTimeSeconds）产出 10 位秒级目录名。
+  // 旧实现直接 parseInt 与 Date.now()(毫秒) 混比：秒级值永远「超 24h」被
+  // 立即删 —— 24h 回滚保护窗形同虚设（本用例钉住修复）。
+  const dir = mkdtempSync(join(tmpdir(), 'bak-clean4-'))
+  try {
+    const nowSec = Math.floor(Date.now() / 1000)
+    const freshSec = String(nowSec - 3600)          // 1 小时前（秒）→ 必须保留
+    const oldSec = String(nowSec - 26 * 3600)       // 26 小时前（秒）→ 应删除
+    mkdirSync(join(dir, 'backups', freshSec), { recursive: true })
+    mkdirSync(join(dir, 'backups', oldSec), { recursive: true })
+    const r = await cleanupClientBackupIfHealthy(makeCtx(dir))
+    assert.deepEqual(r.removed, [oldSec], '秒级 26h 前的备份应删')
+    assert.deepEqual(r.kept, [freshSec], '秒级 1h 前的备份必须保留在 24h 保护窗内')
+    assert.ok(existsSync(join(dir, 'backups', freshSec)))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('cleanup：YYYYMMDDHHmmss（14位 batch 兜底格式）正确解析本地时区时间', async () => {
+  // PowerShell 缺席时 batch 用 %date%/%time% 拼 14 位本地时间。旧实现 parseInt
+  // 得 2e13 > now-ms → Date.now()-at 为负 → 永远不删（磁盘泄漏）。
+  const dir = mkdtempSync(join(tmpdir(), 'bak-clean5-'))
+  try {
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}` +
+      `${String(d.getHours()).padStart(2, '0')}${String(d.getMinutes()).padStart(2, '0')}${String(d.getSeconds()).padStart(2, '0')}`
+    const fresh14 = fmt(new Date(Date.now() - 3600_000))       // 1h 前 → 保留
+    const old14 = fmt(new Date(Date.now() - 26 * 3600_000))    // 26h 前 → 删
+    mkdirSync(join(dir, 'backups', fresh14), { recursive: true })
+    mkdirSync(join(dir, 'backups', old14), { recursive: true })
+    const r = await cleanupClientBackupIfHealthy(makeCtx(dir))
+    assert.deepEqual(r.removed, [old14], '14 位 26h 前的备份应删（修复前永远不删）')
+    assert.deepEqual(r.kept, [fresh14], '14 位 1h 前的备份应保留')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

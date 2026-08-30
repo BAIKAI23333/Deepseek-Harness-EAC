@@ -276,3 +276,43 @@ test('sanitizeCss url() whitelist keeps same-document/same-origin/data-image for
   assert.match(keep, /url\(#grad\)/, 'SVG paint server reference must survive');
   assert.doesNotMatch(keep, /about:blank/);
 });
+
+test('sanitizeCss closes the escaped-quote url() bypass (P1 regression)', () => {
+  // 转义引号（\"）令旧正则的 [^"]* 提前失配 → 整个 url() 不匹配、原文存活。
+  // 浏览器会把 \" 解码为引号，串值 //evil.com/"x 是协议相对外链（数据外带）。
+  const out = s.sanitizeCss('div{background:url("//evil.com/\\"x")}')
+  assert.doesNotMatch(out, /evil\.com/, 'escaped-quote protocol-relative url must not survive');
+});
+
+test('sanitizeCss judges escaped schemes by decoded semantics', () => {
+  // java\73 cript: 解码后 = javascript: —— 必须中和。
+  const ESC = String.fromCharCode(92); // 反斜杠（避开 heredoc/严格模式转义层）
+  const out = s.sanitizeCss('a{background:url(java' + ESC + '73 cript:alert(1))}')
+  assert.doesNotMatch(out, /javascript:/i);
+  assert.match(out, /url\(about:blank\)/);
+});
+
+test('sanitizeCss strips escape-obfuscated @import (at-keyword escapes)', () => {
+  // @\69 mport 解码后 = @import（\69 = i）：浏览器照样发起远程样式表请求。
+  const ESC = String.fromCharCode(92);
+  const out = s.sanitizeCss('@' + ESC + '69 mport "//evil.com/x.css";body{color:red}')
+  assert.doesNotMatch(out, /evil\.com/, 'escaped @import must be stripped');
+  assert.match(out, /color:\s*red/, 'subsequent rules must survive');
+  // 字面形态回归（既有行为保持）
+  const plain = s.sanitizeCss('@import url("//evil.com/y.css");body{color:blue}')
+  assert.doesNotMatch(plain, /evil\.com/);
+  assert.match(plain, /color:\s*blue/);
+});
+
+test('sanitizeCss fail-closed on unterminated quoted url()', () => {
+  const out = s.sanitizeCss('background:url("//evil.com/x')
+  assert.doesNotMatch(out, /evil\.com/, 'unterminated quoted url must be neutralized');
+});
+
+test('sanitizeCss consumes escaped-paren bare url() without residue', () => {
+  // 裸串内转义括号：旧正则裸分支不含转义对，残留 b) 产垃圾 CSS；现整体消费。
+  const ESC = String.fromCharCode(92);
+  const out = s.sanitizeCss('background:url(http://evil.example/a' + ESC + ')b)')
+  assert.doesNotMatch(out, /evil\.example/);
+  assert.doesNotMatch(out, /b\)/, 'no residue after escaped paren');
+});

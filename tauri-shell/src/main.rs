@@ -169,6 +169,10 @@ fn dsh_desktop_dir() -> String {
 static SHELL_NOTIFY: OnceLock<broadcast::Sender<Value>> = OnceLock::new();
 static WEB_URL: OnceLock<RwLock<String>> = OnceLock::new();
 static LAST_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+// 优雅退出/重启意图：退出链路（shutdown 应答→sidecar 自退→EOF）会被 reader
+// 当成「sidecar 死亡」广播 boot.server-died，退出/重启瞬间主窗闪现 /died 页。
+// 各退出/重启入口置位，reader EOF 命中时只回绝在途 RPC、不广播死亡导航。
+static SIDECAR_STOPPING: AtomicBool = AtomicBool::new(false);
 
 fn shell_notify() -> broadcast::Sender<Value> {
     SHELL_NOTIFY
@@ -641,13 +645,17 @@ impl Sidecar {
             // 在途 RPC 各挂满 180s 超时、UI 静默卡死无任何恢复入口。
             // 1) 立即回绝全部在途调用；2) 广播 boot.server-died，复用现有
             // 死亡导航链路把主窗引到 /died（sidecar 崩溃时没人会替它发这个帧）。
+            // 优雅退出/重启（SIDECAR_STOPPING）时跳过广播：那是预期内死亡，
+            // 广播只会让退出瞬间的主窗闪现 /died 页。
             for (_, tx) in pending.lock().await.drain() {
                 let _ = tx.send(Err("sidecar exited".into()));
             }
-            let _ = notify_tx.send(serde_json::json!({
-                "method": "boot.server-died",
-                "params": { "code": "sidecar-exited", "logPath": "" }
-            }));
+            if !SIDECAR_STOPPING.load(Ordering::SeqCst) {
+                let _ = notify_tx.send(serde_json::json!({
+                    "method": "boot.server-died",
+                    "params": { "code": "sidecar-exited", "logPath": "" }
+                }));
+            }
         });
     }
 
@@ -713,7 +721,8 @@ async fn bind_ws_listener() -> Option<TcpListener> {
             Ok(l) => {
                 let real = l.local_addr().map(|a| a.port()).unwrap_or(port);
                 if real != WS_PORT {
-                    eprintln!("[ws] port {} occupied, bridge fallback to {}", port, real);
+                    // 打印被占的原定端口（WS_PORT），不是刚绑定成功的候选端口。
+                    eprintln!("[ws] port {} occupied, bridge fallback to {}", WS_PORT, real);
                 }
                 WS_PORT_EFFECTIVE.store(real, Ordering::SeqCst);
                 return Some(l);
@@ -1036,6 +1045,7 @@ async fn handle_shell_method(
         }
         "recovery.restart" => {
             // 整应用重启（= Electron app.relaunch+exit）。
+            SIDECAR_STOPPING.store(true, Ordering::SeqCst);
             app.request_restart();
             Ok(None)
         }
@@ -1048,6 +1058,7 @@ async fn handle_shell_method(
             // 安全模式 relaunch（恢复中心 safe-mode 动作 → sidecar 通知）：
             // 注入环境标记后整壳重启，新进程的 sidecar 继承该 env。
             std::env::set_var("DSH_DESKTOP_SAFE_MODE", "1");
+            SIDECAR_STOPPING.store(true, Ordering::SeqCst);
             app.request_restart();
             Ok(None)
         }
@@ -1535,10 +1546,27 @@ mod ws_handshake_tests {
 
 async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandle) -> std::io::Result<()> {
     // 先窥探请求头：决定 WS 升级还是极简 HTTP。（peek 取 &self，不消耗流）
+    // peek 是「当前到达多少看多少」：握手头可能分段到达（cookie 头大时
+    // 必然 —— 浏览器 cookie 按域名不按端口隔离，127.0.0.1 上内核设置的
+    // dsh-auth JWT 会被带回桥端口，握手头轻松超 4KB）。单段 peek + 4KB 缓冲
+    // 会把「头未收全」误判为「头部截断」永久拒绝（装机版实测 152 连拒、
+    // 页内桥全灭）。循环 peek 至见 \r\n\r\n；16KB 上限 + 3s 超时兜底。
     let (req_path, wants_upgrade, head) = {
-        let mut buf = [0u8; 4096];
-        let n = stream.peek(&mut buf).await?;
-        let head = String::from_utf8_lossy(&buf[..n]).to_string();
+        let mut buf = [0u8; 16384];
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let head = loop {
+            let n = stream.peek(&mut buf).await?;
+            let h = String::from_utf8_lossy(&buf[..n]).to_string();
+            if h.contains("\r\n\r\n") {
+                break h;
+            }
+            if n >= buf.len() || std::time::Instant::now() >= deadline {
+                // 头超 16KB 或 3s 未收全：拒绝（保持旧截断语义的 fail-closed）。
+                eprintln!("[ws] handshake header incomplete/oversized ({}B peeked), rejecting", n);
+                return Ok(());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
         let first = head.lines().next().unwrap_or("");
         let path = first.split_whitespace().nth(1).unwrap_or("/").to_string();
         (path, head.to_lowercase().contains("upgrade: websocket"), head)
@@ -1623,6 +1651,38 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
             }
             // 2) 其余 → sidecar。
             let sc = state.sidecar.lock().await.clone();
+            // sidecar 已死（reader EOF 后槽位仍持旧 Arc）：/died 页的恢复动作
+            // （boot.start / rescue.safe-mode）必须经 sidecar 执行 —— 不重生则
+            // R3 引到的 /died 链是死胡同（两个按钮必然失败）。检出死亡即重生
+            // + 换槽 + 重接壳层广播订阅。竞态安全：仅当槽位仍指向这个死实例
+            // 时才换（并发连接只会有一个真正重生）。
+            let sc = match sc {
+                Some(s) => {
+                    let exited = matches!(s.child.lock().await.try_wait(), Ok(Some(_)));
+                    if !exited {
+                        Some(s)
+                    } else {
+                        let mut slot = state.sidecar.lock().await;
+                        match slot.clone() {
+                            Some(cur) if !Arc::ptr_eq(&cur, &s) => Some(cur),
+                            _ => match Sidecar::spawn().await {
+                                Ok(fresh) => {
+                                    wire_sidecar_notifications(&app, &fresh);
+                                    let fresh = Arc::new(fresh);
+                                    *slot = Some(fresh.clone());
+                                    eprintln!("[sidecar] respawned after unexpected exit");
+                                    Some(fresh)
+                                }
+                                Err(e) => {
+                                    eprintln!("[sidecar] respawn failed: {}", e);
+                                    Some(s) // 沿用死实例：调用立即失败回报错（语义同旧）
+                                }
+                            },
+                        }
+                    }
+                }
+                None => None,
+            };
             let reply = match sc {
                 Some(sc) => match sc.call(&method, params).await {
                     Ok(result) => serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}),
@@ -1892,7 +1952,11 @@ fn inject_after_doctype(html: String, injection: &str) -> String {
         }
     }
     let doctype = "<!doctype html>";
-    if html.len() >= doctype.len() && html[..doctype.len()].eq_ignore_ascii_case(doctype) {
+    // 字节切片前必须确认 char 边界：前 14 字节含多字节字符时裸切片 panic。
+    if html.len() >= doctype.len()
+        && html.is_char_boundary(doctype.len())
+        && html[..doctype.len()].eq_ignore_ascii_case(doctype)
+    {
         return format!("{}{}{}", &html[..doctype.len()], injection, &html[doctype.len()..]);
     }
     format!("{}{}", injection, html)
@@ -2066,8 +2130,23 @@ static BRIDGE_ONCE: std::sync::Once = std::sync::Once::new();
 static BRIDGE: std::sync::OnceLock<BridgeState> = std::sync::OnceLock::new();
 
 /// sidecar 通知 → 壳层响应（主线程执行窗口操作）。
-fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
-    let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("");
+/// sidecar 通知 → 壳层（导航/恢复页）接线。setup 首生与死后重生共用：
+/// 重生实例有新的 notify_tx，不重接则 boot.web-ready 等事件永久丢失。
+fn wire_sidecar_notifications(app: &tauri::AppHandle, sc: &Sidecar) {
+    let mut notify = sc.notify_tx.subscribe();
+    let app_notify = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match notify.recv().await {
+                Ok(v) => handle_sidecar_notify(&app_notify, &v),
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    });
+}
+
+fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {    let method = v.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let params = v.get("params").cloned().unwrap_or(Value::Null);
     match method {
         "boot.web-ready" => {
@@ -2137,6 +2216,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
         "shell.relaunch" => {
             // agent 更新完成后整壳重启（Tauri restart 会退出并重新拉起自身）。
             println!("[shell] relaunch requested (agent update)");
+            SIDECAR_STOPPING.store(true, Ordering::SeqCst);
             app.request_restart();
         }
         "shell.show-main-window" => {
@@ -2224,21 +2304,10 @@ fn main() {
                     };
                     match Sidecar::spawn().await {
                         Ok(sc) => {
-                            let mut notify = sc.notify_tx.subscribe();
-                            *st.sidecar.lock().await = Some(Arc::new(sc));
                             println!("[shell] sidecar ready");
-
-                            // sidecar 通知 → 壳层（导航/恢复页）
-                            let app_notify = app_handle.clone();
-                            tauri::async_runtime::spawn(async move {
-                                loop {
-                                    match notify.recv().await {
-                                        Ok(v) => handle_sidecar_notify(&app_notify, &v),
-                                        Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                                        Err(_) => break,
-                                    }
-                                }
-                            });
+                            // sidecar 通知 → 壳层（导航/恢复页）：首生与死后重生共用接线。
+                            wire_sidecar_notifications(&app_handle, &sc);
+                            *st.sidecar.lock().await = Some(Arc::new(sc));
 
                             // 恢复中心直开模式（DSH_DESKTOP_RECOVERY=1）：不建主窗、
                             // 不拉起 dsh web —— 直开恢复中心窗口，sidecar 的 boot.start
@@ -2545,6 +2614,9 @@ fn main() {
                 let _ = tauri::async_runtime::block_on(async move {
                     let sc = st.sidecar.lock().await.clone();
                     if let Some(sc) = sc {
+                        // 优雅退出意图置位：其后的 sidecar 自退 EOF 不再触发
+                        // boot.server-died 广播（退出瞬间闪现 /died 页）。
+                        SIDECAR_STOPPING.store(true, Ordering::SeqCst);
                         let _ = tokio::time::timeout(
                             std::time::Duration::from_secs(10),
                             sc.call("shutdown", serde_json::json!({})),

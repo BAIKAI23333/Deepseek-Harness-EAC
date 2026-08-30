@@ -38,8 +38,9 @@ const CONTEXT_TIMEOUT_MS = 1_200;
 /** 工具调用超时由 Supervisor 侧统一（120s），这里只做传输层兜底。 */
 const INVOKE_TIMEOUT_MS = 130_000;
 
-/** 已注册工具名集合（轮询时只补新工具，不重复注册）。 */
-const registered = new Set();
+/** 已注册工具名集合（轮询时只补新工具，不重复注册）。
+ *  per-apply（非模块级）：宿主重载/插件禁用后再启用会拿到全新 tools 注册表，
+ *  模块级 Set 会让已登记名字永不重新注册（工具静默消失）；随 effect 处置清空。 */
 
 /** 工具清单轮询定时器（模块级，保证任意时刻至多一个 interval）。 */
 let toolsRefreshTimer = null;
@@ -92,7 +93,7 @@ function bridgeToolName(pluginId, tool) {
 }
 
 /** 从端点拉工具清单并注册新增项。 */
-async function syncTools(ctx) {
+async function syncTools(ctx, registered) {
   let data;
   try {
     data = await post("/tools", {}, 5_000);
@@ -145,14 +146,23 @@ export async function apply(ctx) {
   }
 
   // ── 工具桥接：首拉 + 周期补注册 ─────────────────────────────────────────
-  await syncTools(ctx);
+  const registered = new Set();
+  await syncTools(ctx, registered);
   // 幂等：apply 可能被重入（组件重载/重复启用），先清掉旧轮询再建新的，
   // 避免多个 interval 并行重复拉取与注册。
   if (toolsRefreshTimer !== null) clearInterval(toolsRefreshTimer);
-  toolsRefreshTimer = setInterval(() => {
-    syncTools(ctx).catch(() => {});
-  }, TOOLS_REFRESH_MS);
-  toolsRefreshTimer.unref?.();
+  // effect 兜底 teardown：插件禁用/宿主卸载时 interval 必须死（否则禁用后
+  // 仍以旧 ctx 轮询）；registered 随处置清空，重启用拿到全新注册表能重新登记。
+  ctx.effect(() => {
+    toolsRefreshTimer = setInterval(() => {
+      syncTools(ctx, registered).catch(() => {});
+    }, TOOLS_REFRESH_MS);
+    toolsRefreshTimer.unref?.();
+    return () => {
+      if (toolsRefreshTimer !== null) { clearInterval(toolsRefreshTimer); toolsRefreshTimer = null; }
+      registered.clear();
+    };
+  });
 
   // ── 上下文注入：agent 作用域的 system-prompt/assemble 瀑布 ─────────────
   // （与 tdai-memory 同一挂法：session/created 后一拍再取 agent.ctx，

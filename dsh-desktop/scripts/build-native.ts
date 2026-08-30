@@ -8,7 +8,8 @@
  *   1. `rustc --print sysroot` 定位工具链内 rust-lld.exe；
  *   2. 复制为 %TEMP%/dsh-lld-link/lld-link.exe（argv0 即 flavor，免 -flavor
  *      参数；放 TEMP 避开仓库路径空格 —— CARGO_ENCODED_RUSTFLAGS 见下）；
- *   3. 以 RUSTFLAGS=-C linker=... 调 cargo（build/test/clippy 统一入口）。
+ *   3. 以 CARGO_ENCODED_RUSTFLAGS=-Clinker=... 调 cargo（build/test/clippy 统一入口；
+ *      encoded 形式：RUSTFLAGS 按空白切分且引号变字面字符，路径含空格必挂）。
  *
  * 用法（module 缺省 supervisor，保持既有调用零改动）：
  *   node scripts/build-native.js build [module] [--release] → cargo build
@@ -54,8 +55,9 @@ function sysroot(): string {
 }
 
 /** 准备 lld-link.exe（从工具链 rust-lld 复制；argv0 决定 MSVC link 兼容模式）。
- * 目标放到 %TEMP%/dsh-lld-link/（无空格路径）——RUSTFLAGS 按空白切分，
- * 项目路径含空格（DeepSeek Harness\dsh max）时引号方案也不可靠，绕开最稳。 */
+ * 目标放到 %TEMP%/dsh-lld-link/ —— %TEMP% 本身也可能含空格用户名，
+ * 最终由 CARGO_ENCODED_RUSTFLAGS（ 分隔、无空白切分歧义）兜底；
+ * lld-link 落 TEMP 只是顺带避开仓库路径空格（DeepSeek Harness\dsh max）。 */
 function prepareLldLink(): string {
   const src = path.join(sysroot(), 'lib', 'rustlib', 'x86_64-pc-windows-msvc', 'bin', 'rust-lld.exe');
   if (!fs.existsSync(src)) throw new Error(`rust-lld 不存在: ${src}`);

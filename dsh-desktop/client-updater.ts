@@ -1284,6 +1284,28 @@ function applyUpdate(ctx: UpdateCtx, pending: PendingUpdate, opts?: ApplyUpdateO
 // ⚠️ 必须异步（fs.promises.rm）且由调用方在 boot 应答后延迟调用：真实机器
 // 的 backups/ 可累积数 GB 镜像，同步 rm 会冻结 sidecar 事件循环数分钟
 //（所有 RPC 卡死 + boot.start 180s 超时弹 died 页，5.3.5 首发实测事故）。
+// backups/<ts> 目录名有三种真实格式（apply 脚本时代产生）：
+//   10 位 = Unix 秒（PowerShell ToUnixTimeSeconds，主路径）
+//   13 位 = Unix 毫秒（测试/早期写入）
+//   14 位 = YYYYMMDDHHmmss（PowerShell 缺席时的 batch 兜底，本地时区）
+// 直接 parseInt 会把秒级/兜底格式与 Date.now()（毫秒）混比：秒级永远
+// 「超过 24h」被立即删（24h 回滚保护窗形同虚设），14 位兜底格式比
+// now-ms 还大、永远不删。先按位数归一化到毫秒再比较；配不上回退 mtime，
+// mtime 也拿不到就宁留勿删。
+function backupDirTimestampMs(name: string, dir: string): number {
+  const s = String(name).trim();
+  if (/^\d{10}$/.test(s)) return parseInt(s, 10) * 1000;
+  if (/^\d{13}$/.test(s)) return parseInt(s, 10);
+  if (/^\d{14}$/.test(s)) {
+    const t = new Date(
+      +s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+      +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14),
+    ).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  try { return fs.statSync(dir).mtimeMs; } catch { return 0; }
+}
+
 async function cleanupClientBackupIfHealthy(ctx: UpdateCtx, opts: { shellExe?: string } = {}): Promise<{ removed: string[]; kept: string[] }> {
   const removed: string[] = [];
   const kept: string[] = [];
@@ -1300,11 +1322,8 @@ async function cleanupClientBackupIfHealthy(ctx: UpdateCtx, opts: { shellExe?: s
       sawBackup = true;
       const dir = path.join(backupsDir, e.name);
       if (fs.existsSync(path.join(dir, '.keep'))) { kept.push(e.name); continue; }
-      let at = 0;
-      try {
-        const ts = parseInt(e.name, 10);
-        at = Number.isFinite(ts) && ts > 0 ? ts : fs.statSync(dir).mtimeMs;
-      } catch { continue; }
+      const at = backupDirTimestampMs(e.name, dir);
+      if (!at) continue; // 时间不可判定：宁留勿删
       if (Date.now() - at < KEEP_MS) { kept.push(e.name); continue; }
       try {
         await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 });
@@ -1323,9 +1342,18 @@ async function cleanupClientBackupIfHealthy(ctx: UpdateCtx, opts: { shellExe?: s
     try {
       if (fs.existsSync(shellExe + '.bak.marker')) {
         // .bak/.crash 是单文件 exe（百 MB 级），同样走异步删。
+        // 删除顺序：marker 必须最后删 —— 它是下次启动再进本分支的门，
+        // 先删 marker 后 .bak 失败（杀软/索引器正占着刚换下的百 MB exe）
+        // 会永久残留 .bak/.crash（合计 2× exe 体积）且再无重试机会。
+        // 各文件独立 try：一个失败不拖累其余的清理。
+        for (const suffix of ['.bak', '.crash']) {
+          try {
+            await fs.promises.rm(shellExe + suffix, { force: true, maxRetries: 3 });
+          } catch (err) {
+            ctx.log('update', `清理便携 ${suffix} 失败（下次启动重试）: ` + ((err as Error) && (err as Error).message || err));
+          }
+        }
         await fs.promises.rm(shellExe + '.bak.marker', { force: true });
-        await fs.promises.rm(shellExe + '.bak', { force: true, maxRetries: 3 });
-        await fs.promises.rm(shellExe + '.crash', { force: true, maxRetries: 3 });
         ctx.log('update', '新版启动确认健康，已清理便携 .bak 保险丝');
       }
     } catch (err) {

@@ -58,11 +58,15 @@ jobs:
         id: ver
         working-directory: ${{ github.workspace }}
         shell: bash
+        env:
+          # workflow_dispatch 输入走 env 间接引用：直接插值进 run 脚本是
+          # script-injection 模式（输入含 "/$() 即在 runner 上任意执行）。
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -eu
           VERSION="$(node -p "require('./dsh-desktop/package.json').version")"
           # tag 输入留空时按版本生成默认 tag（macos-arm64-<版本>）
-          TAG="${{ inputs.tag }}"
+          TAG="$INPUT_TAG"
           if [ -z "$TAG" ]; then TAG="macos-arm64-$VERSION"; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"

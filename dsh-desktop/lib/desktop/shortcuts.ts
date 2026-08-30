@@ -49,8 +49,11 @@ interface ShortcutSettings extends Record<string, unknown> {
 }
 
 /** 注入接口：由宿主提供。links 是 .lnk 读写驱动（Electron=shell 快捷方式 API；
- * Tauri=Rust LinkDriver），read 返回链接描述对象或抛错，write(path, op, opts)
- * 失败时抛错。 */
+ * Tauri=Rust LinkDriver → 实际为 sidecar 的 PowerShell COM 异步封装），read
+ * 返回链接描述对象或抛错，write(path, op, opts) 失败时抛错。
+ * ⚠️ 全 Promise 化：同步驱动（execFileSync 逐文件起 PowerShell）在真实桌面
+ * 会冻结事件循环数十秒（boot 后 RPC 全卡，5.3.5 复现实测）。readAll 为批量
+ * 可选优化（单进程读 N 个链接）。 */
 export interface ShortcutsCtx {
   log(tag: string, msg: string): void;
   showBox(opts: Record<string, unknown>): Promise<{ response: number }>;
@@ -59,8 +62,9 @@ export interface ShortcutsCtx {
   isPackaged?(): boolean;
   systemPath?(kind: 'appData' | 'desktop'): string;
   links: {
-    read(p: string): LnkLink;
-    write(p: string, op: 'create' | 'replace' | 'update', opts: Record<string, unknown>): void;
+    read(p: string): Promise<LnkLink>;
+    write(p: string, op: 'create' | 'replace' | 'update', opts: Record<string, unknown>): Promise<void>;
+    readAll?(paths: string[]): Promise<(LnkLink | null)[]>;
   };
 }
 
@@ -107,34 +111,42 @@ function listLnkFiles(dir: string): string[] {
   } catch { return []; }
 }
 
-function readLnkSafe(p: string): LnkLink | null {
-  try { return ctx.links.read(p); } catch { return null; }
+async function readLnkSafe(p: string): Promise<LnkLink | null> {
+  try { return await ctx.links.read(p); } catch { return null; }
 }
 
-function lnkTargetsApp(lnkPath: string, target: string): boolean {
-  return shortcutTargetsApp(readLnkSafe(lnkPath), target);
+async function lnkTargetsApp(lnkPath: string, target: string): Promise<boolean> {
+  return shortcutTargetsApp(await readLnkSafe(lnkPath), target);
 }
 
-function lnkUsesManagedIcon(lnkPath: string, ico: string): boolean {
+async function lnkUsesManagedIcon(lnkPath: string, ico: string): Promise<boolean> {
   if (!ico) return false;
-  const link = readLnkSafe(lnkPath);
+  const link = await readLnkSafe(lnkPath);
   if (!link) return false;
   // 无自定义图标（icon 为空，用 target 自带）视为可接管。
   if (!link.icon) return true;
   return path.resolve(String(link.icon)).toLowerCase() === path.resolve(ico).toLowerCase();
 }
 
-function collectDesktopShortcutEntries(dirs: { scope: string; dir: string }[]): DesktopEntry[] {
+async function collectDesktopShortcutEntries(dirs: { scope: string; dir: string }[]): Promise<DesktopEntry[]> {
   const rows: DesktopEntry[] = [];
   for (const { scope, dir } of dirs) {
     for (const filePath of listLnkFiles(dir)) {
-      rows.push({ scope, dir, filePath, link: readLnkSafe(filePath) });
+      rows.push({ scope, dir, filePath, link: null });
     }
+  }
+  // 批量读（宿主支持时单进程一次读完）；不支持则逐个 await（仍是异步，
+  // 不堵事件循环，只是多几轮进程）。
+  if (typeof ctx.links.readAll === 'function') {
+    const links = await ctx.links.readAll(rows.map((r) => r.filePath));
+    for (let i = 0; i < rows.length; i++) rows[i]!.link = links[i] ?? null;
+  } else {
+    for (const row of rows) row.link = await readLnkSafe(row.filePath);
   }
   return rows;
 }
 
-export function maintainShortcuts(): void {
+export async function maintainShortcuts(): Promise<void> {
   if (!isPackaged() || !IS_WIN) return;
   // E2E / 自动化：跳过快捷方式维护（临时 exe 不得改写真实开始菜单/桌面
   // 快捷方式的指向）。与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同一约定。
@@ -164,7 +176,7 @@ export function maintainShortcuts(): void {
     for (const legacy of legacyShortcuts) {
       try { if (fs.existsSync(legacy)) { fs.rmSync(legacy); changed = true; } } catch { /* 尽力清理 */ }
     }
-    let desktopEntries = collectDesktopShortcutEntries(desktopDirs);
+    let desktopEntries = await collectDesktopShortcutEntries(desktopDirs);
     // exe 被移动过或图标设计更新：开始菜单照常维护；桌面仅刷新便携版
     // 运行时原样生成的快捷方式。安装版桌面快捷方式统一交给 NSIS，用户
     // 改名/换图标/加参数后的快捷方式也不再覆盖。
@@ -172,9 +184,9 @@ export function maintainShortcuts(): void {
     const iconOutdated = settings.shortcutIcon !== SHORTCUT_ICON_VERSION;
     if (targetMoved || iconOutdated) {
       const startMenuOwn = fs.existsSync(startMenu)
-        && shortcutTargetsApp(readLnkSafe(startMenu), target, targetMoved ? settings.shortcutTarget : null);
-      if (startMenuOwn && (targetMoved || lnkUsesManagedIcon(startMenu, ico))) {
-        try { ctx.links.write(startMenu, 'replace', opts); changed = true; } catch { /* 尽力维护 */ }
+        && shortcutTargetsApp(await readLnkSafe(startMenu), target, targetMoved ? settings.shortcutTarget : null);
+      if (startMenuOwn && (targetMoved || await lnkUsesManagedIcon(startMenu, ico))) {
+        try { await ctx.links.write(startMenu, 'replace', opts); changed = true; } catch { /* 尽力维护 */ }
       }
       if (portable && policy !== 'never') {
         let desktopRefreshed = false;
@@ -186,18 +198,18 @@ export function maintainShortcuts(): void {
           });
           if (kind !== 'runtime') continue;
           try {
-            ctx.links.write(entry.filePath, 'replace', opts);
+            await ctx.links.write(entry.filePath, 'replace', opts);
             changed = true;
             desktopRefreshed = true;
           } catch { /* 尽力维护 */ }
         }
-        if (desktopRefreshed) desktopEntries = collectDesktopShortcutEntries(desktopDirs);
+        if (desktopRefreshed) desktopEntries = await collectDesktopShortcutEntries(desktopDirs);
       }
     }
     // 开始菜单快捷方式：系统通知（Toast）的前置条件，按 target 匹配维护。
-    const startMenuOk = fs.existsSync(startMenu) && lnkTargetsApp(startMenu, target);
+    const startMenuOk = fs.existsSync(startMenu) && (await lnkTargetsApp(startMenu, target));
     if (!startMenuOk) {
-      try { ctx.links.write(startMenu, 'create', opts); changed = true; } catch { /* 尽力维护 */ }
+      try { await ctx.links.write(startMenu, 'create', opts); changed = true; } catch { /* 尽力维护 */ }
     }
     // 桌面快捷方式采用单一创建者：安装版只由 NSIS 创建，便携版才由
     // 运行时创建。扫描个人桌面 + 公共桌面，旧版留下的重复项只删除可
@@ -220,7 +232,7 @@ export function maintainShortcuts(): void {
       }
     }
     if (desktopPlan.create) {
-      try { ctx.links.write(desktop, 'create', opts); changed = true; } catch { /* 尽力维护 */ }
+      try { await ctx.links.write(desktop, 'create', opts); changed = true; } catch { /* 尽力维护 */ }
     }
     if (changed) {
       settings.shortcutTarget = target;

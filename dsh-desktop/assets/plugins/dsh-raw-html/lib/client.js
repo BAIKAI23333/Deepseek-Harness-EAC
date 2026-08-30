@@ -580,12 +580,69 @@ window.__ModuleLoader__.load({
     //   · data:image/…  内联图片数据；data:text/html 等其余 data: 一律不放行
     // 其余（http(s)、协议相对 //、javascript:、未知协议、其余 data:）整体替换为
     // url(about:blank)，三种引号形态（"…"、'…'、无引号）均覆盖。白名单按原始
-    // 文本判定：浏览器会解码 CSS 转义（如 url(java\73 cript:…)），转义形态无法
-    // 命中白名单，只会落入替换分支，天然免疫转义绕过。
+    // 文本判定。注意原注释「转义形态无法命中白名单只会落入替换分支」是错的：
+    // 正则的引号分支 [^"]* 遇到 CSS 转义引号（\"）会提前失配，导致整个 url()
+    // 匹配失败、原文存活（实测 url("//evil.com/\"x") 逐字节通过）。因此：
+    //   1) 匹配正则必须转义感知（\\ 消费转义对，引号串/裸串都一样）；
+    //   2) 判定前先把 CSS 转义解码（\73→s、\"→"），按浏览器语义判定；
+    //   3) 未闭合引号串 url("… 兜底吞掉（fail-closed）。
+    function cssUnescape(value) {
+      return String(value).replace(/\\([0-9a-fA-F]{1,6}\s|[0-9a-fA-F]{1,6}|.)/g, function (all, esc) {
+        if (/^[0-9a-fA-F]/.test(esc)) {
+          var cp = parseInt(esc.trim(), 16)
+          return String.fromCodePoint(!isNaN(cp) && cp <= 0x10ffff && cp > 0 ? cp : 0xfffd)
+        }
+        return esc
+      })
+    }
+
+    // 转义感知的 @import 剥离：@\69 mport 这类 at-keyword 转义浏览器照样执行，
+    // 字面正则 /\@import/ 打不到。逐字符扫描，@ 后解码 ident 命中 import 即
+    // 跳到下一个分号（@import 无块形态），其余原样拷贝。
+    function stripCssImports(css) {
+      var out = ''
+      var i = 0
+      var n = css.length
+      while (i < n) {
+        var ch = css.charAt(i)
+        if (ch !== '@') { out += ch; i++; continue }
+        var j = i + 1
+        var ident = ''
+        while (j < n) {
+          var c = css.charAt(j)
+          if (c === '\\') {
+            var m = /^\\([0-9a-fA-F]{1,6})(\s)?/.exec(css.slice(j, j + 9))
+            if (m) {
+              var cp2 = parseInt(m[1], 16)
+              ident += String.fromCodePoint(!isNaN(cp2) && cp2 <= 0x10ffff && cp2 > 0 ? cp2 : 0xfffd)
+              j += m[0].length
+              continue
+            }
+            if (j + 1 < n) { ident += css.charAt(j + 1); j += 2; continue }
+            j++
+            continue
+          }
+          if (/[a-zA-Z0-9_-]/.test(c)) { ident += c; j++; continue }
+          break
+        }
+        if (ident.toLowerCase() === 'import') {
+          while (j < n && css.charAt(j) !== ';') j++
+          if (j < n) j++
+          i = j
+          continue
+        }
+        out += ch
+        i++
+      }
+      return out
+    }
+
     function sanitizeCssUrl(all, dq, sq, bare) {
       var value = dq != null ? dq : sq != null ? sq : bare
-      value = String(value == null ? '' : value).trim()
+      value = cssUnescape(String(value == null ? '' : value)).trim()
       if (!value) return 'url()'
+      // 判定按解码后语义；放行时回原文（all）——原文解码后与判定值恒等，
+      // 不存在「解码后允许但原文更危险」的形态。
       if (value.charAt(0) === '#') return all
       if (value.charAt(0) === '/' && value.charAt(1) !== '/') return all
       if (/^data:image\//i.test(value)) return all
@@ -593,10 +650,13 @@ window.__ModuleLoader__.load({
     }
 
     function sanitizeCss(css) {
-      return String(css || '')
-        .replace(/@import\b[^;]*;?/gi, '')
+      return stripCssImports(String(css || ''))
         .replace(/expression\s*\([^)]*\)/gi, '')
-        .replace(/url\s*\(\s*(?:"([^"]*)"|'([^']*)'|([^)'"]*))\s*\)/gi, sanitizeCssUrl)
+        .replace(/url\s*\(\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'((?:[^'\\]|\\[\s\S])*)'|((?:[^)'"\\]|\\[\s\S])*))\s*\)/gi, sanitizeCssUrl)
+        // fail-closed：未闭合引号串的 url("…/url('… 吞到样式表尾（浏览器对
+        // 未闭合串同样吞到块尾，判定面必须与浏览器一致，兜底即中和）。
+        .replace(/url\s*\(\s*"(?:[^"\\]|\\[\s\S])*$/gi, 'url(about:blank)')
+        .replace(/url\s*\(\s*'(?:[^'\\]|\\[\s\S])*$/gi, 'url(about:blank)')
         .replace(/(^|[;{])\s*(?:behavior|-moz-binding)\s*:[^;}]*(?=[;}])/gi, '$1')
         .replace(/(^|[;{])\s*position\s*:\s*(?:fixed|sticky)\s*;?/gi, '$1')
         .replace(/(^|[;{])\s*content\s*:[^;}]*(?=[;}])/gi, '$1')

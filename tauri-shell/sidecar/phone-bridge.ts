@@ -420,6 +420,32 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
       // 手机是否自带内核 dsh-auth-*（透传优先语义，见 withKernelCookie）。
       const phoneCarriedAuthCookie =
         typeof req.headers.cookie === 'string' && /dsh-auth-[^=]+=/i.test(req.headers.cookie);
+      // 请求体必须先缓冲再转发：req 流只能消费一次，401 重放需要原体重发
+      //（旧实现重放时对已 ended 的 req 再 pipe —— content-length 照带、
+      // 体为空，内核按空载荷裁决并以 200 收场，手机侧静默丢请求体）。
+      // 超过上限直接 413，不做「部分缓冲后降级流式」（部分体已读，流式
+      // 只会发出截断体）。GET/HEAD 无体跳过缓冲。
+      const BODY_CAP = 64 * 1024 * 1024;
+      let bufferedBody: Buffer | null = null;
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        const chunks: Buffer[] = [];
+        let total = 0;
+        try {
+          for await (const chunk of req) {
+            const b = chunk as Buffer;
+            total += b.length;
+            if (total > BODY_CAP) {
+              json(res, 413, { error: 'payload too large' });
+              return;
+            }
+            chunks.push(b);
+          }
+        } catch {
+          try { res.destroy(); } catch { /* noop */ }
+          return;
+        }
+        bufferedBody = Buffer.concat(chunks);
+      }
       const proxyOnce = async (kernelCookie: string | null, forceFreshCookie: boolean): Promise<void> => {
         const headers = proxyHeaders(req, upstream.origin);
         if (forceFreshCookie && typeof headers.cookie === 'string') {
@@ -431,6 +457,12 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
           else delete headers.cookie;
         }
         withKernelCookie(headers, kernelCookie);
+        if (bufferedBody !== null) {
+          // 体已重建（缓冲）：长度以缓冲为准并丢弃原 transfer-encoding，
+          // 否则 chunked + content-length 双 framing 非法（HPE 拒收）。
+          delete headers['transfer-encoding'];
+          headers['content-length'] = String(bufferedBody.length);
+        }
         const upstreamReq = http.request(
           {
             host: upstream.host,
@@ -516,7 +548,9 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
         res.on('close', () => {
           if (!res.writableEnded) upstreamReq.destroy();
         });
-        req.pipe(upstreamReq);
+        // 体走缓冲（可无限次重放）；无体请求直接 end。
+        if (bufferedBody !== null) upstreamReq.end(bufferedBody);
+        else upstreamReq.end();
       };
       // 内核鉴权自兑（前置）：缓存缺失/内核重启轮换时先兑换 dsh-auth-* cookie。
       const kernelCookie = await ensureKernelCookie(false);
@@ -591,6 +625,12 @@ export function createPhoneBridge(options: PhoneBridgeOptions) {
             if (upHead.length > 0) socket.write(upHead);
             liveWsSockets.add(socket as net.Socket);
             liveWsSockets.add(upSocket as net.Socket);
+            // TCP keepalive：手机切网/休眠常无 FIN/RST（静默丢包），两端都不发
+            // close 时 pipe/drop 永远不会触发。keepalive 探测（30s 空闲起探，
+            // 对端死亡约数十秒内本端 close/error）→ drop() 销毁对端 —— 内核侧
+            // WS 会话与桥两侧 socket 才能真正回收。
+            (socket as net.Socket).setKeepAlive(true, 30_000);
+            (upSocket as net.Socket).setKeepAlive(true, 30_000);
             const drop = (): void => {
               liveWsSockets.delete(socket as net.Socket);
               liveWsSockets.delete(upSocket as net.Socket);
