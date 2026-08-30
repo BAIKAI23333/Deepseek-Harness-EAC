@@ -24,7 +24,8 @@
 // WS 桥（127.0.0.1:19873）方法分流：
 //   壳层本地拦截（本文件 handle_shell_method）：
 //     win.minimize / win.toggle-maximize / win.close / win.is-maximized /
-//     win.start-dragging（send）/ win.maximized（通知推送）
+//     win.start-dragging（send）/ win.viewport-beat（send，视口失同步自愈）/
+//     win.maximized（通知推送）
 //     float.open（per-webview data_directory 隔离 = 硬门槛①）/ float.close
 //     menu.action 的纯壳动作（reload / devtools / fullscreen / quit / open-browser）
 //     shell.open-external（http(s) 校验后系统打开）
@@ -268,6 +269,15 @@ fn save_window_state(app: &tauri::AppHandle) {
         h: logical.height,
         maximized: win.is_maximized().unwrap_or(false),
     };
+    // 落盘防御（与启动侧 <600×400 丢弃互为镜像）：还原位被 DPI/显示器
+    // 变化污染成极小尺寸的会话，坏值只允许存在当次，绝不写盘毒化下次启动。
+    if state.w < 600.0 || state.h < 400.0 {
+        eprintln!(
+            "[shell] window-state too small on save ({}x{}), skip persist",
+            state.w, state.h
+        );
+        return;
+    }
     let json = match serde_json::to_string(&state) {
         Ok(j) => j,
         Err(e) => {
@@ -301,6 +311,109 @@ fn throttle_save_window_state(app: &tauri::AppHandle) {
     }
     *last = Some(now);
     save_window_state(app);
+}
+
+// ---------------------------------------------------------------------------
+// 视口失同步自愈（issue：全屏窗口只有左侧 ~208px 条带被绘制、其余黑屏，
+// 页面按 166px 窄视口布局 —— 用户看到"侧边栏图标只剩一个"的冻结画面）。
+//
+// 根因：WebView2 的视口边界由壳层在 WM_SIZE 时同步；窗口尺寸/显示器 DPI
+// 变化事件被吞（副屏拔插、系统缩放切换、启动期主线程阻塞）后视口停留在
+// 旧物理尺寸，页面 layout 按旧窄尺寸排，窗口其余区域永不重绘。
+//
+// 检测：桥心跳（5s）上报页面 innerWidth/innerHeight/devicePixelRatio
+// （win.viewport-beat），与窗口 inner_size 比对，超差即判定失同步。
+// 自愈：① 重申 webview bounds（不动窗口本身，最大化态安全，WebView2
+// 重新布局+合成，撕裂的黑屏条带随即恢复）；② 连续两拍仍未纠正且非最大化
+// 时，升级为 1px 窗口尺寸往返强制 WM_SIZE → 壳层按窗口实际尺寸重绑 webview。
+// ---------------------------------------------------------------------------
+
+/// 上次自愈时刻（节流 ≥2s）与连续失同步拍数。
+static LAST_VP_HEAL: std::sync::Mutex<Option<std::time::Instant>> =
+    std::sync::Mutex::new(None);
+static VP_DESYNC_STREAK: AtomicU64 = AtomicU64::new(0);
+
+/// 心跳报文的视口与窗口实际尺寸比对，失同步时分级自愈。
+fn heal_viewport_desync(app: &tauri::AppHandle, page_w: f64, page_h: f64, dpr: f64) {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window("main") else { return };
+    // 最小化/隐藏时页面视口本来就不会跟随，不做误报。
+    if win.is_minimized().unwrap_or(true) || !win.is_visible().unwrap_or(false) {
+        VP_DESYNC_STREAK.store(0, Ordering::SeqCst);
+        return;
+    }
+    let Ok(phys) = win.inner_size() else { return };
+    let exp_w = (page_w * dpr).round();
+    let exp_h = (page_h * dpr).round();
+    let dw = (f64::from(phys.width) - exp_w).abs();
+    let dh = (f64::from(phys.height) - exp_h).abs();
+    if dw <= 8.0 && dh <= 8.0 {
+        VP_DESYNC_STREAK.store(0, Ordering::SeqCst);
+        return;
+    }
+    let now = std::time::Instant::now();
+    let throttled = match LAST_VP_HEAL.lock() {
+        Ok(mut last) => {
+            let hit = last
+                .map(|t| now.duration_since(t).as_millis() < 2000)
+                .unwrap_or(false);
+            if !hit {
+                *last = Some(now);
+            }
+            hit
+        }
+        Err(_) => true,
+    };
+    if throttled {
+        return;
+    }
+    eprintln!(
+        "[shell] viewport desync: page {}x{}@{} vs window {}x{}, re-asserting webview bounds",
+        page_w, page_h, dpr, phys.width, phys.height
+    );
+    // ① 直接重申 webview bounds = 窗口客户区物理尺寸。
+    let rect = tauri::Rect {
+        position: tauri::PhysicalPosition::new(0i32, 0i32).into(),
+        size: tauri::PhysicalSize::new(phys.width, phys.height).into(),
+    };
+    if let Err(e) = win.as_ref().set_bounds(rect) {
+        eprintln!("[shell] webview set_bounds failed: {}", e);
+    }
+    // ② 升级路径：连续两拍失同步且非最大化 → 1px 往返强制 WM_SIZE
+    //（最大化窗口 set_size 会破坏最大化态，只走 ①）。
+    let streak = VP_DESYNC_STREAK.fetch_add(1, Ordering::SeqCst);
+    if streak >= 1 && !win.is_maximized().unwrap_or(false) {
+        let w = phys.width;
+        let h = phys.height;
+        let _ = win.set_size(tauri::PhysicalSize::new(w, h.saturating_sub(1)));
+        let win2 = win.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            let _ = win2.set_size(tauri::PhysicalSize::new(w, h));
+        });
+        eprintln!("[shell] viewport desync persists, nudged window size {}x{}", w, h);
+    }
+}
+
+/// DPI/显示器变化后重申 webview bounds（ScaleFactorChanged 事件调用）。
+/// tao 处理 WM_DPICHANGED 会重设窗口尺寸，但 WebView2 视口跟随偶发丢失
+/// —— 即视口失同步的主诱因，这里延迟一拍显式重绑兜底。
+fn reassert_webview_bounds(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    let Some(win) = app.get_webview_window("main") else { return };
+    let Ok(phys) = win.inner_size() else { return };
+    let rect = tauri::Rect {
+        position: tauri::PhysicalPosition::new(0i32, 0i32).into(),
+        size: tauri::PhysicalSize::new(phys.width, phys.height).into(),
+    };
+    if let Err(e) = win.as_ref().set_bounds(rect) {
+        eprintln!("[shell] webview set_bounds (dpi) failed: {}", e);
+    } else {
+        eprintln!(
+            "[shell] webview bounds re-asserted after dpi change ({}x{})",
+            phys.width, phys.height
+        );
+    }
 }
 
 /// 计算主窗初始（inner_size 逻辑尺寸, position 逻辑坐标, 是否恢复最大化）。
@@ -617,6 +730,25 @@ async fn handle_shell_method(
             if let Some(w) = app.get_webview_window("main") {
                 if w.is_maximized().unwrap_or(false) {
                     let _ = w.unmaximize();
+                    // 还原位损坏防御（issue：副屏/DPI 变化污染 Windows 保存的
+                    // 还原位，还原后窗口只剩极窄一条）：还原后低于 OS 下限
+                    // （480×360）→ 立即按当前显示器 work area 重设合理尺寸。
+                    if let Ok(p) = w.inner_size() {
+                        let scale = w.scale_factor().unwrap_or(1.0);
+                        let lw = f64::from(p.width) / scale;
+                        let lh = f64::from(p.height) / scale;
+                        if lw < min_inner_w() || lh < min_inner_h() {
+                            let (nw, nh, pos, _) = resolved_initial_bounds(app);
+                            let _ = w.set_size(tauri::LogicalSize::new(nw, nh));
+                            if let Some((x, y)) = pos {
+                                let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+                            }
+                            eprintln!(
+                                "[shell] corrupt restore bounds ({}x{} logical), reset to {}x{}",
+                                lw, lh, nw, nh
+                            );
+                        }
+                    }
                 } else {
                     let _ = w.maximize();
                 }
@@ -664,6 +796,20 @@ async fn handle_shell_method(
         "win.start-dragging" => {
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.start_dragging();
+            }
+            Ok(None) // send 型
+        }
+        "win.viewport-beat" => {
+            // 桥心跳（5s）随帧上报页面视口；仅消费主窗报文（浮窗比对无意义）。
+            // 见 heal_viewport_desync 顶部注释：视口失同步检测 + 自愈。
+            let src = params.get("src").and_then(|v| v.as_str()).unwrap_or("main");
+            if src == "main" {
+                let w = params.get("w").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let h = params.get("h").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let dpr = params.get("dpr").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                if w > 0.0 && h > 0.0 && dpr > 0.0 {
+                    heal_viewport_desync(app, w, h, dpr);
+                }
             }
             Ok(None) // send 型
         }
@@ -2228,6 +2374,17 @@ fn main() {
                 tauri::WindowEvent::Moved(_) => {
                     if window.label() == "main" {
                         throttle_save_window_state(window.app_handle());
+                    }
+                }
+                // DPI/显示器切换：WebView2 视口跟随偶发丢失（视口失同步主诱因），
+                // 延迟一拍显式重申 webview bounds。
+                tauri::WindowEvent::ScaleFactorChanged { .. } => {
+                    if window.label() == "main" {
+                        let app = window.app_handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                            reassert_webview_bounds(&app);
+                        });
                     }
                 }
                 _ => {}

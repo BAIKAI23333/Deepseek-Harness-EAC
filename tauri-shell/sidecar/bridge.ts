@@ -663,9 +663,24 @@
 
   // ---------------------------------------------------------------------------
   // Renderer 心跳：每 5s 上报一次（visibilitychange 回前台时立即补报）。
+  // 同时上报页面视口（win.viewport-beat，壳层本地拦截）：WebView2 在窗口
+  // 尺寸/DPI 变化事件被吞（副屏拔插、DPI 切换、启动期阻塞）时视口停留在
+  // 旧尺寸 —— 窗口其余区域永不重绘（黑屏条带）、页面按旧窄视口布局，
+  // 用户看到"侧边栏只剩一个图标+黑屏"的冻结画面。壳层比对该报文与窗口
+  // 实际尺寸，超差即重申 webview bounds 自愈。
   // ---------------------------------------------------------------------------
   (function () {
-    var beat = function () { try { send('log.renderer-heartbeat', {}); } catch (e) { /* 忽略 */ } };
+    var beat = function () {
+      try { send('log.renderer-heartbeat', {}); } catch (e) { /* 忽略 */ }
+      try {
+        send('win.viewport-beat', {
+          w: window.innerWidth,
+          h: window.innerHeight,
+          dpr: window.devicePixelRatio || 1,
+          src: (window as any).__DSH_FLOAT__ ? 'float' : 'main',
+        });
+      } catch (e) { /* 视口上报失败不致命 */ }
+    };
     beat();
     setInterval(beat, 5000);
     document.addEventListener('visibilitychange', function () {
