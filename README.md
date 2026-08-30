@@ -16,7 +16,7 @@
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
 封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
-<p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
+<p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="DSH-Desktop-EAC 界面预览"></a></p>
 
 </div>
 
@@ -37,7 +37,7 @@
 
 ## 为什么选择 EAC
 
-| 维度 | 官方 DeepSeek Harness 默认体验 | Deepseek Harness EAC 增强 |
+| 维度 | 官方 DeepSeek Harness 默认体验 | DSH-Desktop-EAC 增强 |
 | --- | --- | --- |
 | 安装与启动 | 需自行准备 Node.js，并通过 CLI 启动 | 内置 Node.js、npm CLI 和 dsh，提供安装版与便携版，双击即用 |
 | 桌面体验 | 主要在终端或浏览器中使用 | 原生桌面窗口、系统托盘、快捷方式维护、进程清理和任务通知 |
@@ -78,7 +78,7 @@
 
 > 💡 **升级说明（老用户必读）**：
 > - 直接下载上方最新安装包覆盖安装即可；
-> - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
+> - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\DSH-Desktop-EAC\`
 >   与 `~/.dsh`，升级过程不触碰。
 
 ### macOS（Apple Silicon / arm64）
@@ -118,7 +118,7 @@
 
 ### 数据目录
 
-> 桌面端配置在 `%APPDATA%\Deepseek Harness EAC\`（设置/更新缓存），dsh 数据
+> 桌面端配置在 `%APPDATA%\DSH-Desktop-EAC\`（设置/更新缓存），dsh 数据
 > 在 `~/.dsh`（`DSH_HOME`，会话与 API Key 与 CLI 共享）。安装版与便携版一致。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
