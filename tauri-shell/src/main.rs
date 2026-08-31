@@ -33,7 +33,7 @@
 //   其余 → sidecar（chrome.init / service.restart / boot.* / P3 渐进收编面）。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
@@ -57,6 +57,7 @@ static CHINESE_UI: OnceLock<bool> = OnceLock::new();
 // 页面侧注入的 __DSH_BRIDGE_WS__ 恒为 ws_port()；ws-jsonrpc-client.js 里的
 // 19873 仅为无注入环境的兜底默认值，不与本机制耦合。
 static WS_PORT_EFFECTIVE: AtomicU16 = AtomicU16::new(WS_PORT);
+static PACKAGED_RESOURCE_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 fn ws_port() -> u16 {
     WS_PORT_EFFECTIVE.load(Ordering::SeqCst)
@@ -111,11 +112,29 @@ mod ui_language_tests {
     }
 }
 
+fn is_resource_root(path: &Path) -> bool {
+    path.join("sidecar").join("server.js").is_file() && path.join("dsh-desktop").is_dir()
+}
+
+fn initialize_packaged_resource_root(app: &tauri::App) {
+    use tauri::Manager;
+    if let Ok(root) = app.path().resource_dir() {
+        if is_resource_root(&root) {
+            let _ = PACKAGED_RESOURCE_ROOT.set(root);
+        }
+    }
+}
+
 /// 打包态与开发态（CARGO_MANIFEST_DIR 布局）的资源根。
 /// 实测（R6 Stage 1）：Tauri v2 resources map 目标相对安装根，NSIS 装出
 /// exe 同级 sidecar/ + dsh-desktop/ 兄弟目录；exe 同级直认优先，
 /// 兼容保留 resources/ 子目录布局探测，最后回退开发布局。
 fn resource_root() -> std::path::PathBuf {
+    // Linux deb/AppImage 把资源放在 usr/lib/<product>/，不与 usr/bin 下的
+    // 可执行文件同级。setup 阶段由 Tauri path resolver 注入真实目录。
+    if let Some(root) = PACKAGED_RESOURCE_ROOT.get() {
+        return root.clone();
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent().map(|p| p.to_path_buf()) {
             if dir.join("sidecar").join("server.js").exists() {
@@ -2289,6 +2308,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![shell_ping, sidecar_call])
         .setup(move |app| {
             use tauri::Manager;
+
+            initialize_packaged_resource_root(app);
 
             BRIDGE_ONCE.call_once(|| {
                 let st = BridgeState {

@@ -175,8 +175,16 @@ jobs:
       - name: 安装 Rust 工具链（stable）
         uses: dtolnay/rust-toolchain@stable
 
+      - name: 准备内核依赖缓存
+        run: |
+          corepack disable
+          npm install --global pnpm@11.7.0
+          node scripts/fetch-kernel.js
+
       - name: 安装依赖并获取 Linux runtime
-        run: npm ci && npm run fetch-runtime
+        run: |
+          npm ci
+          npm run fetch-runtime
 
       - name: 写入发布版本号
         run: npm version ${{ steps.tag.outputs.version }} --no-git-tag-version --allow-same-version

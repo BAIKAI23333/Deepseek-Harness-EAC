@@ -400,29 +400,36 @@ function patchMenuSubmenuScroll(file?: string): boolean {
   return true;
 }
 
-// 内核 client-modules v2 解析签名补丁：Node ≥24.11 的内部 ESM 解析器
-// resolveSync 实际签名是 (specifier, parentURL)（位置参数），而内核 0.1.2
-// 的 v2 分支按 (parentURL, {specifier, attributes}) 调用——TypeError 被
-// locatePkgJson 的 catch 吞掉后所有包都判为 located-undefined，boot graph
-// 静默清零（官方 UI 走 vite dist 不受影响，故官方 CI 未发现）。修复：v2
-// 分支同样用位置参数调用。锚点带换行缩进（tsdown 产物形态）。
+// client-modules 解析签名恢复：上游 0.1.2 已正确区分 Node 24 v2
+// (parentURL, { specifier, attributes }) 与 Node 22 v1 的位置参数。旧版
+// patch-deps 误把两者统一成位置参数，导致 Node 24 把包名当 URL 后静默清空
+// boot graph。这里只修复已经被旧补丁改坏的安装树；上游原始实现保持不动。
 const CLIENT_MODULES_RESOLVE_TARGET = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-modules', 'lib', 'index.js');
-const CLIENT_MODULES_RESOLVE_OLD = 'internal.version === "v2" ? internal.resolveSync(baseUrl, {\n\t\t\t\tspecifier: loaderName,\n\t\t\t\tattributes: {}\n\t\t\t}).url : internal.resolveSync(loaderName, baseUrl, {}).url';
-const CLIENT_MODULES_RESOLVE_NEW = 'internal.resolveSync(loaderName, baseUrl, {}).url';
+const CLIENT_MODULES_RESOLVE_EXPECTED = 'internal.version === "v2" ? internal.resolveSync(baseUrl, {\n\t\t\t\tspecifier: loaderName,\n\t\t\t\tattributes: {}\n\t\t\t}).url : internal.resolveSync(loaderName, baseUrl, {}).url';
+const CLIENT_MODULES_RESOLVE_REVERSED = 'internal.resolveSync(loaderName, baseUrl, {}).url';
+const CLIENT_MODULES_RESOLVE_PARENT_FIRST = 'internal.resolveSync(baseUrl, loaderName, {}).url';
 
-function patchClientModulesResolve(): void {
-  if (!fs.existsSync(CLIENT_MODULES_RESOLVE_TARGET)) {
+function patchClientModulesResolve(targetFile = CLIENT_MODULES_RESOLVE_TARGET): boolean {
+  if (!fs.existsSync(targetFile)) {
     console.log('[patch-deps] dsh-client-modules 不存在，跳过');
-    return;
+    return false;
   }
-  let src = fs.readFileSync(CLIENT_MODULES_RESOLVE_TARGET, 'utf8');
-  if (!src.includes(CLIENT_MODULES_RESOLVE_OLD)) {
-    console.log('[patch-deps] client-modules v2 签名锚点未命中（已应用或上游已修），跳过');
-    return;
+  let src = fs.readFileSync(targetFile, 'utf8');
+  if (src.includes(CLIENT_MODULES_RESOLVE_EXPECTED)) {
+    console.log('[patch-deps] client-modules Node 22/24 解析签名正确，跳过');
+    return false;
   }
-  src = src.replace(CLIENT_MODULES_RESOLVE_OLD, CLIENT_MODULES_RESOLVE_NEW);
-  writeFileAtomic(CLIENT_MODULES_RESOLVE_TARGET, src);
-  console.log('[patch-deps] 已补丁 client-modules：v2 resolveSync 位置参数（boot graph 清零修复）');
+  if (src.includes(CLIENT_MODULES_RESOLVE_REVERSED)) {
+    src = src.replace(CLIENT_MODULES_RESOLVE_REVERSED, CLIENT_MODULES_RESOLVE_EXPECTED);
+  } else if (src.includes(CLIENT_MODULES_RESOLVE_PARENT_FIRST)) {
+    src = src.replace(CLIENT_MODULES_RESOLVE_PARENT_FIRST, CLIENT_MODULES_RESOLVE_EXPECTED);
+  } else {
+    console.log('[patch-deps] client-modules 解析签名锚点未命中（上游可能已更新），跳过');
+    return false;
+  }
+  writeFileAtomic(targetFile, src);
+  console.log('[patch-deps] 已恢复 client-modules Node 22/24 分支解析签名（boot graph 清零修复）');
+  return true;
 }
 
 function main(): void {
@@ -440,4 +447,4 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { patchAgentPresetMenu, patchMenuSubmenuScroll };
+module.exports = { patchAgentPresetMenu, patchMenuSubmenuScroll, patchClientModulesResolve };

@@ -14,6 +14,7 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
+import { copyKernelCacheForTarget, sanitizeLinuxClientBuildPaths } from './stage-linux-sanitize.mjs';
 import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -306,7 +307,11 @@ if (existsSync(npmCache)) {
 // npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
 const kernelCache = path.join(dd, 'vendor', 'kernel');
 if (existsSync(kernelCache)) {
-  cpSync(kernelCache, path.join(staged, 'dsh-desktop', 'vendor', 'kernel'), { recursive: true });
+  copyKernelCacheForTarget(
+    kernelCache,
+    path.join(staged, 'dsh-desktop', 'vendor', 'kernel'),
+    targetPlatform,
+  );
   console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
 } else {
   throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
@@ -365,6 +370,11 @@ const vendoredBashFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-tool-
 if (existsSync(vendoredBashFix)) {
   cpSync(vendoredBashFix, path.join(nmDest, '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'));
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
+}
+
+if (targetPlatform === 'linux') {
+  const sanitizedClients = sanitizeLinuxClientBuildPaths(nmDest);
+  console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
 }
 
 // 捆绑依赖完整性清单（issue #7）：对**最终载荷**（npm ci + 补丁 + vendored
