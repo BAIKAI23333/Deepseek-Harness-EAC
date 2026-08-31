@@ -41,10 +41,25 @@ export interface ProfileCtx {
 let ctx!: ProfileCtx;
 export function init(d: ProfileCtx): void { ctx = d; }
 
+// shareWebProfile 的 mtime 记忆化：desktopProfile 在 boot/market/companion-sync
+// 等多条路径频繁调用，每次 loadSettings 都同步读 settings.json；设置文件未变
+// 时复用结果，5s TTL 兜底外部改动。
+const profileCache: { at: number; mtimeMs: number | null; value: string } = {
+  at: 0, mtimeMs: null, value: DESKTOP_PROFILE,
+};
 export function desktopProfile(): string {
   try {
+    const file = path.join(updCtx().userDataDir, 'settings.json');
+    let mtimeMs: number | null = null;
+    try { mtimeMs = fs.statSync(file).mtimeMs; } catch { /* 不存在 */ }
+    const now = Date.now();
+    if (mtimeMs === profileCache.mtimeMs && now - profileCache.at < 5000) return profileCache.value;
     const s = updater.loadSettings(updCtx());
-    return s.shareWebProfile === true ? 'web' : DESKTOP_PROFILE;
+    const value = s.shareWebProfile === true ? 'web' : DESKTOP_PROFILE;
+    profileCache.at = now;
+    profileCache.mtimeMs = mtimeMs;
+    profileCache.value = value;
+    return value;
   } catch {
     return DESKTOP_PROFILE;
   }

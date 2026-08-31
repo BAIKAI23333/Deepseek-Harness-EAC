@@ -93,6 +93,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
+  // 旧版/社区客户端插件的英文兼容层：跟随官方 locale 状态翻译固定 UI
+  // 文案，不触碰会话、代码、终端、编辑器或用户输入。作为界面底座始终启用。
+  { id: 'eac-locale-compat', name: 'dsh-eac-locale-compat', dir: 'dsh-eac-locale-compat' },
   // VNext Core Bridge（受信组件，vnext-absorb Phase 2）：把隔离 SDK 插件的
   // 工具/上下文经回环端点桥接进 dsh Agent（DSH_EAC_BRIDGE_URL/TOKEN 由
   // sidecar 在拉起 dsh web 前注入）；必须随包分发并默认启用。
@@ -104,9 +107,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
   // 读屏 + 鼠标键盘自动化（Codex-style computer use，配 picturereader；纯本地）。
   { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
-  // 语音识别（仅 STT）：本地 sherpa-onnx SenseVoice + 自定义唤醒词 + 多轮交互，
-  // 识别文本回填输入框草稿。模型首次启动下载到 ~/.dsh/models/dsh-stt/。
-  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt' },
   // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
   // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
   // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
@@ -193,8 +193,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 默认关闭：用户到「设置 → 插件 → 管理」或「增强功能」分区自行启用（需 DEEPSEEK_API_KEY 凭据）。
   { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget', disabled: true },
   // 多智能体团队协作（NanmiCoder/dsh-agent-teams，MIT）：队长 + 子代理成员 +
-  // 依赖感知任务 DAG + 活动面板。默认关闭，由用户自行决定是否开启。
-  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams', disabled: true },
+  // 依赖感知任务 DAG + 活动面板。5.3.1 起默认启用（EAC 适配版；对话框
+  // composer dock 有可见入口，设置「增强功能」分区保留停用开关）。
+  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams' },
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
@@ -370,7 +371,10 @@ export function builtinPluginSourceDir(dirName: string): string {
   // 覆盖层版本 >= 资产版本才优先：应用自身升级后，新资产自动接管覆盖层。
   const vOverlay = pluginUpdater.versionOfDir(overlay);
   const vAssets = pluginUpdater.versionOfDir(assets);
-  if (vOverlay && vAssets && updater.compareVersions(vOverlay, vAssets) < 0) return assets;
+  // 覆盖层版本不可读（半写坏档）时回退资产版本：否则损坏的旧覆盖层永久
+  // 遮蔽新资产，该插件停在坏版本且每次启动被压住。
+  if (!vOverlay) return assets;
+  if (vAssets && updater.compareVersions(vOverlay, vAssets) < 0) return assets;
   return overlay;
 }
 
@@ -427,10 +431,17 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 按用户要求移除「普通/高级」分栏（nav-custom 是该分栏唯一写入者，
   // 见 test/settings-groups-standdown.test.ts 的单写者契约改判）。
   { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom' },
+  // 5.3.0：按用户要求移除内置「语音转文字」插件（本地 sherpa-onnx ASR 模型
+  // ~1.1G 占空间，不再随包分发/安装）。老 profile 的 patch 行/包副本由退役
+  // 清理兜底；已下载的 ~/.dsh/models/dsh-stt/ 模型缓存由安装包 PREINSTALL
+  // 与本机清理回收。
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
-export function retireRemovedBuiltinPlugins(profileDirP: string): void {
+// 内部函数：外部一律走带版本对齐门控的 retireRemovedBuiltinPluginsGated
+// （issue #74 —— 5.3.2 及以前 sidecar preBootSync 直调无门控版，门控被架空）。
+function retireRemovedBuiltinPlugins(profileDirP: string): void {
   for (const p of RETIRED_BUILTIN_PLUGINS) {
     const patchFile = path.join(profileDirP, 'cordis.patch.yml');
     try {
@@ -487,7 +498,7 @@ function safeModeActive(): boolean {
 function retiredListHash(): string {
   return crypto.createHash('sha256').update(JSON.stringify(RETIRED_BUILTIN_PLUGINS)).digest('hex');
 }
-function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
+export function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
   let version = '';
   try {
     const pkg = JSON.parse(fs.readFileSync(path.join(APP_ROOT, 'package.json'), 'utf8')) as { version?: string };
@@ -566,6 +577,12 @@ export function syncCompanionPlugins(): void {
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending: PendingRow[] = [];
     const removedIds = removedPluginIds();
+    // 市场残留预检的共享输入（循环外读一次）：34 个配套插件逐个 dupPreCheck
+    // 会把 profile package.json 与 cordis.patch.yml 各重读一遍（~68 次读）。
+    // 迁移手术本身会改写这两个文件 —— 手术后的插件重读一次（按需失效）。
+    let precheckPkg = readJsonFile(path.join(profileDirP, 'package.json'));
+    let precheckPatch = '';
+    try { precheckPatch = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8'); } catch { /* 缺省空 */ }
     // V4.2：用户曾从市场安装过与内置插件同名的包时，写包前先迁移残留
     // （package.json 依赖/bundles + patch 行），让内置版干净接管，避免
     // duplicate loader entry；完成后系统通知告知「插件树变化」。
@@ -595,23 +612,22 @@ export function syncCompanionPlugins(): void {
           patchHasForeignRows(patchText: string, name: string): boolean;
         };
         // 市场同名包残留预检（v4.2，用户反馈问题 5）：只有「非应用自写」证据
-        // （package.json 依赖/bundles 或非自写 patch 行）才算残留。
+        // （package.json 依赖/bundles 或非自写 patch 行）才算残留。共享输入
+        // 来自循环外的单次读取；迁移手术后两个文件都变了，重读一次。
         const dupPreCheck = (() => {
           try {
-            const pkg = readJsonFile(path.join(profileDirP, 'package.json'));
-            const deps = pkg && (pkg.dependencies as Record<string, unknown> | undefined);
+            const deps = precheckPkg && (precheckPkg.dependencies as Record<string, unknown> | undefined);
             const spec = deps && deps[p.name];
             if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
-            const dsh = pkg && (pkg.dsh as Record<string, unknown> | undefined);
+            const dsh = precheckPkg && (precheckPkg.dsh as Record<string, unknown> | undefined);
             const prof = dsh && (dsh.profile as Record<string, unknown> | undefined);
             if (prof && Array.isArray(prof.bundles) && (prof.bundles as string[]).includes(p.name)) return true;
-            const patchText = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8');
             // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
             // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
             // 的启停状态，不是市场残留。否则 v4.4 首次向导的取消勾选会在同一启动
             // 里被剥离后按注册表默认回写（dsh-dafeiyu 等默认启用插件被静默重新
             // 启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:` 行堆积。
-            return patchHasForeignRows(patchText, p.name);
+            return patchHasForeignRows(precheckPatch, p.name);
           } catch { return false; }
         })();
         if (dupPreCheck) {
@@ -626,6 +642,9 @@ export function syncCompanionPlugins(): void {
           if (migrated.changed && migrated.ok) {
             migratedBuiltins.push({ name: p.name, dep: migrated.removedDep.length > 0, rows: migrated.removedRows.length });
             ctx.log('boot', `内置插件 ${p.name} 已接管市场同名包（移除依赖 ${migrated.removedDep.length} 个、patch 行 ${migrated.removedRows.length} 个）`);
+            // 迁移改写了两个文件：后续插件的预检必须看到新内容。
+            precheckPkg = readJsonFile(path.join(profileDirP, 'package.json'));
+            try { precheckPatch = fs.readFileSync(path.join(profileDirP, 'cordis.patch.yml'), 'utf8'); } catch { precheckPatch = ''; }
           }
         }
       } catch (err) {
@@ -675,7 +694,7 @@ export function syncCompanionPlugins(): void {
       const prev = readJsonFile(marker);
       const next = { names: builtinNames, updatedAt: new Date().toISOString() };
       if (!prev || JSON.stringify(prev.names) !== JSON.stringify(next.names)) {
-        fs.writeFileSync(marker, JSON.stringify(next, null, 2) + '\n');
+        writeFileAtomic(marker, JSON.stringify(next, null, 2) + '\n');
       }
     } catch (err) {
       ctx.log('boot', '写入内置插件清单失败: ' + (err as Error).message);
@@ -757,6 +776,22 @@ function ensurePluginHostDeps(profileDirP: string): void {
       changed = true;
       ctx.log('boot', '已修复 profile patch 中缺 config 的 dsh-pet 行（v3 存量坏行）');
     }
+    // 内核 0.1.2 隐私开关：官方 deepseek 适配器随请求上报活动插件包名/版本
+    // （plugin-package-inventory-deepseek，默认 enabled: true）。桌面端默认
+    // 关闭。该行在 dsh-base bundle 层已存在（overlay 不能再 insert —— 会
+    // duplicate loader entry id 拖垮插件树），config 覆盖必须在 bundle 装载
+    // 前由 --patch overlay 语义达成：本函数写「编辑型」覆盖行（- id + config，
+    // 不在 - insert 列表内 = 对既有行改 config，cordis.patch 的标准编辑语义）。
+    // 幂等：已有编辑行则跳过。
+    // 幂等按 entry id 判定：可手工编辑的 YAML 用精确正则判「已存在」，
+    // 用户重排引号/注释/缩进即失配 → 追加第二条同 id 编辑行（cordis 行为
+    // 未定义）。hasEntryId 与本文件其余 patch 行逻辑同一判定。
+    if (!hasEntryId(patch, 'plugin-package-inventory-deepseek')) {
+      const privacyRow = '- id: plugin-package-inventory-deepseek\n  name: \'@deepseek-ai/dsh-plugin-package-inventory-deepseek\'\n  config:\n    enabled: false\n';
+      patch = patch.replace(/\s*$/, '\n') + privacyRow;
+      changed = true;
+      ctx.log('boot', '已默认关闭内核插件名单上报（0.1.2 隐私开关，编辑型覆盖行）');
+    }
     // 市场安装（dsh plugin add）会把插件登记进 package.json 的
     // dsh.profile.bundles，加载时执行其包内 patch 挂载行；若 overlay 里
     // 也有一行（syncCompanionPlugins 写的），整个插件树会以
@@ -801,7 +836,9 @@ function ensurePluginHostDeps(profileDirP: string): void {
       let block = `- insert:\n    - id: ${p.id}\n      name: '${p.name}'\n`;
       if (p.config) block += configLinesFor(p.config);
       if (p.disabled) block += `      disabled: true\n`;
-      if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/\[\]/m, block);
+      // 替换锚定与检测一致：裸 /\[\]/m 会命中更早位置的内联 []
+      //（如 config 行的 key: []），把块插错位置造成 YAML 损坏。
+      if (/^\s*\[\]\s*$/m.test(patch)) patch = patch.replace(/^\s*\[\]\s*$/m, block);
       else if (patch.trim() === '') patch = '# dsh web profile patch（由 DSH Desktop 维护）\n' + block;
       else patch = patch.replace(/\s*$/, '\n') + block;
       changed = true;
@@ -820,7 +857,9 @@ function ensurePluginHostDeps(profileDirP: string): void {
         patch = cleaned;
         ctx.log('boot', '已清理 profile patch 中的孤儿 - insert: 行');
       }
-      fs.writeFileSync(patchFile, patch);
+      // 原子写（对齐上方 retireRemovedBuiltinPlugins 的 writeFileAtomic）：
+      // boot 最关键的一次 patch 重写，中断截断 = 插件树校验失败 → 启动死亡循环。
+      writeFileAtomic(patchFile, patch);
       ctx.log('boot', '已同步配套插件/皮肤到 web profile: ' + pending.map((p) => p.id).join(', '));
     }
     // 迁移带来的皮肤选择（migrateFromSharedWebProfile 记录）在此落位。

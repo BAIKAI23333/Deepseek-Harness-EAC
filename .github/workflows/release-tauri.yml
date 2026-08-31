@@ -1,5 +1,5 @@
-# Release (Tauri)：推送 v* 标签或手动触发时构建 Tauri 壳（NSIS 安装包 + 便携 zip），
-# 与 Electron 链路的 release.yml 并行共存（M3 冻结期；Electron 移除后可合并）。
+# Release (Tauri)：推送 v* 标签或手动触发时构建 Tauri 壳（Windows NSIS 安装包 + 便携 zip，
+# Linux deb/AppImage）。Tauri 是当前唯一桌面壳发布链路（Electron 壳已退役，旧 release.yml 已移除）。
 #
 # ⚠️ R6 备注：本仓库当前「本地构建、绝不 push」，此 workflow 尚未在线上实跑过。
 #    首次推送后需人工盯跑一轮，重点核对：

@@ -140,8 +140,15 @@ class SessionWatcher {
 
   scan() {
     let any = false;
+    const seen = new Set<string>();
     for (const file of this.listLogs()) {
+      seen.add(file);
       try { any = this.process(file) || any; } catch (err) { this.log('watch', '处理失败 ' + file + ': ' + String((err as Error) && (err as Error).message || err)); }
+    }
+    // 清扫本轮未被枚举到的记录：会话文件被外部分析器删除/归档后，记录
+    // （含 header 对象）永驻 Map，长寿命进程缓慢泄漏。
+    for (const file of [...this.files.keys()]) {
+      if (!seen.has(file)) this.files.delete(file);
     }
     return any;
   }

@@ -194,6 +194,10 @@ class JobFence implements Fence {
     if (this.used) throw new Error('JobFence 一次只承载一个进程');
     this.used = true;
     const child = cp.spawn(exe, args, { cwd, stdio: 'pipe', windowsHide: true });
+    // spawn 失败（ENOENT/权限/文件锁）在 Node 里是异步 'error' 事件：不挂
+    // 监听 = unhandled 'error' event 直接击穿 Supervisor。失败语义已由下方
+    // pid 检查（同步路径）与 onExit（已起后死亡）兜底，这里只吞事件。
+    child.once('error', () => {});
     if (child.pid === undefined) {
       // spawn 同步失败（exe 不存在等）：清理并抛出，走 start-failed 路径。
       child.kill();
@@ -293,6 +297,8 @@ class FallbackFence implements Fence {
       windowsHide: true,
       detached: this.mode === 'process-group',
     });
+    // 同 JobFence.launch：spawn 异步 error 事件必须有人接（见彼处注释）。
+    child.once('error', () => {});
     if (child.pid === undefined) {
       child.kill();
       throw new Error(`围栏 spawn 失败: ${exe}`);

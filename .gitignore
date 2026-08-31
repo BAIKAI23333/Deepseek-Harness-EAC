@@ -47,3 +47,6 @@ updates/
 .reasonix/
 /tmp-p2boot/
 /tmp-ui-verify-installed/
+
+# verify-delete-session.js 运行产物
+tmp-verify-delete/

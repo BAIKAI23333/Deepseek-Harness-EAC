@@ -18,14 +18,17 @@
 // always win over the bundled copy.
 
 import fs = require('node:fs');
+import { writeFileAtomic } from './lib/atomic-json';
 import path = require('node:path');
 
 function syncBundledPresets(assetsRoot: string, presetsRoot: string, log: (m: string) => void = () => {}) {
   const installed: string[] = [];
   const kept: string[] = [];
   let entries;
-  try { entries = fs.readdirSync(assetsRoot, { withFileTypes: true }); } catch { return { installed, kept }; }
-  fs.mkdirSync(presetsRoot, { recursive: true });
+  try {
+    entries = fs.readdirSync(assetsRoot, { withFileTypes: true });
+    fs.mkdirSync(presetsRoot, { recursive: true });
+  } catch { return { installed, kept }; }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const src = path.join(assetsRoot, entry.name);
@@ -101,13 +104,14 @@ function ensureDefaultAgentPreset(home: string, presetId: string, log: (m: strin
         if (/^[ \t]+default[ \t]*:/.test(lines[k]!)) return 'kept';
       }
       lines.splice(i + 1, 0, '  default: ' + presetId);
-      fs.writeFileSync(file, (bom ? '\uFEFF' : '') + lines.join(eol));
+      // settings.yaml 是 dsh web 的启动配置：截断 = 服务无法读配置，必须原子写。
+      writeFileAtomic(file, (bom ? '﻿' : '') + lines.join(eol));
       return 'set';
     }
     // 缩进出现的 agent-presets 键（嵌套在别的 section 里）不归我们管，
     // 直接追加顶层 section 不会与之冲突。
     const trailing = text === '' || text.endsWith(eol) ? '' : eol;
-    fs.writeFileSync(file, (bom ? '\uFEFF' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
+    writeFileAtomic(file, (bom ? '\uFEFF' : '') + text + trailing + 'agent-presets:' + eol + '  default: ' + presetId + eol);
     return 'set';
   } catch (err) {
     log('设置默认 agent preset 失败: ' + String(((err as Error) && (err as Error).message) || err));

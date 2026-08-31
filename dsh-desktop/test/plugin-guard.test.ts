@@ -158,66 +158,6 @@ test('trojan scan flags download-and-exec patterns without executing them', () =
   rmSync(home, { recursive: true, force: true });
 });
 
-test('guardedBoot repairs and retries when the first boot fails', async () => {
-  const t0 = { after: (fn) => fn };
-  const { home, profile, guard } = makeHome(t0);
-  // 修复可用的故障：遮蔽拷贝导致首启失败。
-  const nm = join(profile, 'node_modules', '@deepseek-ai');
-  mkdirSync(join(nm, 'dsh-scope'), { recursive: true });
-  writeFileSync(join(nm, 'dsh-scope', 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-scope' }));
-
-  let attempts = 0;
-  const startOnce = async () => {
-    attempts += 1;
-    const broken = existsSync(join(nm, 'dsh-scope', 'package.json'));
-    if (broken) throw new Error('dsh web 启动失败（退出码 1）');
-    return 'http://127.0.0.1:1';
-  };
-  mkdirSync(join(nm, 'dsh-scope'), { recursive: true });
-  writeFileSync(join(nm, 'dsh-scope', 'package.json'), JSON.stringify({ name: '@deepseek-ai/dsh-scope' }));
-  const url = await guard.guardedBoot(startOnce, () => '');
-  assert.equal(url, 'http://127.0.0.1:1');
-  assert.equal(attempts, 2, 'must boot exactly twice (fail + repaired retry)');
-  assert.ok(guard.lastGoodSnapshot(), 'success must mark the boot snapshot as good');
-  rmSync(home, { recursive: true, force: true });
-});
-
-test('guardedBoot rolls back to the last good snapshot when repair is not enough', async () => {
-  const t0 = { after: (fn) => fn };
-  const { home, profile, guard } = makeHome(t0);
-  // 先制造一个「最后良好」快照（当前健康状态）。
-  writeFileSync(join(profile, 'cordis.patch.yml'), '[]\n');
-  const good = guard.snapshot('boot');
-  guard.markGood(good.id);
-  // 然后把 patch 层写坏 —— 修复器无法自动修（无 bundle 去重目标），
-  // 回滚路径应恢复到快照并重试成功。
-  writeFileSync(join(profile, 'cordis.patch.yml'), '!!! not yaml at all: [\n');
-  let attempts = 0;
-  let lifts = 0;
-  const startOnce = async () => {
-    attempts += 1;
-    const bad = !readFileSync(join(profile, 'cordis.patch.yml'), 'utf8').startsWith('[]');
-    if (bad) throw new Error('dsh web 启动失败（退出码 1）');
-    return 'http://127.0.0.1:2';
-  };
-  guard.setRollbackLift(async () => { lifts += 1; return 'http://127.0.0.1:2'; });
-  const url = await guard.guardedBoot(startOnce, () => '');
-  assert.equal(url, 'http://127.0.0.1:2');
-  assert.equal(attempts, 1, 'direct boot only runs once');
-  assert.equal(lifts, 1, 'rollback retry must go through the lift');
-  assert.equal(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8'), '[]\n', 'patch must be rolled back');
-  rmSync(home, { recursive: true, force: true });
-});
-
-test('guardedBoot files an incident when nothing works', async () => {
-  const t0 = { after: (fn) => fn };
-  const { home, guard } = makeHome(t0);
-  guard.setRollbackLift(async () => { throw new Error('still broken'); });
-  await assert.rejects(() => guard.guardedBoot(async () => { throw new Error('dsh web 启动失败（退出码 1）'); }, () => ''), /退出码 1/);
-  assert.equal(guard.listIncidents().length, 1, 'an incident report must be filed');
-  rmSync(home, { recursive: true, force: true });
-});
-
 test('incident lifecycle: read + resolve', () => {
   const t0 = { after: (fn) => fn };
   const { home, guard } = makeHome(t0);

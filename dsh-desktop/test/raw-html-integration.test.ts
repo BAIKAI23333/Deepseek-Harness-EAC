@@ -54,7 +54,7 @@ test('raw-html is EAC-managed, opt-in, and cannot be overwritten by upstream aut
     files: string[];
     dsh: { client: { inject: string[] } };
   };
-  assert.equal(pkg.version, '0.6.1');
+  assert.equal(pkg.version, '0.6.2');
   assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-conversation'));
   assert.equal(pkg.files.some((entry) => entry.startsWith('patch/')), false,
     'legacy bundle patch scripts must not be packaged');

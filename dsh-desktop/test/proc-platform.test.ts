@@ -17,7 +17,12 @@ const root = join(fileURLToPath(new URL('..', import.meta.url)));
 test('boot-server applies the platform process-group spawn options', () => {
   const source = readFileSync(join(root, 'lib', 'desktop', 'boot-server.ts'), 'utf8');
   assert.match(source, /\.\.\.childProcessSpawnOptions\(\)/);
-  assert.doesNotMatch(source, /['"]--no-open['"]/);
+  // --no-open 必须在：内核 openBrowser 默认 true → 每轮启动弹系统浏览器。
+  // 历史：5.3.0 期间的 spike 内核不认该参数（传了启动必死），PR #249 移除并钉死
+  // 「不得出现」；最终 vendored alpha.1 的 dsh-web-app 恢复了 --no-open
+  // （boot-smoke 实证：传参正常启动且不再弹浏览器），钉子翻转为「必须存在」，
+  // 防止再丢。内核若再变更参数语义，此测试会红，届时按新内核契约重评。
+  assert.match(source, /['"]--no-open['"]/);
   assert.deepEqual(childProcessSpawnOptions('linux'), { detached: true });
   assert.deepEqual(childProcessSpawnOptions('win32'), { detached: false });
 });

@@ -24,7 +24,7 @@ import logger = require('../../logger');
 import rescue = require('../../rescue-agent');
 import { state } from '../state.js';
 import { log } from '../log.js';
-import { writeJsonAtomic } from '../atomic-json.js';
+import { writeJsonAtomic, writeFileAtomic as writeTextAtomic } from '../atomic-json.js';
 import { ensureGuard } from '../desktop/guard-box.js';
 import {
   pluginManagerCollect, pluginManagerSetEnabled, pluginManagerSetRemoved,
@@ -34,7 +34,7 @@ import { desktopProfileDir } from '../desktop/profile.js';
 import { state as bootState } from '../desktop/boot-server.js';
 import {
   listRegistryEntries, setQuarantined, clearStartFailure,
-  upsertLegacyPlugin,
+  upsertLegacyPlugins,
 } from '../supervisor/registry.js';
 
 /** 由 sidecar 注入的壳层/编排能力（窗口创建在 Rust，这里只做请求）。 */
@@ -95,7 +95,9 @@ export function safeModeEnable(opts?: { requestRelaunch?: boolean; logTag?: stri
   const coreIds = rows.filter((r) => (r as { core?: boolean }).core).map((r) => (r as { id: string }).id);
   const { patch, removed } = rescue.safeModePatch(text, coreIds);
   try {
-    if (patch !== text) fs.writeFileSync(patchFile, patch, 'utf8');
+    // 原子写（全项目 patch 落盘统一语义）：裸 writeFileSync 被杀/断电会
+    // 留截断的 cordis.patch.yml → 下次 boot 全链失败。
+    if (patch !== text) writeTextAtomic(patchFile, patch);
   } catch (err) {
     return { ok: false, error: '写入安全模式配置失败: ' + String((err as Error).message) };
   }
@@ -241,16 +243,18 @@ export async function handleRcAction(action: string, value?: unknown): Promise<R
  */
 export function archivePluginProfiles(): void {
   try {
-    for (const p of COMPANION_PLUGINS) {
-      upsertLegacyPlugin({ id: p.id, source: 'builtin' });
-    }
+    // 批量建档（一次读 + 一次写）：逐插件 upsert = 40+ 插件 80 次 IO /
+    // 40 次原子写，都在 boot 热路径上。
+    const batch: { id: string; source: 'builtin' | 'market' }[] =
+      COMPANION_PLUGINS.map((p) => ({ id: p.id, source: 'builtin' as const }));
     // patch 行中登记、但不在内置表里的 = 市场/手工安装插件。
     const builtin = new Set(COMPANION_PLUGINS.map((p) => p.id));
     const rows = pluginManagerCollect() as { id: string; core?: boolean }[];
     for (const r of rows) {
       if (builtin.has(r.id) || r.core) continue;
-      upsertLegacyPlugin({ id: r.id, source: 'market' });
+      batch.push({ id: r.id, source: 'market' });
     }
+    upsertLegacyPlugins(batch);
     log('recovery-center', '插件档案已登记到扩展注册表');
   } catch (err) {
     log('recovery-center', '插件档案登记失败: ' + String((err as Error).message));

@@ -185,23 +185,6 @@ function BleSection() {
   );
 }
 
-/**
- * 设置侧边栏独立分区：「多智能体协作团队」——AgentTeams 开关 + 用法说明。
- */
-function TeamsSection() {
-  return h("div", { style: { display: "grid", gap: 12, alignItems: "start" } },
-    h("ul", { style: { listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 12 } },
-      h(ToggleCard, {
-        id: "agent-teams",
-        title: "AgentTeams 多智能体团队",
-        desc: "把一个会话变成「队长 + 子代理成员 + 依赖感知任务 DAG + 成员直发消息」的协作团队；启用后在对话里使用 /agent-teams。",
-      }),
-    ),
-    h("p", { style: { margin: 0, opacity: 0.72, lineHeight: 1.6, fontSize: 12 } },
-      "启用并重启后，在对话输入框输入 /agent-teams 打开团队面板：安排子代理成员、分配依赖感知的任务 DAG、成员之间直发消息；不需要时同样可以在此停用。"),
-  );
-}
-
 function apply(ctx) {
   ctx.slots.inject("settings.section", function () {
     return ctx.slots.register({
@@ -218,14 +201,6 @@ function apply(ctx) {
       order: 7.1,
       label: function () { return "余额"; },
     }, BleSection);
-  });
-  ctx.slots.inject("settings.section", function () {
-    return ctx.slots.register({
-      name: "settings.section",
-      id: "dsh-agent-teams",
-      order: 7.2,
-      label: function () { return "多智能体协作团队"; },
-    }, TeamsSection);
   });
 }
 

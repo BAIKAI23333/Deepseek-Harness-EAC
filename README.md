@@ -2,7 +2,7 @@
 
 <p><a href="README.md">中文</a> | <a href="README.en.md">English</a></p>
 
-<h1>Deepseek Harness EAC — 揽尽万象</h1>
+<h1>DSH-Desktop-EAC — 揽尽万象</h1>
 
 <p><strong>EAC = Embracing All Creation（揽尽万象）</strong></p>
 
@@ -16,7 +16,7 @@
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
 封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
-<p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="Deepseek Harness EAC 界面预览"></a></p>
+<p><a href="docs/screenshot-preview.jpg"><img src="docs/screenshot-preview.jpg" alt="DSH-Desktop-EAC 界面预览"></a></p>
 
 </div>
 
@@ -37,7 +37,7 @@
 
 ## 为什么选择 EAC
 
-| 维度 | 官方 DeepSeek Harness 默认体验 | Deepseek Harness EAC 增强 |
+| 维度 | 官方 DeepSeek Harness 默认体验 | DSH-Desktop-EAC 增强 |
 | --- | --- | --- |
 | 安装与启动 | 需自行准备 Node.js，并通过 CLI 启动 | 内置 Node.js、npm CLI 和 dsh，提供安装版与便携版，双击即用 |
 | 桌面体验 | 主要在终端或浏览器中使用 | 原生桌面窗口、系统托盘、快捷方式维护、进程清理和任务通知 |
@@ -67,19 +67,18 @@
 
 ### Windows
 
-> 正式版当前为 v4.4.1（Electron 壳）；下方 Lite 版为 Tauri（Rust）壳，体积更小、启动更快。安装包直接从 Release 下载。
+> 当前发布线为 5.x（Tauri/Rust 壳）。5.2 起桌面版统一为 Tauri 壳；更早的 v4.4.1 Electron 版已退役（仅 Release 存档）。安装包直接从 Release 下载。
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | 安装到系统，创建快捷方式 | ~246 MB |
-| [便携版 exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | 免安装单文件，可放任意目录运行 | ~212 MB |
-| [Lite 版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.5-lite/Deepseek.Harness.EAC.v4Lite_4.5.0_x64-setup.exe) | **Lite 精简版**（Tauri 壳，与上方正式版相互独立、可并存）：主程序为 `Deepseek Harness EAC v4Lite.exe`，数据目录 `~/.dsh-v4lite`，SHA256 校验文件随 Release 提供 | ~73 MB |
+| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) | Tauri 壳安装版（NSIS），安装到系统并创建快捷方式；文件名形如 `*-Setup-*-x64.exe` | ~180 MB |
+| [便携版](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) | 免安装单文件（自解压），可放任意目录运行；文件名形如 `*-Portable-*-x64.exe`，SHA256 校验文件随 Release 提供 | ~205 MB |
 
 更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
 
 > 💡 **升级说明（老用户必读）**：
 > - 直接下载上方最新安装包覆盖安装即可；
-> - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\Deepseek Harness EAC\`
+> - 插件、皮肤、会话与配置全部保留——数据在 `%APPDATA%\DSH-Desktop-EAC\`
 >   与 `~/.dsh`，升级过程不触碰。
 
 ### macOS（Apple Silicon / arm64）
@@ -119,7 +118,7 @@
 
 ### 数据目录
 
-> 桌面端配置在 `%APPDATA%\Deepseek Harness EAC\`（设置/更新缓存），dsh 数据
+> 桌面端配置在 `%APPDATA%\DSH-Desktop-EAC\`（设置/更新缓存），dsh 数据
 > 在 `~/.dsh`（`DSH_HOME`，会话与 API Key 与 CLI 共享）。安装版与便携版一致。
 > 想强制指定 DSH 配置目录？启动前设置环境变量 `DSH_HOME` 即可（与 dsh CLI 行为一致）。
 
@@ -222,7 +221,7 @@ node make-portable.mjs           # 便携 zip（可选）→ target/release/port
 > 偶发 `makensis` mmap error（杀软放大触发）——重跑即可。
 
 <details>
-<summary>Electron 壳（v4 冻结维护，仅回退用）</summary>
+<summary>打包链（Tauri 三段链，从源码出安装包/便携包）</summary>
 
 ```powershell
 cd dsh-desktop

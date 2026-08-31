@@ -25,7 +25,7 @@ test('恢复中心三入口（Tauri 版）：托盘菜单 / 启动失败链 / �
   const mainRs = read('..', 'tauri-shell', 'src', 'main.rs');
   const serverTs = read('..', 'tauri-shell', 'sidecar', 'server.ts');
   // 入口 1：Rust 托盘常驻菜单「恢复中心…」→ open_recovery_center_window。
-  assert.ok(/MenuItem::with_id\(app, "recovery", "恢复中心…"/.test(mainRs), 'tray menu entry missing');
+  assert.ok(/MenuItem::with_id\(app, "recovery", ui_text\("恢复中心…", "Recovery Center\.\.\."\)/.test(mainRs), 'localized tray menu entry missing');
   assert.ok(/"recovery" => \{\s*\n\s*open_recovery_center_window\(app\)/.test(mainRs), 'tray item must open RC window');
   // 入口 3：DSH_DESKTOP_RECOVERY=1 直开恢复中心（Rust 侧）并跳过常规 boot（sidecar 侧）。
   assert.ok(/DSH_DESKTOP_RECOVERY/.test(mainRs), 'env entry missing in main.rs');
@@ -91,9 +91,13 @@ test('扩展注册表：档案登记/失败归因/隔离标记（与重构版同
     assert.ok(pet!.lastError!.includes('fullRoot'));
     assert.ok(pet!.lastErrorAt);
 
+    // 5.3.3：clearStartFailure 只清 lastError 字段，状态转移一律走状态机
+    // （直接置 installed 会制造 quarantined→installed 非法转移、静默击穿隔离）。
     reg.clearStartFailure('dsh-pet');
     list = reg.listRegistryEntries();
-    assert.equal(list.find((p) => p.id === 'dsh-pet')!.state, 'installed');
+    const petCleared = list.find((p) => p.id === 'dsh-pet')!;
+    assert.equal(petCleared.state, 'failed', '状态必须留给状态机，不被 clear 旁路改写');
+    assert.equal(petCleared.lastError, undefined, '错误标记必须被清除');
 
     assert.ok(reg.setQuarantined('cool-tool', true));
     assert.equal(reg.listRegistryEntries().find((p) => p.id === 'cool-tool')!.state, 'quarantined');

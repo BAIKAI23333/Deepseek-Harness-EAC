@@ -9,7 +9,7 @@
 //
 // 用法：node stage-resources.mjs [--target=win32|linux|darwin] [--skip-npm]
 
-import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, rmSync, readFileSync, statSync, readdirSync, writeFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,14 @@ const targetPlatform = targetArg ? targetArg.slice('--target='.length) : process
 if (targetPlatform !== 'win32' && targetPlatform !== 'linux' && targetPlatform !== 'darwin') {
   throw new Error(`[stage] 不支持目标平台: ${targetPlatform}`);
 }
+// 交叉打包显式不支持（解析处校验）：native/*.node 与各包 prebuilds 均按本机
+// platform/arch 装配，target 与本机不一致会产出缺原生包的坏树 —— 解析处 fail-fast。
+if (targetPlatform !== process.platform) {
+  throw new Error(
+    `[stage] 交叉打包不支持：--target=${targetPlatform} ≠ 本机 ${process.platform}/${process.arch}`
+    + '（原生模块按本机架构装配，target 必须与本机一致）',
+  );
+}
 
 // 人工同步：新增根模块要加进来（Electron 时代的 main.js / preload.js 与其
 // 独享模块 error-detail / koffi-preflight / renderer-recovery / watchdog /
@@ -34,7 +42,7 @@ const ROOT_FILES = [
   'balance.js', 'session-watcher.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js',
-  'bundle-integrity.js', 'credentials-format-heal.js', 'stable-port.js', 'stream-write-guard.js',
+  'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js',
   'shortcut-maintenance.js',
   'host-bootstrap.js',
 ];
@@ -284,8 +292,24 @@ copyRequired(
 if (targetPlatform === 'linux' || targetPlatform === 'darwin') {
   chmodSync(path.join(staged, 'dsh-desktop', 'vendor', 'node', runtimeName), 0o755);
 }
-if (existsSync(path.join(dd, 'vendor', 'npm'))) {
-  cpSync(path.join(dd, 'vendor', 'npm'), path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
+// vendor/npm 与 vendor/node、vendor/kernel 同为必需项：随包 node 运行内核需要
+// npm，静默跳过会产出缺 npm 的坏树 —— 与其他 vendor 项一致 fail-fast。
+const npmCache = path.join(dd, 'vendor', 'npm');
+if (existsSync(npmCache)) {
+  cpSync(npmCache, path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
+} else {
+  throw new Error('[stage] vendor/npm 缺失：先运行 npm run fetch-npm 重建 npm 运行时缓存');
+}
+
+// 内核 tarball 缓存（0.1.2 起内核不在 npm registry 上：package.json 的
+// 依赖/overrides 全部指向 file:vendor/kernel/<version>/*.tgz）。staged 树的
+// npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
+const kernelCache = path.join(dd, 'vendor', 'kernel');
+if (existsSync(kernelCache)) {
+  cpSync(kernelCache, path.join(staged, 'dsh-desktop', 'vendor', 'kernel'), { recursive: true });
+  console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
+} else {
+  throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
 }
 
 console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
@@ -319,6 +343,11 @@ if (targetPlatform === 'darwin') {
 }
 // node-pty 双二进制防护（issue #206）：全平台统一执行（Linux 分支已清除
 // 非 linux prebuilds，win 分支保留原 prebuilds）。
+// 实际使用处二次校验（约束：交叉打包显式不支持）：这里按 targetPlatform ×
+// process.arch 选 prebuilds 并落平台戳，与解析处护栏呼应，防后续改动绕过。
+if (targetPlatform !== process.platform) {
+  throw new Error(`[stage] 目标平台 ${targetPlatform} 与本机 ${process.platform}/${process.arch} 不一致，拒绝装配原生载荷`);
+}
 healNodePtyPlugin(nmDest, targetPlatform, process.arch);
 writeStagedPlatformStamp(platformStamp, targetPlatform);
 
@@ -336,6 +365,20 @@ const vendoredBashFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-tool-
 if (existsSync(vendoredBashFix)) {
   cpSync(vendoredBashFix, path.join(nmDest, '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'));
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
+}
+
+// 捆绑依赖完整性清单（issue #7）：对**最终载荷**（npm ci + 补丁 + vendored
+// 回填之后）逐包计文件数，落 bundle-manifest.json。启动期 static-preview.
+// verifyBundledModules 复查比对 —— 空壳包（升级中断残留）会在 boot 期以
+// 明确文案提示重装，而不是 ERR_MODULE_NOT_FOUND 循环。
+// （Electron 时代由 scripts/after-pack.js 生成；Tauri 化后随 stage 生成。）
+{
+  const { createRequire } = await import('node:module');
+  const req = createRequire(import.meta.url);
+  const bi = req(path.join(dd, 'bundle-integrity.js'));
+  const manifest = bi.buildBundleManifest(nmDest);
+  writeFileSync(path.join(staged, 'dsh-desktop', 'bundle-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  console.log('[stage] bundle manifest written (' + Object.keys(manifest.packages).length + ' packages)');
 }
 
 // Tauri 的增量资源复制不会删除上一次 bundle 中已经消失的文件。只清理可由
@@ -362,7 +405,9 @@ console.log('[stage] 完成：' + staged);
 // WebView2Loader.dll：webview2-com-sys 提供的 x64 loader，必须与壳 exe 同级
 // （否则 dsh-eac-shell.exe 启动即 0xC0000135 崩）。从 cargo registry 的
 // webview2-com-sys 包定位（tauri build 不再重新生成该文件）。
-{
+// 约束：仅 win32 装配 —— 只有 tauri.windows.conf.json 引用该 DLL，linux/darwin
+// 的 cargo registry 里根本没有 webview2-com-sys，整块跳过（否则必然误杀 exit(1)）。
+if (targetPlatform === 'win32') {
   const loader = (() => {
     const homeDir = process.env.USERPROFILE || process.env.HOME || '';
     const roots = [
@@ -390,6 +435,9 @@ console.log('[stage] 完成：' + staged);
     cpSync(loader, dest);
     console.log('[stage] WebView2Loader.dll 已装配: ' + path.relative(root, dest));
   } else {
-    console.warn('[stage] 未找到 WebView2Loader.dll（webview2-com-sys），安装包可能启动即崩');
+    // fail-fast：缺 loader 的安装包启动即 0xC0000135 崩，绝不能让坏包流出炉。
+    console.error('[stage] 未找到 WebView2Loader.dll（webview2-com-sys）——中止打包');
+    console.error('[stage] 提示：先跑一次 npx tauri build 让 cargo 拉取 webview2-com-sys，或设置 CARGO_HOME 指向含该包的目录');
+    process.exit(1);
   }
 }

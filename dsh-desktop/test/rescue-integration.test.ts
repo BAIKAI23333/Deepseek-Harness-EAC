@@ -2,11 +2,12 @@
 // main.js/preload.js 对接点；两文件已随壳退役（批次 C），本测试接管为
 // Tauri 侧等价对接点：sidecar rescue-integration.ts（崩溃计数/安全模式/
 // 救援分发）+ 恢复中心动作表（lib/recovery-center/register.ts）+ rc 桥
-// （recovery-center-preload.js）+ recovery.html 页面。
+// （recovery-center-preload.js）+ main.rs 内联 /died 救援页
+// （旧 assets/recovery.html 已随壳退役删除）。
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 
@@ -46,16 +47,11 @@ test('sidecar 接线安全模式：快照备份 + 状态查询 + 开关', () => 
   assert.ok(/safe-mode-before/.test(register), '安全模式必须经 guard 快照备份（safe-mode-before）——见 register.safeModeEnable');
 });
 
-test('rescue 页面提供 AI 自动修复与救援模式 UI', () => {
-  const page = join(ROOT, 'assets', 'recovery.html');
-  assert.ok(existsSync(page), 'assets/recovery.html missing');
-  const html = readFileSync(page, 'utf8');
-  assert.ok(html.includes('AI 自动修复'), 'recovery.html 必须提供 AI 自动修复');
-  assert.ok(/btn-autorepair/.test(html), 'recovery.html btn-autorepair 缺失');
-  assert.ok(/auto-progress/.test(html), 'recovery.html auto-repair 进度区缺失');
-  assert.ok(html.includes('救援模式'), 'recovery.html 必须呈现救援模式');
-  assert.ok(html.includes('bridge.rescue'), 'recovery.html 必须使用 rescue 桥');
-  assert.ok(html.includes('btn-safemode'), 'safe-mode 按钮缺失');
-  assert.ok(html.includes('btn-diagnose'), 'AI 诊断按钮缺失');
-  assert.ok(html.includes('manifest'), 'send-manifest 确认 UI 缺失');
+test('救援链提供 AI 自动修复与安全模式（现役面）', () => {
+  assert.ok(rescue.includes("'rescue.auto-repair'"), 'sidecar rescue.auto-repair 方法缺失');
+  assert.match(rescue, /runAutoRepair/, 'rescue.auto-repair 必须落到 rescue-agent.runAutoRepair');
+  const bridge = readFileSync(join(ROOT, '..', 'tauri-shell', 'sidecar', 'bridge.ts'), 'utf8');
+  assert.ok(bridge.includes('autoRepair'), 'bridge 必须暴露 rescue.autoRepair()');
+  const mainRs = readFileSync(join(ROOT, '..', 'tauri-shell', 'src', 'main.rs'), 'utf8');
+  assert.ok(mainRs.includes('rescue.safe-mode'), '/died 页必须提供安全模式入口（rescue.safe-mode）');
 });

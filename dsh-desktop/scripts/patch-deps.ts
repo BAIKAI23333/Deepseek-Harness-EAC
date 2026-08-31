@@ -3,6 +3,9 @@
 // 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
 import fs = require('node:fs');
 import path = require('node:path');
+// 内核补丁文件一旦截断 = 用户机启动期 MODULE_NOT_FOUND/语法损坏且无自愈：
+// 全部落盘走原子写（tmp + 两步换入，见 lib/atomic-json）。
+import { writeFileAtomic } from '../lib/atomic-json';
 
 const root = path.resolve(__dirname, '..');
 const target = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-host-directory-picker-native', 'lib', 'index.js');
@@ -33,7 +36,7 @@ function patchPickerWorker(): void {
     return;
   }
   src = src.replace(OLD_RE, NEW_BLOCK);
-  fs.writeFileSync(target, src);
+  writeFileAtomic(target, src);
   console.log('[patch-deps] 已补丁 picker-native：worker 退出上报 exit code / signal');
 }
 
@@ -71,7 +74,7 @@ function patchSettingsNavScroll(): void {
     '{flex-direction:column;gap:4px;display:flex;min-height:0;overflow-y:auto;padding-bottom:10px;/*' + NAV_SCROLL_MARKER + '*/}'
   );
   src = src.replace(oldNav, newNav).replace(oldNavList, newNavList);
-  fs.writeFileSync(file, src);
+  writeFileAtomic(file, src);
   console.log('[patch-deps] 已补丁 settings-general：设置弹窗左栏可滚动，底部条目不再被裁掉');
 }
 
@@ -109,7 +112,7 @@ function patchSettingsPanelResize(): void {
     '.' + m[1] + '_panel{' + m[2] + 'width:min(75vw,1280px);' + m[3] +
     'overflow:auto;resize:horizontal;min-width:640px;/*' + PANEL_RESIZE_MARKER + '*/}';
   src = src.replace(m[0], next);
-  fs.writeFileSync(file, src);
+  writeFileAtomic(file, src);
   console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
 }
 
@@ -145,7 +148,7 @@ function patchOptionalEscalationFields(): void {
       continue;
     }
     src = src.replace(OPTIONAL_ESCALATION_OLD, OPTIONAL_ESCALATION_NEW);
-    fs.writeFileSync(file, src);
+    writeFileAtomic(file, src);
     console.log('[patch-deps] 已补丁可选升级字段：' + path.basename(path.dirname(path.dirname(file))));
   }
 }
@@ -235,7 +238,7 @@ function patchAgentPresetMenu(file?: string): boolean {
     .replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew)
     .replace(AGENT_PRESET_ZH_ANCHOR, AGENT_PRESET_ZH_ANCHOR + zhDictAdd)
     .replace(AGENT_PRESET_EN_ANCHOR, AGENT_PRESET_EN_ANCHOR + enDictAdd);
-  fs.writeFileSync(target, src);
+  writeFileAtomic(target, src);
   console.log('[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单');
   return true;
 }
@@ -289,6 +292,11 @@ const SUBMENU_BTN_ANCHOR = 'f.jsxs("button",{type:"button",role:"menuitem",class
 const SUBMENU_BTN_NEW = 'f.jsxs("button",{type:"button",role:"menuitem",className:Re.item,style:{alignItems:"flex-start",flexShrink:0},disabled:he.disabled';
 const SUBMENU_LABEL_ANCHOR = 'f.jsx("span",{className:Re.itemLabel,children:he.label})';
 const SUBMENU_LABEL_NEW = 'f.jsx("span",{className:Re.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:he.label})';
+// 0.1.2-alpha.1 产物形态（压缩变量名变为 d/Pe/fe； submenu 项才有 fe.label）。
+const SUBMENU_BTN_ANCHOR_012 = 'd.jsxs("button",{type:"button",role:"menuitem",className:Pe.item,disabled:fe.disabled';
+const SUBMENU_BTN_NEW_012 = 'd.jsxs("button",{type:"button",role:"menuitem",className:Pe.item,style:{alignItems:"flex-start",flexShrink:0},disabled:fe.disabled';
+const SUBMENU_LABEL_ANCHOR_012 = 'd.jsx("span",{className:Pe.itemLabel,children:fe.label})';
+const SUBMENU_LABEL_NEW_012 = 'd.jsx("span",{className:Pe.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:fe.label})';
 
 function patchMenuSubmenuScroll(file?: string): boolean {
   let target: string | undefined = file;
@@ -370,20 +378,51 @@ function patchMenuSubmenuScroll(file?: string): boolean {
     console.log('[patch-deps] 已补丁主 bundle：二级菜单悬停离开延迟关闭（移回一级菜单保持）');
   }
   if (!src.includes(SUBMENU_ITEM_MARKER)) {
-    const btnIdx = src.indexOf(SUBMENU_BTN_ANCHOR);
-    const labelIdx = btnIdx >= 0 ? src.indexOf(SUBMENU_LABEL_ANCHOR, btnIdx) : -1;
+    // 双候选：rc.2（Re/he/f）与 0.1.2（Pe/fe/d）两代产物形态。
+    const use012 = src.includes(SUBMENU_BTN_ANCHOR_012) && src.includes(SUBMENU_LABEL_ANCHOR_012);
+    const btnAnchor = use012 ? SUBMENU_BTN_ANCHOR_012 : SUBMENU_BTN_ANCHOR;
+    const btnNew = use012 ? SUBMENU_BTN_NEW_012 : SUBMENU_BTN_NEW;
+    const labelAnchor = use012 ? SUBMENU_LABEL_ANCHOR_012 : SUBMENU_LABEL_ANCHOR;
+    const labelNew = use012 ? SUBMENU_LABEL_NEW_012 : SUBMENU_LABEL_NEW;
+    const btnIdx = src.indexOf(btnAnchor);
+    const labelIdx = btnIdx >= 0 ? src.indexOf(labelAnchor, btnIdx) : -1;
     if (btnIdx < 0 || labelIdx < 0) {
       console.log('[patch-deps] Menu submenu item 未匹配到目标代码（版本可能已更新），跳过');
     } else {
-      src = src.slice(0, btnIdx) + SUBMENU_BTN_NEW + src.slice(btnIdx + SUBMENU_BTN_ANCHOR.length);
-      const l2 = src.indexOf(SUBMENU_LABEL_ANCHOR, btnIdx);
-      src = src.slice(0, l2) + SUBMENU_LABEL_NEW + src.slice(l2 + SUBMENU_LABEL_ANCHOR.length);
+      src = src.slice(0, btnIdx) + btnNew + src.slice(btnIdx + btnAnchor.length);
+      const l2 = src.indexOf(labelAnchor, btnIdx);
+      src = src.slice(0, l2) + labelNew + src.slice(l2 + labelAnchor.length);
       changed = true;
       console.log('[patch-deps] 已补丁主 bundle：submenu 项两行布局不再被裁剪');
     }
   }
-  if (changed) fs.writeFileSync(target, src);
+  if (changed) writeFileAtomic(target, src);
   return true;
+}
+
+// 内核 client-modules v2 解析签名补丁：Node ≥24.11 的内部 ESM 解析器
+// resolveSync 实际签名是 (specifier, parentURL)（位置参数），而内核 0.1.2
+// 的 v2 分支按 (parentURL, {specifier, attributes}) 调用——TypeError 被
+// locatePkgJson 的 catch 吞掉后所有包都判为 located-undefined，boot graph
+// 静默清零（官方 UI 走 vite dist 不受影响，故官方 CI 未发现）。修复：v2
+// 分支同样用位置参数调用。锚点带换行缩进（tsdown 产物形态）。
+const CLIENT_MODULES_RESOLVE_TARGET = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-modules', 'lib', 'index.js');
+const CLIENT_MODULES_RESOLVE_OLD = 'internal.version === "v2" ? internal.resolveSync(baseUrl, {\n\t\t\t\tspecifier: loaderName,\n\t\t\t\tattributes: {}\n\t\t\t}).url : internal.resolveSync(loaderName, baseUrl, {}).url';
+const CLIENT_MODULES_RESOLVE_NEW = 'internal.resolveSync(loaderName, baseUrl, {}).url';
+
+function patchClientModulesResolve(): void {
+  if (!fs.existsSync(CLIENT_MODULES_RESOLVE_TARGET)) {
+    console.log('[patch-deps] dsh-client-modules 不存在，跳过');
+    return;
+  }
+  let src = fs.readFileSync(CLIENT_MODULES_RESOLVE_TARGET, 'utf8');
+  if (!src.includes(CLIENT_MODULES_RESOLVE_OLD)) {
+    console.log('[patch-deps] client-modules v2 签名锚点未命中（已应用或上游已修），跳过');
+    return;
+  }
+  src = src.replace(CLIENT_MODULES_RESOLVE_OLD, CLIENT_MODULES_RESOLVE_NEW);
+  writeFileAtomic(CLIENT_MODULES_RESOLVE_TARGET, src);
+  console.log('[patch-deps] 已补丁 client-modules：v2 resolveSync 位置参数（boot graph 清零修复）');
 }
 
 function main(): void {
@@ -393,6 +432,7 @@ function main(): void {
   patchOptionalEscalationFields();
   patchAgentPresetMenu();
   patchMenuSubmenuScroll();
+  patchClientModulesResolve();
 }
 
 // 单测 require 本模块时不应改写真实 node_modules；仅命令行直接执行时跑 main()。

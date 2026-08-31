@@ -234,9 +234,21 @@ window.__ModuleLoader__.load({
         for (const element of nextSet) element.setAttribute(attribute, 'true')
       }
 
+      // 修复节流:0.1.2 内核浮层(floating-ui 等)每帧写 inline style,旧版
+      // 每个 mutation 批次都排一帧全量重扫(getComputedStyle 走查),对话流式
+      // 输出期间形成修复风暴拖垮主线程 —— 全局高延迟的元凶之一。这里把修复
+      // 频率封顶 ≈6.7/s:间隔不足时 rAF 空转到下个窗口,单句柄,dispose 不变。
+      const REPAIR_MIN_MS = 150
+      let lastRepairAt = 0
       const repair = () => {
         animationFrame = 0
         if (disposed) return
+        const elapsed = Date.now() - lastRepairAt
+        if (elapsed < REPAIR_MIN_MS) {
+          animationFrame = window.requestAnimationFrame(repair)
+          return
+        }
+        lastRepairAt = Date.now()
 
         const nextRoots = new Set(discoverSettingsRoots())
         const nextScrollables = new Set()
@@ -285,10 +297,11 @@ window.__ModuleLoader__.load({
         if (root === undefined) return
 
         const delta = wheelDeltaPixels(event)
-        let target = path.find(node => isElement(node) && markedScrollables.has(node) && canScroll(node, delta))
-        if (target === undefined) {
-          target = [...markedScrollables].find(node => root.contains(node) && canScroll(node, delta))
-        }
+        // 只滚动光标路径上的标记容器,绝不做"兜底重定向":设置弹层里左右两栏
+        // 是兄弟滚动容器,原生滚动链只走祖先不会走到兄弟;旧版在左栏滚到底后
+        // 把剩余滚动量手动转嫁给右栏(约 100px/格),用户感知为「滑左栏右边
+        // 跟着小幅滑动」。左栏到底就该停,剩余量交给 overscroll-behavior:contain。
+        const target = path.find(node => isElement(node) && markedScrollables.has(node) && canScroll(node, delta))
         if (target === undefined) return
 
         event.preventDefault()
@@ -300,7 +313,9 @@ window.__ModuleLoader__.load({
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+        // 不监听 style:浮层定位每帧写 inline style,是变更洪水的源头;
+        // 滚动容器的出现/消失由 childList 与 class/hidden 变化覆盖。
+        attributeFilter: ['class', 'hidden', 'aria-hidden'],
       })
       document.addEventListener('wheel', onWheel, { capture: true, passive: false })
       window.addEventListener('resize', scheduleRepair)

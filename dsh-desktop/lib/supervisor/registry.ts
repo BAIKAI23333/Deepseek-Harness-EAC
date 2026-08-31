@@ -98,6 +98,35 @@ export function upsertLegacyPlugin(p: {
   }
 }
 
+/** 批量版 upsertLegacyPlugin：一次读 + 内存合并 + 一次写。boot 期
+ * archivePluginProfiles 对 40+ 插件逐个建档，逐条读写 = 80 次 IO/40 次
+ * 原子写（boot 热路径）；语义与逐条版一致（失败整体记一条日志）。 */
+export function upsertLegacyPlugins(
+  ps: { id: string; version?: string; source: 'builtin' | 'market' | 'manual'; enabled?: boolean }[],
+): void {
+  if (ps.length === 0) return;
+  try {
+    const reg = readRegistry();
+    for (const p of ps) {
+      const e = entryOf(reg, p.id, {
+        id: p.id,
+        version: p.version ?? '',
+        source: p.source,
+        risk: 'legacy-cordis',
+        kind: 'legacy',
+        packageSha256: '',
+        permissions: {},
+        rollbackVersions: [],
+      });
+      if (p.enabled !== undefined) e.enabled = p.enabled;
+      reg.plugins[p.id] = e;
+    }
+    writeRegistry(reg);
+  } catch (err) {
+    log('registry', '批量档案登记失败: ' + String((err as Error).message));
+  }
+}
+
 /** 记录一次启动失败归因（Phase 0.3：启动失败记录写入档案）。 */
 export function recordStartFailure(id: string, error: string): void {
   try {
@@ -114,13 +143,14 @@ export function recordStartFailure(id: string, error: string): void {
   }
 }
 
-/** 恢复中心动作成功后清除失败标记。 */
+/** 恢复中心动作成功后清除失败标记。只清 lastError 字段，不动 state：
+ * 状态转移一律走状态机（直接置 installed/disabled 会制造 quarantined →
+ * installed 之类的非法转移，静默击穿隔离语义）。 */
 export function clearStartFailure(id: string): void {
   try {
     const reg = readRegistry();
     const e = reg.plugins[id] as RegistryEntry | undefined;
     if (!e) return;
-    e.state = e.enabled ? 'installed' : 'disabled';
     delete e.lastError;
     delete e.lastErrorAt;
     reg.plugins[id] = e;

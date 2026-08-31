@@ -21,6 +21,10 @@ export interface StaticPreviewCtx {
   exitDamaged(): void;
   isPackaged?(): boolean;
   resourcesPath?(): string;
+  /** 路径围栏：此前本服务接受任意绝对路径（仅回环限制），等于把全盘
+   * 任意文件读原语交给知道端口的页面/进程（DNS rebinding 可远程化）。
+   * 宿主注入白名单判定（会话 cwd / skills 根），一律 deny 敏感文件。 */
+  fence?(p: string): boolean;
 }
 
 let ctx!: StaticPreviewCtx;
@@ -47,9 +51,23 @@ export function startPreviewStaticServer(): void {
     ".mp3": "audio/mpeg", ".wav": "audio/wav", ".pdf": "application/pdf", ".xml": "application/xml"
   };
   const TEXT_MIME = /^(text\/|application\/(json|javascript|xhtml\+xml|xml)|image\/svg)/;
+  let boundPort = 0;
   const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
     const ra = req.socket && req.socket.remoteAddress;
     if (ra !== "127.0.0.1" && ra !== "::1" && ra !== "::ffff:127.0.0.1") {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    // Host 校验：DNS rebinding（攻击域名解析到 127.0.0.1）后浏览器视为同源，
+    // SOP 失效 —— Host 头仍是攻击域名，据此拒绝。仅接受回环主机名 + 本端口。
+    const host = String(req.headers.host ?? '');
+    const hostOk = boundPort > 0 && (
+      host === `127.0.0.1:${boundPort}` ||
+      host === `localhost:${boundPort}` ||
+      host === `[::1]:${boundPort}`
+    );
+    if (!hostOk) {
       res.writeHead(403);
       res.end();
       return;
@@ -70,6 +88,12 @@ export function startPreviewStaticServer(): void {
     if (/^\/[A-Za-z]:[\\/]/.test(p)) p = p.slice(1);
     if (!path.isAbsolute(p)) {
       res.writeHead(400);
+      res.end();
+      return;
+    }
+    // 围栏：白名单外的路径一律 403（见 StaticPreviewCtx.fence 注释）。
+    if (typeof ctx.fence === 'function' && !ctx.fence(p)) {
+      res.writeHead(403);
       res.end();
       return;
     }
@@ -96,6 +120,7 @@ export function startPreviewStaticServer(): void {
   server.listen(0, "127.0.0.1", () => {
     previewStaticPort = server.address() && typeof server.address() === 'object'
       ? (server.address() as { port: number }).port : 0;
+    boundPort = previewStaticPort;
     ctx.log("boot", "预览静态服务已启动: http://127.0.0.1:" + previewStaticPort);
   });
   server.on("error", (err) => ctx.log("boot", "预览静态服务失败: " + err.message));
@@ -105,9 +130,18 @@ export function startPreviewStaticServer(): void {
 // before starting dsh web. A botched upgrade leaves empty package skeletons;
 // Node then dies with ERR_MODULE_NOT_FOUND in a loop. Tell the user to
 // reinstall instead (with an escape hatch to continue anyway).
+// 路径布局：Electron 时代 manifest 在 resources/app/ 下；Tauri 化后应用树
+// 直接是 <DSH_RESOURCE_ROOT>/dsh-desktop（与 node_modules 同级）。宿主注入
+// 的 resourcesPath 应指向 dsh-desktop 应用树本身 —— 兼容两种：resourcesPath
+// 末段是 dsh-desktop 直接用，否则按旧 Electron 布局拼 app/。
+function appTreeDir(): string {
+  const rp = resourcesDir();
+  if (path.basename(rp).toLowerCase() === 'dsh-desktop') return rp;
+  return path.join(rp, 'app');
+}
 export function verifyBundledModules(): Promise<void> {
   if (!isPackaged()) return Promise.resolve();
-  const appDir = path.join(resourcesDir(), 'app');
+  const appDir = appTreeDir();
   const manifestPath = path.join(appDir, 'bundle-manifest.json');
   let manifest: unknown = null;
   try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); } catch { return Promise.resolve(); }

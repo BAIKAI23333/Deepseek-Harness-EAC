@@ -34,30 +34,28 @@ import cp = require('node:child_process');
 import updater = require('./updater');
 const { compareVersions } = updater;
 
-// Electron 主进程下优先用 net 模块（Chromium 网络栈）发请求：走系统代理
-// 与系统 CA 信任库。用户网络里 Node https 常见的两类硬伤它都能正确处理：
-//   ① 企业/网关 MITM 证书不在 Node 内置 Mozilla CA 列表 —— 报
-//      "unable to verify the first certificate"，检查更新直接失败；
-//   ② 系统代理（如 127.0.0.1:7890）Node https 根本不读，直连 GitHub
-//      超时。纯 Node 环境（单测）下 electron 不可用，自动回落 node https。
-let electronNet: any = null;
-try {
-  const electron = require('electron');
-  if (electron && typeof electron.net === 'object' && typeof electron.net.request === 'function') {
-    electronNet = electron.net;
-  }
-} catch { /* plain node (tests): fall back to node https */ }
+// （历史备注：Electron 主进程时代曾优先用 electron.net —— Chromium 网络栈
+// 走系统代理与系统 CA，规避企业 MITM 证书与系统代理两类 Node https 硬伤；
+// Tauri 化后 electron 模块永不可得，该路径已整体退役。）
 
-/** 统一取响应头字段（net 与 http 的 header 值类型不一致，可能是数组）。 */
+/** 统一取响应头字段（http 与 https 的 header 值类型不一致，可能是数组）。 */
 function headerValue(headers: Record<string, unknown> | null | undefined, name: string): unknown {
   const v = headers && headers[name];
   return Array.isArray(v) ? v[0] : v;
 }
 
-const DEFAULT_REPOS = { github: 'zouyuxuan122/Deepseek-Harness-EAC', gitee: 'zouyuxuan122/Deepseek-Harness-EAC' };
+const DEFAULT_REPOS = { github: 'zouyuxuan122/DSH-Desktop-EAC', gitee: 'zouyuxuan122/DSH-Desktop-EAC' };
 const REPO_SLUG = /^[A-Za-z0-9_.-]{1,64}\/[A-Za-z0-9_.-]{1,64}$/;
 const MIN_VALID_BYTES = 64 * 1024 * 1024; // 完整安装包远大于 64MB，防止把错误页当 exe
-const GITHUB_DOWNLOAD_PROXY = 'https://gh.geekertao.top/';
+const GITHUB_DOWNLOAD_PROXY_DEFAULT = 'https://gh.geekertao.top/';
+// 5.3.3：代理前缀可经 DSH_DESKTOP_GH_PROXY 覆盖（第三方加速域名易主/失效
+// 会拖垮全部 GitHub 下载）；置 0/off/false 关闭。
+function ghProxyBase(): string | null {
+  const env = String(process.env.DSH_DESKTOP_GH_PROXY || '').trim();
+  if (/^(0|off|false)$/i.test(env)) return null;
+  if (env) return env.replace(/\/+$/, '') + '/';
+  return GITHUB_DOWNLOAD_PROXY_DEFAULT;
+}
 
 interface UpdateCtx {
   userDataDir: string;
@@ -199,16 +197,18 @@ function githubProxyUrl(url: string | null | undefined, { version = '', sha256 =
   if (version) params.push(`v=${encodeURIComponent(String(version))}`);
   if (sha256) params.push(`sha256=${encodeURIComponent(String(sha256))}`);
   const suffix = params.length ? (value.includes('?') ? '&' : '?') + params.join('&') : '';
-  return GITHUB_DOWNLOAD_PROXY + value + suffix;
+  const base = ghProxyBase();
+  return base ? base + value + suffix : null;
 }
 
 /** 组装下载候选：代理优先，随后原始地址，再接其他 Release 源。opts 透传给代理地址生成（缓存破坏参数）。 */
 function downloadUrls(primaryUrl: string | null | undefined, fallbackUrls: unknown[] = [], opts: { version?: string; sha256?: string } = {}): string[] {
   const primary = String(primaryUrl || '').trim();
   const candidates: string[] = [];
+  // 直连优先（官方源），代理只作直连失败后的加速候选。
+  if (primary) candidates.push(primary);
   const proxied = githubProxyUrl(primary, opts);
   if (proxied) candidates.push(proxied);
-  if (primary) candidates.push(primary);
   for (const url of Array.isArray(fallbackUrls) ? fallbackUrls : []) {
     const value = String(url || '').trim();
     if (value) candidates.push(value);
@@ -244,39 +244,12 @@ interface ResponseBundle {
   stream: any;
 }
 
-/**
- * 统一的"取响应"原语：resolve { status, headers, stream }。
- * electron.net 路径自动跟随重定向（含跨域）、自动走系统代理与系统 CA；
- * node https 回退路径手动跟随重定向（≤5 次）。timeoutMs 只约束到响应头
- * 到达（TTFB），响应体由调用方各自控制。
- */
+// Electron 时代的 electron.net 路径已随壳退役删除（原走 Chromium 网络栈：
+// 系统代理 + 系统 CA，Tauri 产品里 electron 模块永远不存在），统一 node
+// https：手动跟随重定向（≤5 次）。timeoutMs 只约束到响应头到达（TTFB），
+// 响应体由调用方各自控制。
 function getResponse(url: string, { headers = {}, timeoutMs = 20000, redirects = 0 }: { headers?: Record<string, unknown>; timeoutMs?: number; redirects?: number } = {}): Promise<ResponseBundle> {
   if (redirects > 5) return Promise.reject(new Error('重定向次数过多'));
-  if (electronNet) {
-    return new Promise((resolve, reject) => {
-      let req: any;
-      try {
-        req = electronNet.request({ url, redirect: 'follow' });
-      } catch (err) {
-        return reject(err);
-      }
-      for (const [k, v] of Object.entries({ 'User-Agent': 'DSH-Desktop', ...headers })) {
-        try { req.setHeader(k, v); } catch { /* 无效头名等，忽略 */ }
-      }
-      const timer = setTimeout(() => {
-        try { req.destroy(new Error('请求超时')); } catch { /* already destroyed */ }
-      }, timeoutMs);
-      req.on('response', (res: any) => {
-        clearTimeout(timer);
-        resolve({ status: res.statusCode, headers: res.headers, stream: res });
-      });
-      req.on('error', (err: unknown) => {
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      });
-      req.end();
-    });
-  }
   return new Promise((resolve, reject) => {
     // 自定义镜像（DSH_DESKTOP_RELEASE_API）与单测允许 http:// 端点
     const lib = (url.startsWith('http:') ? http : https) as unknown as typeof http;
@@ -484,6 +457,9 @@ function downloadFileOnce(url: string, dest: string, { onProgress, resumeFrom = 
         const m = /^bytes (\d+)-/i.exec(cr);
         if (m && Number(m[1]!) !== resumeFrom) {
           stream.resume();
+          // 必须删掉 .part：不删则下一轮 attempt 携同一半截重试，恒撞
+          // RESUME_INVALID 空转烧完 maxAttempts（416 分支已有同款清理）。
+          try { fs.rmSync(tmp, { force: true }); } catch { /* 尽力清理 */ }
           return finish(reject, new Error('RESUME_INVALID'));
         }
       }
@@ -584,19 +560,34 @@ async function downloadWithSourceSwitch(urls: string[], dest: string, { onProgre
 
 async function concatFiles(sources: string[], dest: string): Promise<void> {
   const out = fs.createWriteStream(dest);
-  for (const s of sources) {
+  // 写侧 error 监听必须在拷贝循环之前挂上：pipe 不转发写错误，ENOSPC/EIO
+  // 若在此处无监听会以 uncaught exception 直接杀掉进程（磁盘压力场景恰是
+  // 本函数存在的理由）。每段拷贝的 promise 同时监听读写两侧错误，保证必
+  // 定settle；失败时销毁写流并清掉半成品 dest。
+  let writeErr: Error | null = null;
+  out.on('error', (err) => { if (!writeErr) writeErr = err; });
+  try {
+    for (const s of sources) {
+      await new Promise<void>((res, rej) => {
+        const rs = fs.createReadStream(s);
+        const onWriteErr = (err: Error) => { try { rs.destroy(); } catch { /* noop */ } rej(err); };
+        out.once('error', onWriteErr);
+        rs.on('error', rej);
+        rs.on('end', () => { out.off('error', onWriteErr); res(); });
+        rs.pipe(out, { end: false });
+      });
+      if (writeErr) throw writeErr;
+      fs.rmSync(s, { force: true });
+    }
     await new Promise<void>((res, rej) => {
-      const rs = fs.createReadStream(s);
-      rs.on('error', rej);
-      rs.on('end', res);
-      rs.pipe(out, { end: false });
+      out.on('error', rej);
+      out.end(res);
     });
-    fs.rmSync(s, { force: true });
+  } catch (err) {
+    try { out.destroy(); } catch { /* already destroyed */ }
+    try { fs.rmSync(dest, { force: true }); } catch { /* best effort */ }
+    throw err;
   }
-  await new Promise<void>((res, rej) => {
-    out.on('error', rej);
-    out.end(res);
-  });
 }
 
 // --- SHA-256 内容校验（V4）--------------------------------------------------
@@ -713,10 +704,21 @@ async function downloadRelease(ctx: UpdateCtx, release: ReleaseInfo, { onProgres
   // 配合 version 让代理缓存键随内容变化、绕开旧缓存），又在下载完成后复用
   // 做内容校验（单一来源，不在每个分片/校验时重复请求 SHA256SUMS）。
   const expected = await expectedSha256(ctx, release, sel);
+  // 分片按版本掺名后旧版本残留不再命中，下载前顺手清理（含 5.3.2 旧式
+  // 无版本分片名）。
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      if (f.startsWith(sel.name) && f.includes('.part') && !f.includes(release.version + '.part')) {
+        fs.rmSync(path.join(dir, f), { force: true });
+      }
+    }
+  } catch { /* 尽力而为 */ }
   for (let i = 0; i < sel.parts.length; i++) {
     const p = sel.parts[i]!;
     ctx.log('client-update', `下载 ${p.name}（${Math.round(p.size / 1048576)} MB）`);
-    const dest = split ? finalPath + '.part' + (i + 1) : finalPath;
+    // 分片名掺入版本号：固定名候选（无版本）跨版本同名，旧 .part 会被
+    // 当断点续传拼进新版本安装包（无 digest 时仅 ±2MB 告警兜底）。
+    const dest = split ? `${finalPath}.${release.version}.part${i + 1}` : finalPath;
     const urls = downloadUrls(
       p.url,
       fbSelections.map((f) => (f.parts[i] && f.parts[i]!.url) || ''),
@@ -892,7 +894,10 @@ function buildApplyScript({ portable, nodeExe }: ApplyScriptOpts): string[] {
       // V4.1 更新保障③：成功路径也保留 %OLD%.bak（上一版 exe）并落 marker。
       // 新版若崩溃（run-state 非干净退出 + marker 存在），下次启动自动回退。
       // 新版健康启动后由主进程清理（cleanupClientBackupIfHealthy）。
-      'if exist "%OLD%.bak" copy /y "%OLD%" "%OLD%.crash" >nul 2>&1',
+      // V4.1 保障③的 .crash 快照必须取自 %OLD%.bak（上一版 exe）：此处
+      // %OLD% 已被上方 copy 覆盖为新版，从 %OLD% 复制得到的是新 exe，
+      // 崩溃回退保险丝名存实亡。
+      'if exist "%OLD%.bak" copy /y "%OLD%.bak" "%OLD%.crash" >nul 2>&1',
       'start "" "%OLD%"',
       'echo updated %date% %time% > "%OLD%.bak.marker"',
       'del "%~f0" >nul 2>&1',
@@ -1267,4 +1272,95 @@ function applyUpdate(ctx: UpdateCtx, pending: PendingUpdate, opts?: ApplyUpdateO
   return script;
 }
 
-export = { checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isPortable, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls, DEFAULT_REPOS };
+
+// --- 更新备份清理（V4.3/V4.1 保障③承诺的 cleanupClientBackupIfHealthy）------
+// 安装版自更新每次在 <userData>/backups/<ts>/ 留 4 目录全量镜像并写
+// <userData>/updates/.backup-ts marker；便携版留 <shellExe>.bak(+.bak.marker)。
+// 「新版健康启动后清理」的承诺在 Tauri 化后一直没有实现 —— 更新频繁的用户
+// 磁盘被逐次吃满。headless sidecar 弹窗会被 fail-closed 兜底自动应答（等同
+// 无人选择），因此不做询问交互：备份保留 24h —— 未满 24h 留待下次启动再查，
+// 超过即静默删除。便携 .bak 是崩溃自回退保险丝：健康启动（本函数被调到）
+// 即不再需要，删 marker + .bak + .crash。
+// ⚠️ 必须异步（fs.promises.rm）且由调用方在 boot 应答后延迟调用：真实机器
+// 的 backups/ 可累积数 GB 镜像，同步 rm 会冻结 sidecar 事件循环数分钟
+//（所有 RPC 卡死 + boot.start 180s 超时弹 died 页，5.3.5 首发实测事故）。
+// backups/<ts> 目录名有三种真实格式（apply 脚本时代产生）：
+//   10 位 = Unix 秒（PowerShell ToUnixTimeSeconds，主路径）
+//   13 位 = Unix 毫秒（测试/早期写入）
+//   14 位 = YYYYMMDDHHmmss（PowerShell 缺席时的 batch 兜底，本地时区）
+// 直接 parseInt 会把秒级/兜底格式与 Date.now()（毫秒）混比：秒级永远
+// 「超过 24h」被立即删（24h 回滚保护窗形同虚设），14 位兜底格式比
+// now-ms 还大、永远不删。先按位数归一化到毫秒再比较；配不上回退 mtime，
+// mtime 也拿不到就宁留勿删。
+function backupDirTimestampMs(name: string, dir: string): number {
+  const s = String(name).trim();
+  if (/^\d{10}$/.test(s)) return parseInt(s, 10) * 1000;
+  if (/^\d{13}$/.test(s)) return parseInt(s, 10);
+  if (/^\d{14}$/.test(s)) {
+    const t = new Date(
+      +s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8),
+      +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14),
+    ).getTime();
+    if (Number.isFinite(t)) return t;
+  }
+  try { return fs.statSync(dir).mtimeMs; } catch { return 0; }
+}
+
+async function cleanupClientBackupIfHealthy(ctx: UpdateCtx, opts: { shellExe?: string } = {}): Promise<{ removed: string[]; kept: string[] }> {
+  const removed: string[] = [];
+  const kept: string[] = [];
+  const KEEP_MS = 24 * 60 * 60 * 1000;
+  const backupsDir = path.join(ctx.userDataDir, 'backups');
+  let sawBackup = false;
+  let entries;
+  try {
+    entries = fs.readdirSync(backupsDir, { withFileTypes: true });
+  } catch { entries = null; /* backups 目录不存在：无安装版备份可清 */ }
+  if (entries) {
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      sawBackup = true;
+      const dir = path.join(backupsDir, e.name);
+      if (fs.existsSync(path.join(dir, '.keep'))) { kept.push(e.name); continue; }
+      const at = backupDirTimestampMs(e.name, dir);
+      if (!at) continue; // 时间不可判定：宁留勿删
+      if (Date.now() - at < KEEP_MS) { kept.push(e.name); continue; }
+      try {
+        await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 });
+        removed.push(e.name);
+      } catch { kept.push(e.name); }
+    }
+    if (sawBackup && removed.length) {
+      ctx.log('update', `已清理更新备份 ${removed.length} 份（保留未满 24h 的 ${kept.length} 份）`);
+      if (!kept.length) {
+        try { await fs.promises.rm(path.join(ctx.userDataDir, 'updates', '.backup-ts'), { force: true }); } catch { /* 尽力而为 */ }
+      }
+    }
+  }
+  const shellExe = opts.shellExe || process.env.DSH_SHELL_EXE || '';
+  if (shellExe) {
+    try {
+      if (fs.existsSync(shellExe + '.bak.marker')) {
+        // .bak/.crash 是单文件 exe（百 MB 级），同样走异步删。
+        // 删除顺序：marker 必须最后删 —— 它是下次启动再进本分支的门，
+        // 先删 marker 后 .bak 失败（杀软/索引器正占着刚换下的百 MB exe）
+        // 会永久残留 .bak/.crash（合计 2× exe 体积）且再无重试机会。
+        // 各文件独立 try：一个失败不拖累其余的清理。
+        for (const suffix of ['.bak', '.crash']) {
+          try {
+            await fs.promises.rm(shellExe + suffix, { force: true, maxRetries: 3 });
+          } catch (err) {
+            ctx.log('update', `清理便携 ${suffix} 失败（下次启动重试）: ` + ((err as Error) && (err as Error).message || err));
+          }
+        }
+        await fs.promises.rm(shellExe + '.bak.marker', { force: true });
+        ctx.log('update', '新版启动确认健康，已清理便携 .bak 保险丝');
+      }
+    } catch (err) {
+      ctx.log('update', '清理便携 .bak 保险丝失败: ' + ((err as Error) && (err as Error).message || err));
+    }
+  }
+  return { removed, kept };
+}
+
+export = { cleanupClientBackupIfHealthy, checkLatest, selectAsset, downloadFile, downloadWithSourceSwitch, downloadRelease, releaseFallbacks, applyUpdate, buildApplyScript, buildInstalledApplyScript, buildInstalledPowerShellArgs, buildSpawnCommandLine, buildTauriPortableApplyScript, isTauriPortable, resolveRepos, normalizeRelease, computeSha256, fetchSumsMap, expectedSha256, isNoSpaceError, githubProxyUrl, downloadUrls };

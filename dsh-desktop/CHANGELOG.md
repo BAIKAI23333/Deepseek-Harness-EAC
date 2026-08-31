@@ -44,6 +44,398 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
 
+## 5.3.5（本版：全库 bug 大扫除 —— 壳韧性/安全围栏/更新器/原子写/插件泄漏 45 项根治 + 复审接续 18 项）· 2026-08-30
+
+### 概述
+
+五域并行审查（Rust 壳 / Node sidecar / 核心包装层 / 自有插件 / 打包链）+
+逐条验证后落地的修复批次；随后第二轮复审（五个审查智能体 + 真实规模
+复现探针）又修掉 18 项（含首批引入的 2 个回归：401 重放空体、延迟清理
+残留同步 rm）。全量测试 727→748 用例：743 过 / 0 挂 / 5 skip。
+
+### 复审接续修复（第二批，均为首批未发现/新引入项）
+
+- **P0 复现探针实证「boot 应答提前」不够**：侧载序列挪 setImmediate 后，
+  同步 PowerShell .lnk 读写仍在 boot 后整段冻结事件循环（桌面每个图标
+  1-3s），用户此时点「开始配对」照旧卡死 —— .lnk 驱动全异步化 +
+  单进程批量读（N 图标 1 次 PowerShell），maintainShortcuts 全 async。
+- **401 重兑重放丢 POST 请求体**（首批 S9 引入的回归）：req 流只能消费
+  一次，重放时 content-length 照带但体为空，内核按空载荷裁决还以 200
+  —— 请求体改缓冲重发（64MB 上限，超限 413），GET/HEAD 直通。
+- 备份清理时间戳单位归一化：backups/<ts> 目录名有 Unix 秒（10 位）/
+  毫秒（13 位）/YYYYMMDDHHmmss（14 位 batch 兜底）三种格式，直接
+  parseInt 与 Date.now() 混比 —— 秒级永远「超 24h」立即删（回滚保护窗
+  失效），14 位永远不删（磁盘泄漏）。按位数归一化 + mtime 兜底 +
+  不可判定宁留勿删；补 2 个真实格式回归测试。
+- confirmPreviousAgentHealthy 仍同步 rmSync 删数百 MB agent-previous
+  （首批只异步化了 backups 清理，「30s 后冻结」残留）—— 异步化。
+- 便携保险丝删除顺序：.bak.marker 先删则 .bak 删失败（杀软占用刚换下
+  的百 MB exe）永久残留 —— marker 改最后删，各文件独立重试。
+- sidecar 死亡后 /died 页恢复死胡同（两个按钮都发往死进程）—— WS
+  转发层检出死亡即按需重生 sidecar（换槽 + 重接广播，竞态安全）；
+  优雅退出/重启置 SIDECAR_STOPPING 抑制退出瞬间的 died 页闪现。
+- raw-html 净化器 CSS 防线实为可绕：转义引号（url("//evil/\"x")）令
+  正则整体失配原样存活、@\69 mport 转义形态绕过 @import 剥离 ——
+  转义感知匹配 + 解码后判定 + 未闭合串 fail-closed + 逐字符扫描器
+  剥 @import；补 5 个回归测试。
+- 静态预览 .credentials* 拒绝可被 NTFS 8.3 短名绕过（CREDEN~1.YAM）——
+  短名形态经目录枚举 + dev/ino 比对还原真实长名再判定。
+- WS 代理补 TCP keepalive（手机切网/休眠无 FIN 的半开连接数十秒内
+  回收，内核侧会话不再永挂）。
+- 【装机冒烟抓出的历史遗留 P1，P2 时代遗留】壳 WS 桥握手 4096B 单段
+  peek +「未见 \r\n\r\n 即拒收」：浏览器 cookie 按域名不按端口隔离，
+  127.0.0.1 的 dsh-auth JWT 把握手头顶过 4KB → 桥 WS 被永久拒绝、
+  页内全部 RPC 死锁（装机版实测 152 连拒）。循环 peek 至 16KB/3s
+  fail-closed；装机版复测 0 拒绝、配对 16ms。
+- onboarding 提交进行中 ✕/跳过按钮可关窗（Escape 已守，按钮没守）；
+  dsh-phone 二维码脚本被外力移出 head 后永卡「加载中」（isConnected
+  复位重建）；eac-core-bridge interval 禁用后不死 + 宿主重载后工具
+  不重注册（effect teardown + per-apply 注册表）。
+- atomic-json 写入前清扫同目标 .old-/.tmp- 孤儿；ext-host started 被拒
+  改走 killHost 统一清理（防僵尸 Host）；打包链卫生项（release-macos
+  输入插值改 env 间接引用、preset-sync 字面 BOM 还原转义、build-native
+  过时注释修正）。
+- 已知备案：内核插件 dsh-client-ui-model-selection 在 remote.session
+  服务未就绪的 home 上经 slot inject 回调触发 cordis 深路径校验
+  （window.onerror: cannot get property "remote.session" without inject）
+  —— 内核 @deepseek-ai/* 边界内，不阻塞功能（E2E 全过），不越界修。
+
+### 壳韧性（tauri-shell/src/main.rs）
+
+- sidecar spawn 失败分支补起 serve_ws：/died 诊断页此前指向无人监听的
+  端口（issue #210 修复在真实故障现场必然复现原 bug）。
+- 退出兜底 kill 死代码修复：Arc::into_inner 因槽位持有克隆恒 None，
+  9s 轮询+击杀从未生效（sidecar 挂死 → node/dsh web 进程树孤儿化）。
+  child 改 AMutex<Child> 经共享句柄轮询。
+- sidecar 崩溃黑洞：reader 退出时回绝全部在途 RPC（不再各挂 180s）并
+  广播 boot.server-died 走 /died 恢复链。
+- 每条 WS 连接泄漏 3 个常驻任务（writer + 双转发）：连接结束统一收割。
+- Sidecar::call 写失败/超时路径清理 pending 表项（HashMap 泄漏）。
+- exitAction 读参加 2s 短超时（关窗路径最长僵死 3 分钟 → 2s 回退默认）。
+- app.restart()（非主线程分支永久停车一个 worker）→ request_restart()。
+- 桥端口被占回退链：19873 → +25 候选 → OS 分配；全部 URL 构造经
+  ws_port() 读取；绑定挪到窗口创建前。
+- DPI 混算修正（恢复位 clamp 的 min_vis/40px 兜底乘 scale）；builder
+  min_inner_size 按主屏 work area 折算；恢复中心/onboarding 桥注入 marker
+  双写法匹配（此前恒失配 → quirks mode 渲染）；主窗 additional_browser_args
+  补回 Tauri 默认 disable-features；浮窗标签加 FNV 哈希后缀防跨会话撞窗；
+  /died URL 参数走 encode_query；accept 循环错误退避；退出 overlay 样式
+  按 id 复用（head 内 style 无限堆积）。
+
+### 安全围栏（sidecar / 壳）
+
+- files.authorize-open 路径穿越：`..`/符号链接/大小写变体可骗过字面前缀
+  命中 → 壳层 ShellExecuteW 打开任意文件。realpath 归一化 + 大小写折叠
+  后再比对，DANGEROUS_EXT 对归一化路径判定。
+- 预览静态服务（staticPort 经 chrome.init 主动下发页面）此前接受任意绝对
+  路径 = 全盘任意文件读原语：白名单围栏（会话 cwd fileRoots + skills 根，
+  .credentials* 一律拒绝）+ Host 头校验（DNS rebinding 免疫）。
+- /desktop/decide|disconnect 仅收 POST 且拒 Sec-Fetch-Site cross-site
+  （此前 <img src> 即可把待决配对悄悄改拒绝/踢掉手机）。
+- 手机桥 401 强制重兑重放：手机侧 stale dsh-auth-* 因内核轮换长期 401
+  且重配对不清 —— 桥缓存路径下自动重兑一次恢复（透传语义不越权重写）。
+- ensureKernelCookie 加 8s 超时（内核挂起时桥整体卡死）。
+
+### 更新器 / 数据完整性
+
+- 安装版自更新全量镜像备份（<userData>/backups/<ts>）此前无任何清理方
+  （V4.3 承诺的 cleanupClientBackupIfHealthy 一直未实现，交接文档两次
+  虚报）—— 现随健康启动落地：超 24h 静默删、清完回收 marker；便携
+  .bak/.bak.marker 保险丝同链清理。
+- writeFileAtomic 两步换入：旧「先删旧目标再 rename」在两步间被杀 =
+  启动关键文件消失（settings.yaml / .credentials.yaml / cordis.patch.yml
+  裸写残留 → boot 死循环）。全部 18 处写点收编原子写（preset-sync 2 +
+  boot-server 1 + plugin-guard 3 + builtin-collision 2 + plugin-ops 2 +
+  market 1 + patch-deps 7）；签名扩 Buffer（restore 快照逐字节保真）。
+- semver prerelease 按规范比较（旧实现 beta.2 > rc.1 / rc.1.10 < rc.1.2）。
+- updater abort 并发收割（activeProc 单例 → 进程集合，checkPluginUpdates
+  并发 11 源 ×2 npm 进程的孤儿问题）；plugin-updater 检测限流 4 并发 +
+  applyBuiltinPluginUpdate 单飞闸（staging rmSync 互踩）。
+- 便携 .crash 快照改取自 .bak（旧实现复制的是已替换的新 exe，崩溃回退
+  保险丝名存实亡）；RESUME_INVALID 分支删 .part（不再空转烧完重试）。
+- 断线在途 RPC 即时回绝（ws-jsonrpc-client 单源）：sidecar 重启期间主窗
+  /恢复中心不再挂满 30-60s 超时；超时定时器 settle 即清（不再空跑累积）。
+
+### 其他
+
+- logger 启动滚动：main.00 属上一轮运行，先滚链再开新（旧实现 'w' 截断
+  = 重启即毁上次全部日志）；deepRedact getter 抛错不再二次取值漏原对象；
+  flush 半行过 shallow masker。
+- rescue retry / recovery.reload 统一走守护启动链并同步 currentWebInfo
+  （救援拉起后手机桥不再 503）；boot.stop/重启失败清 webUrl 缓存。
+- turnEndNotifyAt / session-watcher files Map 容量与清扫（慢速内存泄漏）；
+  extension-host 退避定时器防叠挂、started 被拒终止 Host；sidecar 全局
+  unhandledRejection/uncaughtException 兜底（裸崩 = 整壳失联）。
+- 插件资产：message-rewind/font-custom observer+interval 防重入、
+  eac-core-bridge interval 幂等+注入收敛+注册查重、phone 二维码脚本单例
+  + 状态死三元修正、recovery-center 错误兜底文案、onboarding busy 卡死
+  + Escape 期间不可关 + 重复按钮清理、agent-teams 源码副本双同步。
+- dsh-raw-html 净化器加固（模型可控 HTML 威胁模型）：<template> content
+  递归净化 + SMIL animate/set/animateTransform 拦截 + CSS url() 白名单
+  （#/ 相对与 data:image/）+ 外链强制 target=_blank rel=noopener。
+- 内置插件覆盖层版本损坏回退资产版本（坏 overlay 不再永久遮蔽新资产）；
+  companion-sync 空表替换锚定一致（内联 [] 不再插错位致 YAML 损坏）。
+- build-native RUSTFLAGS 空格路径改 CARGO_ENCODED_RUSTFLAGS（两代交接
+  文档虚报项落地）；stage-resources win32-only 装配/vendor/npm fail-fast/
+  交叉打包护栏；make-portable 补 WebView2Loader.dll 一致性；NSIS 剥引号
+  成对判定 + 空 InstallLocation 跳过 ExecWait；release-macos.yml 版本号
+  从 package.json 读取（5.1.0 钉死）。
+
+## 5.3.4（本版：视口失同步自愈 —— 全屏窗口黑屏条带 / 侧边栏图标栏"消失"根治）· 2026-08-30
+
+### 现象与根因
+
+- 用户实测症状：应用窗口看似全屏，但只有左侧 ~208 物理像素条带被绘制（其余
+  纯黑），页面按 166×815 窄视口布局 —— 侧边栏收成图标条且图标栏"只剩一个
+  图标"（实测证明该画面不可能来自任何稳定 DOM 状态，属渲染撕裂/陈旧合成），
+  窗口标题栏 logo 回退白方块；该状态不自愈，直到重启。
+- 根因：WebView2 的视口边界由壳层在 WM_SIZE 时同步；窗口尺寸/显示器 DPI
+  变化事件被吞（副屏拔插、系统缩放切换、启动期主线程阻塞）后，页面视口
+  停留在旧物理尺寸（208×1019 物理 = 166×815 逻辑@1.25），窗口其余区域
+  永不重绘。
+
+### 修复（tauri-shell）
+
+- 视口失同步自愈：桥心跳（5s）随帧上报页面 innerWidth/innerHeight/
+  devicePixelRatio（新 send 型方法 `win.viewport-beat`，壳层本地拦截，
+  零 sidecar 流量）；壳层与窗口 inner_size 比对，超差（>8px）即判定失
+  同步：① 直接重申 webview bounds（不动窗口本身，最大化态安全，WebView2
+  重新布局+合成）；② 连续两拍仍未纠正且非最大化时，升级为 1px 窗口尺寸
+  往返强制 WM_SIZE 重绑。最小化/隐藏与浮窗报文不参与比对（防误报）。
+- DPI/显示器切换兜底：`ScaleFactorChanged` 事件后延迟 300ms 显式重申
+  webview bounds（tao 处理 WM_DPICHANGED 后 WebView2 视口跟随偶发丢失，
+  即本 bug 主诱因）。
+- 窗口状态落盘防御：save_window_state 镜像启动侧坏状态防御（<600×400
+  不落盘）—— 还原位被污染的坏值只允许存在当次，绝不毒化下次启动。
+- 还原位损坏防御：`win.toggle-maximize` 还原后若低于 OS 下限（480×360，
+  Windows 保存的还原位被 DPI/显示器变化污染），立即按当前显示器 work
+  area 重设合理尺寸（与首启默认同一收敛规则）。
+- 标题栏 logo 缺图退避重试：chrome.init 在首启重载（市场播种/插件同步）
+  下可能超时，失败后标题栏 logo 永远停在白方块 —— 现指数退避重试至拿到
+  iconDataUri（坏画面 forensic 中实测复现的白方块成因之一）。
+
+### 验证
+
+- 全量测试 727 用例：722 过 / 0 挂 / 5 skip（与 5.3.3 基线一致）。
+- 新增集成冒烟 verify-viewport-heal.js（真实壳 + CDP + 原始 WS 客户端）：
+  健康心跳 12s 无误报；伪造 166×815@1.25 心跳被检出并重申 bounds（页面
+  无扰动）；连续两拍升级 1px 往返且往返后尺寸复位；浮窗报文不触发。全过。
+
+## 5.3.3（本版：全库精简与高危修复批次 —— 安全加固 + 死功能接线 + 性能优化 + 真根 bug 修复）· 2026-08-30
+
+### 安全加固（高危）
+
+- 壳层回环 WS 加 Origin/Host 准入校验：本机任意网页此前可跨站 WebSocket 连入
+  127.0.0.1:19873 调用全部壳层/侧车 RPC（改文件/停服务）；含 DNS rebinding
+  与沙箱 null 源拒绝（cargo 8 断言钉住）。
+- 手机桥「断开并失效」真生效：cookie 从静态 `dsh_mobile=1` 改为服务端随机
+  会话密钥（持久化 userData，重启不需重新配对），断开即轮换、旧 cookie 立即
+  401；常量时间比对。
+- 微信桥二维码本地生成（内联 qrcode-generator，MIT）：绑定二维码此前拼给
+  第三方 api.qrserver.com 渲染（凭据外泄 + 断网白屏）。
+- 微信桥 fetchJson 补 HTTP 状态校验：token 过期的 401/HTML 此前被静默当
+  成功，回复链路无声丢失。
+
+### 死功能接线（Tauri 化断线恢复）
+
+- static-preview：独立回环端口预览服务接线，chrome.init 的 staticPort 从
+  恒 0 变真实值（dsh-client-file-changes 预览面板的加速通道）；bundle-manifest
+  完整性清单生成随 stage-resources 重建（Electron after-pack 退役后缺失）。
+- shortcuts：maintainShortcuts / warnTempRun / migrateFromSharedWebProfile
+  三函数接线；isPackaged 判定改真实（DSH_RESOURCE_ROOT 存在即打包态）。
+- junction-patrol：巡检 watchdog 启动 + 真实 getServerProc/isRestartingServer
+  透传（旧桩会把自家 dsh web 判成外部进程，修复永不触发）；巡检的 PowerShell
+  探测从 execSync（12s 冻结事件循环）改异步 exec。
+- SessionWatcher：会话任务完成通知恢复（经壳层系统通知通道，30s 限频）。
+- 快照回退链：boot 成功 markGood / 失败 reportIncident 接线（恢复中心
+  「回退最后良好快照」此前恒空转）；agent-previous 备份确认链恢复（不再永滞）。
+
+### 真 bug 修复（本批新发现）
+
+- healCredentialsVersion 扁平迁移分支的标量行正则 `\S` 只匹配单字符值——
+  真实 API key 全是多字符 → rc.2 扁平凭据文件从未被自愈（5.3.0 起潜伏，
+  补单测时暴露；修复 + 6 项单测钉住）。
+- 微信桥测试污染真实 ~/.dsh（session-map/工作区/mock 会话落真实 home，
+  次轮跑必崩）：测试导入插件前置临时 DSH_HOME。
+- patch-deps.js l2 偏移换算与 replace 函数化、build-native.js
+  CARGO_ENCODED_RUSTFLAGS（5.3.3 批次一 commit message 声称已修但未落
+  地，本批补齐）。
+- 打包态内置 Node/npm 定位错位：runtime-paths 的 nodeExe/npmCli 打包分支
+  按 Electron 旧布局找 resources/node/，Tauri 布局实际在应用树 vendor/node/
+  下 —— 5.3.2 靠 isPackaged 恒 false 侥幸走开发分支掩盖，批次 D 打包态
+  功能接线（快捷方式维护/完整性校验）使其暴露，已按 Tauri 布局修复
+  （旧布局保留兼容候选）。
+
+### 性能优化
+
+- boot 期注册表 N+1 写合并（40 插件 80 次 IO → 2 次）；companion-sync
+  市场残留预检共享单次读取；plugin-updater 每源重读 settings 合并 + 全败
+  结果不进 TTL 缓存；dsh-web.log 启动截断（>10MB 保尾部 2MB）；微信桥流式
+  轮询增量推进（长回合 O(n²) 消除）；bridge.ts popup rescue observer
+  rAF 节流（流式输出期间 DOM 变更风暴不再全树同步扫描）；childEnv/
+  desktopProfile 按 mtime 记忆化。
+
+### 其余修复（批次一详见 docs/HANDOVER-2026-08-29-5.3.3-batch1.md）
+
+- EADDRINUSE 启动假阳性（重入/换端口先等旧进程退出）、退出竞态孤儿 dsh web
+  （9s 有界轮询）、插件 Host 停用竞态/job-fence spawn error/market settled
+  单次收尾、registerTool 键名错位、shell.exec 失败码、installer 回滚点严格
+  解析 + 残留清扫、feature-pack 失败按快照回滚 + 5min 超时、balance 总超时、
+  client-update busy 竞态 + 下载直连优先 + 分片掺版本、atomic-json 并发踩踏、
+  诊断 zip 路径错根、启动退役清理门控恢复（issue #74 修复被架空）等。
+
+## 5.3.2（本版：删除对话 0.1.2 内核适配根治 + 同类旧 API 面清理 + PR #251 合并）· 2026-08-29
+
+### 删除对话「操作失败: Cannot read properties of undefined (reading 'workspace')」根治
+
+- 根因：内核 0.1.2 typert RPC 换血后 `connection` 服务不再暴露 `api` 门面
+  （rc.2 的 `connection.api.workspace` 随 dsh-host-apiproxy 一并移除），
+  `dsh-session-manager` 插件仍走旧路径 → 读 undefined 的 `.workspace` 报错。
+- `dsh-session-manager`：删除/恢复改走 0.1.2 的 `workspaces` 服务命令层
+  （`ctx.workspaces.deleteSession/unarchiveSession`，失败抛错语义归一），
+  保留旧内核 unary 信封路径兜底（按方法存在性探测）。运行中会话拒绝提示
+  依旧生效（新错误消息含 `session-running`，`/running|live/` 命中）。
+
+### 同类旧 API 面排查与修复
+
+- `dsh-better-sidebar`（client.js + client-registry.js）：子代理实时行轮询的
+  `connection.api.subagents.history` 已不存在（remotes 注册表无 history 方法），
+  改走 `session.follow` 的 subagent 地址开一次快照（maxMessages=12 服务端截尾，
+  取首帧即弃流）；chunk 投影记录过滤后再喂 `lastActivity`。此前该功能静默失效。
+- 皮肤 `trading` / `ths`：`connection.api.workspace.list` 同源报错/静默降级，
+  改读 `workspaces` 服务快照（ths 的 codeKline RPC 现内核不存在，保持无数据
+  不显示假值）。
+- `dsh-offpeak`：`apiProxy` 服务已随内核移除 → inject 回调永不触发，定时任务
+  与 HTTP 路由全灭。改注入 `sessionController`（cordis 服务名 = typert
+  serviceKey），`executeTask` 直调 `controller.prompt({requestId, sessionId,
+  mode:"queue", content})`，成功 `{accepted:true}` / 失败 TypertRemoteFailure
+  语义适配。
+
+### 运行守卫补位（补丁脚本升级）
+
+- `scripts/patch-session-manage.js`：0.1.2 落点里 `dshDesktopSessionRunning`
+  Map 只读不写（rc.2 的 `agent/status` 维护监听随 dsh-host-apiproxy 消失），
+  运行中会话删除守卫失效。在 workspace controller 的 `WorkspaceFeed` 构造器
+  （app ctx，与 session controller 同一作用域语义）补挂 `agent/status` 监听；
+  upgradeRules 通道对已打补丁文件生效，`skipIf` 防重复叠加，双跑幂等验证通过。
+
+### PR #251 合并（Windows 菜单外链与日志导出修复）
+
+- 外链/反馈改用 `ShellExecuteW`（Unicode 路径安全，绕开 `cmd start` 退出码 1）；
+  菜单动作返回结构化 `{ok,error}`。
+- 日志导出改 Node `archiver` 直打包（中文/空格/OneDrive 重定向桌面路径不再依赖
+  PowerShell `Compress-Archive`），失败回退 `userDataDir/diagnostics-exports`，
+  完成后路径经菜单 toast 反馈、不再自动打开目录。
+- 冲突解决：保留 5.3.1 的恢复中心注释语义，并入 `createLogsArchive` /
+  `resolveLogsExportDir`；merge 90d0a042。
+- 测试 723 → 727（新增 Windows 原生打开、中文/空格路径导出回归、桥层结构化
+  错误断言），717 过 0 挂 10 skip 全绿。
+
+## 5.3.1（本版：全库精简 + 十二处真 bug 根治 + 内核版本钉防漂移）· 2026-08-29
+
+### 死代码清除（~1,100 行，行为零变更）
+
+- 删除 `wsl-backend.js`（325 行，tracked，全库零引用，且从未进入 stage-resources 打包清单）。
+- 删除 4 个 Electron 时代死资产：`assets/recovery.html`（555 行，现役救援入口 = main.rs 内联
+  /died 页 + rescue.auto-repair RPC 面）、`assets/loading.html`、`assets/updating.html`
+  （现役内联页在 main.rs）、`assets/onboarding-preload.js`（三键语义已内联进 wizard_page）。
+- 删除 `plugin-updater.autoApplyUpdates`（Electron 主进程时代的自动更新流程，Tauri sidecar
+  从未接线；注释里引用的 main.js 已随壳退役一年）。
+- 删除 `client-updater.ts` 的 `require('electron')` / electron.net 分支（Tauri 产品里
+  electron 模块永不可得，该网络路径是死代码；统一 node https + 手动重定向）。
+- 收紧发布面导出（定义保留、去掉多余 export，tests 零触碰）：`client-updater`
+  （isPortable/DEFAULT_REPOS）、`plugin-guard`（GUARD_FILES）、`rescue-agent`（ACTION_SPEC）、
+  `compact-preset-migrate`（DSH_YAML_SCHEMA/NEW_AGENT/OLD_ENGINE/TRANSITION_ENGINE）、
+  `plugin-updater`（PLUGIN_CHECK_*/overlayRoot/overlayDirOf）。
+- 过期表述修正：tsconfig 头注释（electron-builder.yml → stage-resources.mjs）、
+  rescue-agent / runtime-paths / junction-patrol 头注释（Electron main → Tauri sidecar）。
+- 本地脏物清理：e2e-base.txt、空 dtempdsh-spike-home2/、debug-session-dump.cjs。
+
+### 真 bug 根治（双代理深读 + 逐项人工复核，每处可证明）
+
+- **sidecar 无头对话框兜底自动同意更新（HIGH）**：`showBoxFallback` 无条件回答
+  `{response:0}`（=「立即更新/立即重启」），周期检查一旦发现新版本就会无人值守地
+  杀服务换 exe 退出。改为回答 `cancelId`（fail-closed），「跳过/稍后」簿记首次可达。
+- **`service.restart` 无注册（HIGH）**：bridge.ts 的 `restartService()` 调
+  `service.restart`，Rust 壳透传但 sidecar 方法表没有该方法 → -32601 被插件静默吞掉，
+  「重启服务后生效」实际从不重启。注册别名指向 `restartWebServiceCore()`。
+- **feature-pack 更新流程 floating removePlugin（HIGH）**：未 await 的异步移除在文件锁
+  （EPERM/EBUSY）时变成 unhandled rejection 直接杀 sidecar，且与后续 `dsh plugin add`
+  并发改同一 profile。补 await。
+- **client-updater concatFiles 写流无 error 监听（HIGH）**：ENOSPC/EIO 以 uncaught
+  exception 杀进程（磁盘压力恰是该函数的存在理由）。提前挂监听 + 每段 promise 双侧
+  settle + 失败清理半成品 dest。
+- **boot-server 就绪行跨 chunk 截断丢 token（MED）**：一次性 token URL 被管道分块劈开时
+  正则两半都匹配失败 → HTTP 探测 30s 超时后 401 白屏。加跨块行缓冲。
+- **boot-server 丢 `--no-open` → 每次启动弹系统浏览器（MED，实战用户反馈）**：5.3.0 期间
+  PR #249 曾有意移除该参数（spike 内核不认，传了启动必死）并加测试钉死「不得出现」；
+  最终 vendored alpha.1 的 dsh-web-app 恢复了 `--no-open` 支持，本版补回并把钉子翻转为
+  「必须存在」（boot-smoke 实证正常启动且不再弹浏览器，日志无 "opening the default
+  browser"）。
+- **phone-bridge 上游响应中途断开（MED）**：HTML 缓冲分支 end 永不触发（请求挂死 +
+  缓冲内存滞留）。统一挂 `up.on('error') → res.destroy()`。
+- **phone-bridge /desktop/decide TOCTOU（MED）**：读 body 让出事件循环期间 token 轮换，
+  批准会落在别人刚扫到的新 token 上。捕获+身份复核。
+- **phone-bridge 拒绝配对永远「waiting」（MED）**：新增 `rejected` 状态 + 等待页分支，
+  手机端不再干等 5 分钟 TTL。
+- **phone-bridge start() 重入不轮换失效 token（LOW）**：过期/已决定的旧 pairing 重开
+  「连接手机」仍返回旧二维码。重入时轮换。
+- **files.revert `$` 模式注入（MED）**：`content.replace(newText, oldText)` 把原文当替换
+  模式，`$&`/`$'` 静默改写恢复内容。改函数替换 `() => oldText`。
+- **companion-sync 主同步路径非原子写（MED）**：cordis.patch.yml 与内置插件清单 marker
+  改 `writeFileAtomic`（对齐同文件既有用法），中断不再截断 patch → 启动死亡循环。
+- **companion-sync 隐私编辑行幂等检查不容 CRLF（LOW）**：patch 被 Windows 编辑器碰过就
+  每 boot 重复追加一行无上限增长。正则改 `\r?\n`。
+- **AgentTeams 与 0.1.2-alpha.1 内核适配（用户启用实测 pending 后根治）**：bundled
+  0.1.13 注入 rc.2 时代的 `conversationEvents` 顶层服务（alpha.1 已移除 → boot 报
+  "1 entry did not activate / pending (waiting for service: conversationEvents)"）；
+  上游 0.1.14 面向更新内核（需 `dsh-client-runtime`，alpha.1 亦无），无版本可直接用。
+  按 dsh-raw-html 先例改造为 **EAC 托管适配版（0.1.13-eac.1）**：注入名换
+  `uiConversation`（alpha.1 的 UiConversation 服务，`.events` =
+  ConversationEventRegistry，契约 match/start/update/buildViewNode 与原版逐字段
+  一致），注册调用加双路径兼容回退。隔离内核 + 无痕浏览器实测：插件激活零 pending、
+  零警告零异常。功能面（队长/子代理/任务 DAG/活动面板/`/agent-teams`）全部保留；
+  实际跑团需 API Key，按花费禁令未实测。仍不登记更新白名单（适配版防被上游覆盖）。
+  按用户要求追加三件产品化改造：**默认启用**（companion-sync 去掉 disabled，
+  新装/存量 profile 同步即启用）；**删除设置侧边栏独立「多智能体协作团队」分区**
+  （feature-toggles 0.1.1；开关保留在「增强功能」分区与 插件→管理）；**对话框可见
+  入口**（0.1.13-eac.2：composer dock 新增「AgentTeams」按钮，会话内输入框下方，
+  点击自动填入 `/agent-teams`——原版没建团前对话里什么都不显示，入口不可发现）。
+  verify-phone-pair P10 随分区撤除改查「增强功能」内 AgentTeams 卡。
+  **「更多模式」合并入口（用户二次反馈）**：raw-html 0.6.2 把 `</>` 芯片改造为
+  「模式」芯片并从 send 键尾部 DOM 注入改为挂 `conversation.input.right` 槽
+  （order 4.5 → 优化提示词按钮左边；槽列表按 (priority, order) 升序，slots
+  运行时源码实证），菜单 = AgentTeams 团队模式开关（开=发 `/agent-teams` 激活、
+  关=发归档指令，发消息驱动不刷新）+ 渲染 HTML + 美学注入 + 原面板全功能
+  （强制刷新/美学系统查看器）。agent-teams 0.1.13-eac.3 撤 dock 按钮（入口
+  已并入）。契约测试版本钉随升（0.6.2）。
+
+### 结构优化
+
+- main.rs 四个内联壳页（loading/died/update/about）共享 body 主题提取为
+  `SHELL_BODY_STYLE` 常量（cargo check 过，渲染字节级不变）。
+- 新增 `test/kernel-pin-consistency.test.ts`：package.json 内核钉 ↔ fetch-kernel
+  DEFAULT_TAG ↔ upgrade-test-441 硬断言三处一致性锁定，升内核漏改一处即红。
+- agentPreset 允许清单 ⚠️ 待验证项（MOBILE-CLIENT-DEV-SPEC，rc.2 时代）：0.1.2 已无
+  apiproxy allowlist 架构（phone-bridge 为全 UI 反代），该项作废，无代码需要改。
+
+### 明确不修（记录在案）
+
+- 内核 `remote.session` 启动竞态（0.1.2 alpha 已知暗雷，等上游，不做内核锚点补丁）。
+- feature-pack 安装/更新失败路径的完整事务回滚（头注释承诺但未实现）——工程量大，
+  本版只修其中会杀进程的 floating removePlugin。
+- client-updater 非中文 ASCII 安装路径下 nodeExe 写入 .cmd 的代码页问题（需改更新助手
+  参数协议，跨版本兼容风险，单独批次处理）。
+
+### 验证记录
+
+- `npm run typecheck` 0 错误；`npm test` **723 用例：713 通过 / 0 失败 / 10 skip**
+  （基线 717：707/0/10；新增 kernel-pin 3 例 + phone-bridge 回归 3 例）。
+- boot-smoke PASS（真内核 5s 起服务、token 捕获、零孤儿退出）；update-smoke 全部通过
+  （mock 源发现→下载→树交换→标记保留→staging 清理）。
+- 打包链：stage-resources（729 包 npm ci + 补丁重放 + WebView2Loader 装配，staging 内容
+  逐项核验含全部修复、不含任何死文件）→ tauri build（NSIS）→ make-portable。
+
 ## 新建对话滚动残余加固 + CI 测试挂起防护 + macOS CI · next
 
 ### settings-scroll-fix 2.0.2：会话树守卫收窄 + dialog 分支补判定（assets/plugins/dsh-settings-scroll-fix/）
@@ -151,6 +543,135 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
   不完整或版本过旧）」两种原因，给出可行动提示（升级 / 重装桌面客户端），
   修复 0.3.0 及之前统一误报"缺少 DSH_DESKTOP_RESOURCE_ROOT"导致用户在桌面端
   却被提示去桌面端的排障误导。
+## 5.3.0（本版：内核升级 0.1.2-alpha.1 + 插件兼容层 + 一次性 Token 鉴权适配）· 2026-08-28
+
+### 内核升级：@deepseek-ai/dsh 0.1.1-rc.2 → 0.1.2-alpha.1（源码构建）
+
+- **npm 未发布该版本**：内核从 GitHub tag `dsh-v0.1.2-alpha.1` 源码构建
+  （pnpm 11.7.0 + build:official + release:pack 双家族 250 个 tarball），缓存
+  于 `vendor/kernel/0.1.2-alpha.1/`（gitignored）；`npm run fetch-kernel`
+  一键重建（自动施加 Windows 构建补丁：pnpmInvocation 免 shell 调用 +
+  GNU tar --force-local 盘符），`npm run gen-kernel-overrides` 接线进
+  package.json（250 包 overrides + 13 个发布面依赖缺口补齐，全部 file:
+  本地解析，与 registry 零混装）。
+- **锁死内核 bug 修复（壳层锚点补丁）**：0.1.2 的 cordis-plugin-loader 在
+  Node ≥24.11 下 v2 内部解析器调用签名错位（`(parentURL,{specifier})` vs
+  实际 `(specifier,parentURL)`），导致 client-modules 对全部包判定
+  located-undefined、`__DSH_BOOT__` 静默清零、**所有第三方插件 client 半
+  失效**（官方 UI 走 vite 打包不受影响故官方未发现）。patch-deps 新增
+  client-modules v2 签名补丁，实测修复后 boot graph 49 entry 全部恢复。
+- 8 个既有锚点补丁中 7 个直接命中 alpha.1 产物；Menu submenu 两行布局
+  补丁按新压缩变量名重锚（双候选锚 rc.2/0.1.2）。
+- **对话删除/归档（session-manage）全链路移植**：apiproxy 移除后 RPC 面
+  换血为 typert Remote 服务 —— 补丁重写为五处落点（workspace-controller
+  宿主方法/装饰器/typert.host 注册表 + controller 客户端双层 facade +
+  api-remotes 客户端 schema 注册表），`workspace/deleteSession` /
+  `workspace/unarchiveSession` 端到端实测 ok:true。
+- **settings-expose hack 退役**：0.1.2 settings-controller 的 describe()
+  原生枚举全部注册命名空间（rc.2 apiproxy 白名单随包移除），soul-md /
+  picturereader 的 Web 设置区段不再需要打补丁。
+
+### 一次性 Token 鉴权适配（0.1.2 新浏览器会话模型）
+
+- 内核 Web UI 首屏引入一次性 token + 持久 cookie 鉴权（裸 `/` 401；
+  `/?token=` 兑换 HttpOnly+SameSite=Strict 签名 cookie；Host 绑定）。
+- boot-server 就绪探测改打免鉴权的 favicon.svg（401 不再误判就绪白屏）；
+  探测/拼接全部 query-aware。
+- **手机桥自动鉴权**：首次代理命中 401 时用当次 boot 的 token URL 自兑
+  内核 cookie 并缓存注入（HTTP + WS 升级全路径），cookie 失效自动重兑，
+  内核重启 token 轮换无需干预；顺带修复响应头透传的
+  transfer-encoding/content-length 冲突。
+- **隐私默认**：内核 0.1.2 适配器会随请求上报活动插件包名/版本
+  （plugin-package-inventory-deepseek，默认开）。桌面端经 profile 层
+  编辑型覆盖行默认关闭（`enabled: false`）。
+
+### 插件兼容层（保住 45 内置 + 全部已装第三方插件）
+
+- **旧式 client 工厂签名兼容**：0.1.2 官方注册契约为单参
+  `factory(require)`，旧式 `(require, ctx)` 插件（大量第三方）的 ctx 注入
+  消失。bridge.ts 垫片扩展：拦截 `__ModuleLoader__` 装载与 `create()`
+  替换链，对双参工厂按 boot graph 的 inject 名单自动重建 ctx（旧名
+  dsh-client-runtime 自动映射到 0.1.2 的 ui-settings/client）。崩溃隔离
+  实测：缺失注入只静默失效单个插件，不炸页面。
+- **25 个内置插件 manifest 迁移**：inject/peerDependencies 中的
+  dsh-client-runtime 全部替换为 dsh-client-ui-settings（更干净的原生
+  路径，与垫片双保险）。
+- **`__DSH_MODULES__` 补发与 rc.2 垫片语义不变**（better-sidebar 等懒加载
+  chunk 继续可用）。
+
+### 升级路径（实测矩阵）
+
+- 存量 rc.2 profile（含旧式插件行）在新内核下直接启动通过：48 entry
+  boot graph、新式（compact）与旧式（better-sidebar）插件均在图且页面
+  无失败横幅。
+- 升级期已知差异详见 `docs/KERNEL-UPGRADE-012-NOTES.md`（鉴权矩阵 /
+  架构变化 / 内核 bug 清单）。
+
+### 其他
+
+- 打包链：stage-resources 拷贝 vendor/kernel tarball 缓存进 staged 树
+  （npm ci 的 file: 依赖解析依赖它）；缺失时构建期报错提示 fetch-kernel。
+- 依赖树：package-lock 头部版本号随 5.3.0 重生，零 rc.2 残留。
+
+### 5.3.0 修复批次（内核升级后实测问题全量根治）· 2026-08-29
+
+- **设置页滚动连带根治**：dsh-settings-scroll-fix 的 wheel 驱动删除
+  「跨栏兜底重定向」——左栏（navList）滚到底后剩余滚动量曾被手动转嫁给
+  右栏（options，约 100px/格），用户感知为「滑左栏右边跟着小幅滑动」。
+  原生滚动链只走祖先不走向，兄弟栏永不接力；剩余量交给
+  overscroll-behavior:contain（桥内 0.1.2 弹窗防御 CSS 同批生效）。
+- **主线程修复风暴节流**：同插件的 MutationObserver 原对
+  documentElement 监听 class/style/hidden/aria-hidden 且每个变更批次
+  排一帧全量重扫（getComputedStyle 走查）；0.1.2 浮层（floating-ui 等）
+  每帧写 inline style，对话流式输出期间形成修复风暴 —— 全局高延迟/
+  历史与模型面板加载缓慢/新会话卡片延迟的主因之一。现修复频率封顶
+  ≈6.7/s（150ms 合并窗口）且不再监听 style 属性；仪器化复测长任务
+  从持续发生降到 2.5 分钟 1 次/92ms。
+- **bridge.ts 哈希类救援垫片重锚（阶段 3 遗留）**：0.1.2 把
+  `.wSkVaW_*` 换成 `.FArfia_*`、`._7KE1Ra_menu` 换成 `.ra1x4W_menu`，
+  hero 居中/横向溢出钉死/模型菜单翻转救援全部空转。改锚稳定契约
+  data-phase / data-conversation-scroll（不随构建漂移），菜单救援新旧
+  双类并锚；从安装闭包 bundle 实核后随壳重建生效，ui-verify-smoke
+  C1（新类菜单翻转）实测通过。
+- **共享模块 107 条死链剪除**：`<home>/profiles/node_modules` 里 104 条
+  指向已卸载 Electron 闭包、3 条指向 0.1.2 已删包（dsh-client-runtime /
+  dsh-host-apiproxy 等），内核 heal 只增链不清理、永不自愈，模块解析
+  反复撞死链（better-sidebar 宿主半依赖解析会穿过该目录 —— 内置终端
+  「一直加载中」的成因之一）。plugin-guard.repairJunctions 新规则：
+  目标已死且闭包没有 → 剪除；目标存活（原生新版 CLI 的包）→ 照旧保留。
+  本机已一次性剪除（592 链接中 107 断链全部清除）。
+- **boot-server token 捕获加固**：HTTP 探测胜出后等待 stdout 就绪行
+  （带一次性 token）的窗口 5s → 30s；超时回退裸 origin 时打日志
+  （0.1.2 下裸 origin 即 401 白屏，此前无从诊断）。
+- **内置「语音转文字」插件退役（dsh-stt，按用户要求）**：本地
+  sherpa-onnx ASR 模型 ~1.1G 不再随包分发/安装；从内置清单移除并列入
+  RETIRED_BUILTIN_PLUGINS（启动自动清理老 profile 的 patch 行/包副本），
+  安装器 PREINSTALL 回收 `~/.dsh/models/dsh-stt` 模型缓存。
+- **测试与验证脚本 0.1.2 化**：upgrade-test-441 内核断言 rc.2 →
+  alpha.1；ui-verify-smoke / verify-viewport-lock 的 rc.2 哈希类与
+  textarea 探针全部换锚稳定契约；verify-shim-fix 的
+  dsh-client-runtime raw import 断言按「CHUNK_EXTERNALS 超集白名单」
+  语义修正；verify-phone-pair P7 换成经桥 WS 透传挂上 0.1.2
+  remote.mux（101 升级）—— 旧扁平 /api RPC 已随 dsh-host-apiproxy
+  从内核移除。
+- **已知暗雷（记录不动内核）**：0.1.2 客户端启动竞态 ——
+  dsh-api-session-controller client 在 session 远端挂载完成前访问
+  `remote.session` 抛 `cannot get property "remote.session" without
+  inject`（每次启动 1-2 次，随后自愈，follow/page 均正常）。与
+  loader v2 签名同类（官方 UI 走 vite 不经过该路径故未发现），等
+  upstream 修复，不做高风险内核锚定补丁。
+- **凭据版式自愈（两形态）+ 反向迁移退役**：0.1.2 credentials-local
+  只认 `version: 1 + refs:/records:` 版式，两种历史形态会被拒启且
+  每次启动必死（退出码 1 → /died 页）：a) 全新建库路径把顶层
+  version 写成 YAML 字符串 "1"（读取严格 ===1 拒收，实测凭据文件
+  缺失重建即复现）；b) rc.2 时代扁平文件（"pre-release flat
+  layout"）。boot-server 的 healCredentialsVersion 升级为启动前文本
+  级自愈：引号 version 规整 + 扁平标量条目收进 refs:（records: 块
+  原样留根，密钥值零触碰）。同时删除旧的 credentials-format-heal
+  （sidecar preBootSync 调用）—— 它按旧内核语义把 versioned 文件
+  **打回扁平**，与 0.1.2 完全相反，正是「升级后启动卡死在正在启动
+  服务」的元凶（正向自愈接管其职责）。
+
 ## 5.2.0（本版：手机控制整体替换为喵丝滑 + 文档级滚动根治）· 2026-08-28
 
 ### 手机控制整体替换：内置 dsh-meow-smooth（Phant0Meow，MIT），退役自研续聊客户端

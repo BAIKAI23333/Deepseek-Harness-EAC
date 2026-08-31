@@ -69,12 +69,25 @@ const bootMod = mount('boot-server');
 
 const MOUNTED = ['proc', 'platform', 'runtime-paths', 'profile', 'guard-box', 'runtime-patches', 'companion-sync', 'plugin-ops', 'market', 'shortcuts', 'junction-patrol', 'client-update', 'static-preview', 'file-roots', 'boot-server'];
 
+// 打包态判定 + 资源根：Rust 壳 spawn sidecar 时注入 DSH_SHELL_EXE /
+// DSH_RESOURCE_ROOT（main.rs Sidecar::spawn）。DSH_RESOURCE_ROOT 存在即打包态；
+// 开发态两者缺省 → isPackaged=false（快捷方式/完整性校验等打包态功能自动跳过）。
+function isPackagedRuntime(): boolean {
+  return Boolean(process.env.DSH_RESOURCE_ROOT);
+}
+function resourceRoot(): string {
+  return process.env.DSH_RESOURCE_ROOT || '';
+}
+
 // ---- vnext 隔离体系（vnext-absorb Phase 2）：supervisor / extension-host / 恢复中心 ----
 // 这些模块位于 lib/{state,log,supervisor,extension-host,recovery-center}，
 // 不走 lib/desktop 的 mount 通道，按绝对路径 require（编译产物 .js）。
 const vnextState = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'state.js')) as {
   initVNextState(d: { dshHome?: string; userDataDir?: string; logsDir?: string }): void;
-  state: { eacBridge: { url: string; token: string; close(): void } | null };
+  state: { eacBridge: { url: string; token: string; close(): void } | null; restartingServer: boolean };
+};
+const supervisorInstaller = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'supervisor', 'installer.js')) as {
+  sweepInstallerResidue(keep?: number): { staging: number; trash: number; rollback: number };
 };
 const vnextLog = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'log.js')) as {
   setLogSink(fn: ((tag: string, msg: string) => void) | null): void;
@@ -98,49 +111,33 @@ const extHost = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'ma
 const bridgeServer = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'extension-host', 'bridge-server.js')) as {
   startExtensionBridgeServer(manager: unknown): Promise<{ url: string; token: string; close(): void }>;
 };
-const credentialsHeal = require(path.join(DSH_DESKTOP_ROOT, 'credentials-format-heal.js')) as {
-  healCredentialsVersion(file: string, log: (tag: string, message: string) => void): { changed: boolean };
-};
+// 旧 credentials-format-heal（versioned→flat 反向迁移）已删除：0.1.2 内核
+// credentials-local 只认 version:1 + refs:/records: 版式，扁平版式会被拒启
+//（"uses the pre-release flat layout"）。正向自愈见 boot-server 的
+// healCredentialsVersion（引号 version 规整 + 扁平→versioned 迁移）。
 
 // ---- ctx 注入（与 main.js 注入块逐项对齐；GUI 类能力走兜底/委托） --------
 const desktopProfileFn = profileMod.desktopProfile as () => string;
 const showBoxFallback = async (opts: Record<string, unknown>) => {
   say('[dialog] ' + String((opts && opts.title) || '') + ': ' + String((opts && opts.message) || ''));
-  return { response: 0 };
+  // 无头兜底答 cancelId（fail-closed）：绝不自动应答「立即更新/立即重启」，
+  // 否则周期检查会无人值守地杀服务换 exe 退出（5.3.0 前的隐性自动更新）。
+  // 纯提示框（['确定']）没有 cancelId 也不分支读 response，回 0 占位。
+  const cancelId = opts && (opts.cancelId as number);
+  return { response: Number.isInteger(cancelId) ? cancelId : 0 };
 };
 const notifyFallback = (n: { title: string; body: string }): void => {
   say('[notify] ' + n.title + ': ' + n.body);
   notify('shell.system-notification', { title: n.title, body: n.body });
 };
 // .lnk 驱动（硬门槛④）：PowerShell WScript.Shell COM 实现，接口对齐 Electron
-// shell.readShortcutLink / writeShortcutLink（同步、失败抛错）。路径经环境
-// 变量传入，规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
-function psLnkRead(p: string): Record<string, unknown> {
-  const script = String.raw`
-$ErrorActionPreference='Stop'
-try {
-  $sh = New-Object -ComObject WScript.Shell
-  $sc = $sh.CreateShortcut($env:DSH_LNK_PATH)
-  $icon = [string]$sc.IconLocation
-  if ($icon -match ',\s*\d+$') { $icon = $icon -replace ',\s*\d+$', '' }
-  [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-  @{ target = [string]$sc.TargetPath; args = [string]$sc.Arguments; cwd = [string]$sc.WorkingDirectory; description = [string]$sc.Description; icon = $icon } | ConvertTo-Json -Compress
-} catch { exit 1 }
-`;
-  try {
-    const out = cp.execFileSync('powershell', ['-NoProfile', '-Command', script], {
-      env: { ...process.env, DSH_LNK_PATH: p },
-      encoding: 'utf8',
-      windowsHide: true,
-      timeout: 8000,
-    });
-    return JSON.parse(out) as Record<string, unknown>;
-  } catch (e) {
-    throw new Error('lnk read failed: ' + p + ' (' + String(((e as Error).message) || e).slice(0, 120) + ')');
-  }
-}
+// shell.readShortcutLink / writeShortcutLink（失败抛错）。路径经环境变量传入，
+// 规避引号/空格/中文转义；读取返回的 IconLocation 剥掉 ',N' 索引。
+// ⚠️ 全异步（execFile）：旧同步版（execFileSync/spawnSync 逐文件起 PowerShell）
+// 是真实桌面 boot 后事件循环冻结的主源 —— 桌面 N 个 .lnk × 每个 1-3s 同步
+// 阻塞，用户在 boot 后点「开始配对」的 RPC 全排在后面（5.3.5 复现实测）。
 
-function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): void {
+function psLnkWrite(p: string, op: string, opts: Record<string, unknown>): Promise<void> {
   const script = String.raw`
 $ErrorActionPreference='Stop'
 $lnk = $env:DSH_LNK_PATH
@@ -167,14 +164,76 @@ try {
     DSH_LNK_DESC: opts.description == null ? '' : String(opts.description),
     DSH_LNK_ICON: opts.icon == null ? '' : String(opts.icon),
   };
-  const st = cp.spawnSync('powershell', ['-NoProfile', '-Command', script], { env, windowsHide: true, timeout: 10000 });
-  if (!st || st.status !== 0) {
-    throw new Error('lnk ' + String(op) + ' failed (' + String(st && st.status) + '): ' + p);
+  // 异步（execFile）：spawnSync 会整段冻结 sidecar 事件循环（boot 后用户
+  // 点「开始配对」正好撞在这串同步 PowerShell 上 —— 5.3.5 复现实测）。
+  return new Promise<void>((resolve, reject) => {
+    cp.execFile('powershell', ['-NoProfile', '-Command', script], { env, windowsHide: true, timeout: 10000 }, (err) => {
+      if (err) reject(new Error('lnk ' + String(op) + ' failed (' + String((err as { code?: unknown }).code) + '): ' + p));
+      else resolve();
+    });
+  });
+}
+
+// 批量读 .lnk：桌面/开始菜单逐个起 PowerShell（每个 1-3s 同步阻塞）是真实
+// 机器 boot 后事件循环冻结的主源 —— N 个图标一次 PowerShell 进程读完，
+// JSONL 逐行回（行序与输入路径序一致，失败行 '{}' 兜底）。整批失败按全部
+// 读不出处理（与逐个 readLnkSafe 的「读不到 = null」语义一致）。
+async function psLnkReadBatchAsync(paths: string[]): Promise<(Record<string, unknown> | null)[]> {
+  if (!paths.length) return [];
+  const script = String.raw`
+$ErrorActionPreference='Continue'
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$sh = New-Object -ComObject WScript.Shell
+Get-Content -LiteralPath $env:DSH_LNK_LIST -Encoding UTF8 | ForEach-Object {
+  $p = $_
+  try {
+    $sc = $sh.CreateShortcut($p)
+    $icon = [string]$sc.IconLocation
+    if ($icon -match ',\s*\d+$') { $icon = $icon -replace ',\s*\d+$', '' }
+    @{ target = [string]$sc.TargetPath; args = [string]$sc.Arguments; cwd = [string]$sc.WorkingDirectory; description = [string]$sc.Description; icon = $icon } | ConvertTo-Json -Compress
+  } catch { '{}' }
+}
+`;
+  // 路径清单走临时文件（环境变量有长度上限；逐行无引号转义坑）。
+  const listFile = path.join(os.tmpdir(), `dsh-lnklist-${process.pid}-${Date.now()}.txt`);
+  await fs.promises.writeFile(listFile, paths.join('\n'), 'utf8');
+  try {
+    const stdout: string = await new Promise((resolve, reject) => {
+      cp.execFile('powershell', ['-NoProfile', '-Command', script], {
+        env: { ...process.env, DSH_LNK_LIST: listFile },
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 15000,
+        maxBuffer: 16 * 1024 * 1024,
+      }, (err, out) => { if (err) reject(err); else resolve(String(out ?? '')); });
+    });
+    const lines = stdout.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim());
+    const out: (Record<string, unknown> | null)[] = [];
+    for (let i = 0; i < paths.length; i++) {
+      const line = lines[i];
+      if (!line) { out.push(null); continue; }
+      try {
+        const rec = JSON.parse(line) as Record<string, unknown>;
+        out.push(rec && rec.target ? rec : null); // 读不出 target 视为坏链接
+      } catch { out.push(null); }
+    }
+    return out;
+  } catch {
+    return paths.map(() => null);
+  } finally {
+    try { await fs.promises.rm(listFile, { force: true }); } catch { /* noop */ }
   }
 }
 
+function psLnkRead(p: string): Promise<Record<string, unknown>> {
+  return psLnkReadBatchAsync([p]).then(([rec]) => {
+    if (!rec) throw new Error('lnk read failed: ' + p);
+    return rec;
+  });
+}
+
 procMod.init({ log, getDshHome: () => dshHome, getDesktopProfile: desktopProfileFn });
-pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => false, resourcesPath: () => '', platform: process.platform });
+pathsMod.init({ log, getUserDataDir: () => userDataDir, isPackaged: () => isPackagedRuntime(), resourcesPath: () => resourceRoot(), platform: process.platform });
 profileMod.init({ log, getDshHome: () => dshHome });
 guardBoxMod.init({
   log,
@@ -188,16 +247,22 @@ shortcutsMod.init({
   showBox: showBoxFallback,
   getUserDataDir: () => userDataDir,
   getDshHome: () => dshHome,
-  isPackaged: () => false,
+  isPackaged: isPackagedRuntime,
   systemPath: (kind: string) => (kind === 'appData' ? appDataDir : kind === 'desktop' ? path.join(os.homedir(), 'Desktop') : ''),
-  links: { read: psLnkRead, write: psLnkWrite },
+  links: { read: psLnkRead, write: psLnkWrite, readAll: psLnkReadBatchAsync },
 });
 junctionPatrolMod.init({
   log,
-  isQuitting: () => false,
-  isRestartingServer: () => false,
-  getServerProc: () => null,
-  showMainWindow: () => say('showMainWindow (host-delegated)'),
+  isQuitting: () => quitting,
+  // 真实接线（5.3.3 批次 D）：此前是硬编码桩（isRestartingServer 恒 false、
+  // getServerProc 恒 null）——直接按桩启动 watchdog 会把桌面端自己的 dsh web
+  // 判成「外部 dsh」，修复被永久搁置。透传 boot-server 的真实状态。
+  isRestartingServer: () => vnextState.state.restartingServer === true,
+  getServerProc: () => {
+    const proc = (bootMod.getServerProc as () => { pid?: number } | null)();
+    return proc && proc.pid ? { pid: proc.pid } : null;
+  },
+  showMainWindow: () => { notify('shell.show-main-window', {}); },
   notify: notifyFallback,
 });
 // /update 进度页开关状态（showUpdateWindow/destroy 维护）。
@@ -247,7 +312,42 @@ clientUpdateMod.init({
   // 打包态取壳层 exe 目录（DSH_SHELL_EXE）；开发态 sidecar 的 node 不适用。
   getExecDir: () => (process.env.DSH_SHELL_EXE ? path.dirname(process.env.DSH_SHELL_EXE) : path.dirname(process.execPath)),
 });
-previewMod.init({ log, showBox: showBoxFallback, exitDamaged: () => process.exit(1), isPackaged: () => false, resourcesPath: () => '' });
+previewMod.init({
+  log, showBox: showBoxFallback, exitDamaged: () => process.exit(1), isPackaged: isPackagedRuntime, resourcesPath: () => resourceRoot(),
+  // 预览静态服务围栏：白名单 = 会话 cwd（fileRoots）+ skills 根；.credentials*
+  // 一律拒绝。此前接受任意绝对路径，等于把全盘任意文件读原语交给知道
+  // staticPort 的页面（该端口经 chrome.init 主动下发）。
+  fence: (p: string): boolean => {
+    try {
+      // NTFS 8.3 短名别名绕过：.credentials-probe-zz.yaml 的短名 CREDEN~1.YAM
+      // 不匹配 dotfile 拒绝模式，且 realpath 不展开短名（实测）。短名形态
+      // （~N）时经目录枚举 + dev/ino 比对还原真实长名，再对长名做判定 ——
+      // 无 Win32 API 依赖，合法 ~N 文件名（ino 指向自身）不误伤。
+      let judge = path.basename(p);
+      if (/~\d/.test(judge)) {
+        try {
+          const want = fs.statSync(p);
+          const parent = path.dirname(p);
+          for (const entry of fs.readdirSync(parent)) {
+            try {
+              const st = fs.statSync(path.join(parent, entry));
+              if (st.dev === want.dev && st.ino === want.ino) { judge = entry; break; }
+            } catch { /* 逐项尽力 */ }
+          }
+        } catch { /* 还原失败保持原名判定（后续 stat 同样会失败，fail-closed） */ }
+      }
+      if (/^\.credentials/i.test(judge)) return false;
+      if ((fileRootsMod.isUnderFileRoots as (x: string) => boolean)(p)) return true;
+      const lower = (x: string): string => (process.platform === 'win32' ? x.toLowerCase() : x);
+      const fpL = lower(fs.realpathSync(p));
+      const skillsRoots = [
+        path.join(home(), 'skills'),
+        path.join(process.env.DSH_AGENTS_HOME || path.join(os.homedir(), '.agents'), 'skills'),
+      ].map((r) => lower(path.resolve(r)));
+      return skillsRoots.some((r) => fpL === r || fpL.startsWith(r + path.sep));
+    } catch { return false; }
+  },
+});
 marketMod.init({ log, getDshHome: () => dshHome, getUserDataDir: () => userDataDir });
 pluginOpsMod.init({ log });
 companionSyncMod.init({
@@ -274,6 +374,7 @@ const phoneBridgeMod = require('./phone-bridge.js') as {
   createPhoneBridge(options: {
     getWebUrl: () => string | null;
     log: (message: string) => void;
+    sessionFile: string;
   }): {
     start(): Promise<{ url: string; port: number }>;
     stop(): Promise<void>;
@@ -285,6 +386,7 @@ const phoneBridgeMod = require('./phone-bridge.js') as {
 const phoneBridge = phoneBridgeMod.createPhoneBridge({
   getWebUrl: () => (currentWebInfo ? currentWebInfo.webUrl : null),
   log: (m) => say(m),
+  sessionFile: path.join(userDataDir, 'phone-bridge-session.json'),
 });
 function handlePhoneMethod(method: string, p: RpcParams): RpcResult | Promise<RpcResult> {
   if (method === 'phone.start') return phoneBridge.start().then((r) => ({ ok: true, ...r }));
@@ -314,6 +416,18 @@ function notify(method: string, params: unknown): void {
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method, params: params == null ? {} : params }) + '\n');
 }
 
+// 全局兜底：sidecar 裸崩 = 整壳失去桥能力（页面卡死/恢复中心失效）。
+// unhandledRejection 记日志继续跑（主线 Promise 均已 guard，这兜的是 lib
+// 深处漏网的）；uncaughtException 记日志后退场 —— 壳层 reader 会立即回绝
+// 在途调用并广播 boot.server-died 走 /died 恢复链，好过无声僵死。
+process.on('unhandledRejection', (reason) => {
+  log('fatal', 'unhandledRejection: ' + String((reason instanceof Error ? reason.stack : reason) || reason));
+});
+process.on('uncaughtException', (err) => {
+  try { log('fatal', 'uncaughtException: ' + String(err && err.stack || err)); } catch { /* 尽力而为 */ }
+  process.exit(1);
+});
+
 bootMod.init({
   log,
   getUserDataDir: () => userDataDir,
@@ -332,6 +446,50 @@ bootMod.init({
 
 say('modules mounted; dshHome=' + dshHome + '; profile=' + desktopProfileFn());
 
+// ---- SessionWatcher（5.3.3 批次 D 接线，= Electron main.js onSessionTurnEnd）----
+// 会话任务完成通知：2s 轮询 <dshHome>/sessions 的 zstd 日志，turn/end 时经
+// 壳层系统通知提醒（notifyOnTurnEnd 设置项控制，同会话 30s 限频）。
+const sessionWatcherMod = require(path.join(DSH_DESKTOP_ROOT, 'session-watcher.js')) as {
+  SessionWatcher: new (opts: {
+    sessionsDir: string;
+    log: (tag: string, msg: string) => void;
+    onTurnEnd: (info: { sessionId: string; title?: string; body?: string }) => void;
+  }) => { start(): void; stop(): void };
+};
+let sessionWatcher: { start(): void; stop(): void } | null = null;
+const turnEndNotifyAt = new Map<string, number>();
+function startSessionWatcher(): void {
+  if (sessionWatcher) return;
+  try {
+    const s = loadSettings() as { notifyOnTurnEnd?: boolean };
+    if (s.notifyOnTurnEnd === false) return;
+    sessionWatcher = new sessionWatcherMod.SessionWatcher({
+      sessionsDir: path.join(dshHome, 'sessions'),
+      log,
+      onTurnEnd: (info) => {
+        if (quitting) return;
+        const now = Date.now();
+        const last = turnEndNotifyAt.get(info.sessionId) || 0;
+        if (now - last < 30000) return; // 同会话至多一条 toast / 30s
+        // sidecar 与壳同生命周期：会话数按月累积，Map 从不清理就是慢速泄漏。
+        // 超限先淘汰最旧一半（时间戳序），限频语义不受影响。
+        if (turnEndNotifyAt.size >= 500) {
+          const oldest = [...turnEndNotifyAt.entries()].sort((a, b) => a[1] - b[1]).slice(0, 250);
+          for (const [k] of oldest) turnEndNotifyAt.delete(k);
+        }
+        turnEndNotifyAt.set(info.sessionId, now);
+        notifyFallback({
+          title: info.title || 'DSH 任务完成',
+          body: info.body || '会话任务已完成',
+        });
+      },
+    });
+    sessionWatcher.start();
+  } catch (e) {
+    say('SessionWatcher 启动失败（不影响主流程）: ' + String(((e as Error).message) || e));
+  }
+}
+
 // ---- vnext 初始化：日志 sink + 共享状态 + 恢复中心 ctx ----------------------
 vnextLog.setLogSink(log);
 vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir, 'logs') });
@@ -340,12 +498,20 @@ vnextState.initVNextState({ dshHome, userDataDir, logsDir: path.join(userDataDir
 // 同步 → 模块遮蔽修复 → 构建产物回填。boot.start 与重启/恢复中心
 // retry-boot 共用。
 async function preBootSync(): Promise<void> {
-  credentialsHeal.healCredentialsVersion(path.join(dshHome, '.credentials.yaml'), log);
+  // （旧 credentials-format-heal 反向迁移已删除，见文件头部说明）
   await (marketMod.processPendingMarketOps as () => Promise<void>)();
-  (companionSyncMod.retireRemovedBuiltinPlugins as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
+  (companionSyncMod.retireRemovedBuiltinPluginsGated as (dir: string) => void)((profileMod.desktopProfileDir as () => string)());
   (companionSyncMod.syncCompanionPlugins as () => void)();
   (marketMod.syncBundledSkills as () => void)();
   (companionSyncMod.healProfileModules as () => void)();
+  try {
+    const swept = supervisorInstaller.sweepInstallerResidue();
+    if (swept.staging || swept.trash || swept.rollback) {
+      say(`已清扫 SDK 插件安装残留：.staging×${swept.staging}、.trash×${swept.trash}、.rollback×${swept.rollback}`);
+    }
+  } catch (e) {
+    say('安装残留清扫失败（不影响启动）: ' + String(((e as Error).message) || e));
+  }
   await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
 }
 
@@ -356,11 +522,15 @@ async function preBootSync(): Promise<void> {
 async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; port?: number; error?: string }> {
   const running = (bootMod.state as () => { running: boolean })().running;
   (bootMod.setIsRestarting as (v: boolean) => void)(true);
+  // 5.3.3 接线：boot-server 的模块私有重启标志同步写共享 state —— 恢复中心
+  // 的重启竞态护栏（safeModeEnable 等：running && !restartingServer 才放行）
+  // 此前读到的是恒 false 的死字段，护栏从未生效。
+  vnextState.state.restartingServer = true;
   try {
     if (!running) {
       log('service', '请求启动 dsh web 服务（未在运行）');
       await preBootSync();
-      const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
+      const r = await guardedStartAndWait([]);
       log('service', 'dsh web 服务已启动: ' + r.webUrl);
       currentWebInfo = { webUrl: r.webUrl, port: r.port };
 
@@ -373,7 +543,7 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     (companionSyncMod.syncCompanionPlugins as () => void)();
     (companionSyncMod.healProfileModules as () => void)();
     await (marketMod.restoreKeptArtifacts as (profile: string) => Promise<void>)(desktopProfileFn());
-    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)([]);
+    const r = await guardedStartAndWait([]);
     log('service', 'dsh web 服务已重启: ' + r.webUrl);
     currentWebInfo = { webUrl: r.webUrl, port: r.port };
 
@@ -381,9 +551,65 @@ async function restartWebServiceCore(): Promise<{ ok: boolean; webUrl?: string; 
     return { ok: true, webUrl: r.webUrl, port: r.port };
   } catch (e) {
     log('service', '重启失败: ' + String(((e as Error).message) || e));
+    // 失败路径同样清缓存：旧 webUrl 已不可达，手机桥按「未运行」处理。
+    currentWebInfo = null;
     return { ok: false, error: String(((e as Error).message) || e) };
   } finally {
     (bootMod.setIsRestarting as (v: boolean) => void)(false);
+    vnextState.state.restartingServer = false;
+  }
+}
+
+// ---- 5.3.3：守护启动接线（guardedBoot 在 Tauri 化时断线的最小恢复）--------
+// 启动前取 profile 快照；成功 → markGood 标「最后良好」（恢复中心
+// 「回退最后良好快照」的数据来源，此前永不写入、恒空转）；失败 →
+// 事故留痕。完整 guardedBoot 重试链不接：sidecar 启动链已自带有界重试
+// 与救援引导，重试语义重复。
+let agentPreviousConfirmed = false;
+async function guardedStartAndWait(overlays: string[]): Promise<{ webUrl: string; port: number }> {
+  const g = (guardBoxMod.ensureGuard as () => {
+    snapshot(r: string): { id: string } | null;
+    markGood(id: string): void;
+    reportIncident(t: string, d: string): { ok: boolean };
+  })();
+  const snap = g.snapshot('boot');
+  try {
+    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+    if (snap) g.markGood(snap.id);
+    // agent-previous 备份生命周期：更新后的首次健康启动即清理上一版备份
+    // （5.3.2 及以前 confirmPreviousAgentHealthy 零调用，数百 MB 备份永滞）。
+    if (!agentPreviousConfirmed) {
+      agentPreviousConfirmed = true;
+      // 两个「确认健康后的清理」都【严禁】在 boot.start 关键路径上同步执行：
+      // backups/<ts> 全量镜像与 agent-previous 覆盖层可达数百 MB～数 GB，
+      // 同步 rm 冻结事件循环数分钟 → 全部 RPC 卡死 + boot.start 180s 超时
+      // 弹 died 页（5.3.5 首发实测事故）。推迟 30s 且清理本体走 fs.promises。
+      setTimeout(() => {
+        void (async () => {
+          try {
+            // async（fs.promises.rm）：agent-previous 数百 MB 级，严禁同步删。
+            await updater.confirmPreviousAgentHealthy((pathsMod.updCtx as () => unknown)());
+          } catch (e) {
+            log('update', '确认上一版健康失败: ' + String(((e as Error).message) || e));
+          }
+          try {
+            const cu = require(path.join(DSH_DESKTOP_ROOT, 'client-updater.js')) as {
+              cleanupClientBackupIfHealthy(c: unknown, o?: unknown): Promise<{ removed: string[]; kept: string[] }>;
+            };
+            const r = await cu.cleanupClientBackupIfHealthy((pathsMod.updCtx as () => unknown)());
+            if (r.removed.length) log('update', '已延迟清理更新备份 ' + r.removed.length + ' 份');
+          } catch (e) {
+            log('update', '清理更新备份失败: ' + String(((e as Error).message) || e));
+          }
+        })();
+      }, 30_000).unref();
+    }
+    return r;
+  } catch (e) {
+    try {
+      g.reportIncident('boot-failed', 'dsh web 服务拉起失败。\n\n错误：\n' + String(((e as Error).message) || e));
+    } catch { /* 尽力而为 */ }
+    throw e;
   }
 }
 
@@ -398,6 +624,20 @@ recoveryCenter.init({
 interface RpcReq { id: number | null; method: string; params?: Record<string, unknown> }
 type RpcResult = Record<string, unknown>;
 type RpcParams = Record<string, unknown> | undefined;
+
+// 图标 dataUri 模块级缓存：bridge openMenu 每次开菜单都调 chrome.init，
+// 5.3.2 及以前每次重读 146KB 图标 + base64 并经 WS 回环发 ~195KB JSON。
+let chromeIconDataUri: string | null = null;
+function chromeIcon(): string {
+  if (chromeIconDataUri !== null) return chromeIconDataUri;
+  try {
+    const buf = fs.readFileSync(path.join(DSH_DESKTOP_ROOT, 'assets', 'icon.png'));
+    chromeIconDataUri = buf.length > 0 && buf[0] === 0x89 && buf[1] === 0x50
+      ? 'data:image/png;base64,' + buf.toString('base64')
+      : '';
+  } catch { chromeIconDataUri = ''; /* 无图标不致命 */ }
+  return chromeIconDataUri;
+}
 
 const methods: Record<string, (p: RpcParams) => unknown> = {
   'shell.info': (): RpcResult => ({
@@ -421,6 +661,9 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
   // ---- boot.*（P2：dsh web 服务编排，Rust 壳的启动主链路） ----
   'boot.start': async (p): Promise<RpcResult> => {
     const overlays = Array.isArray(p && p.overlays) ? (p!.overlays as string[]) : [];
+    // 打包态捆绑依赖完整性校验（issue #7，= Electron startAndShowGuarded 前置）：
+    // 空壳包以明确文案提示重装，用户选「仍然启动」才继续。
+    await (previewMod.verifyBundledModules as () => Promise<void>)();
     // 前置文件树准备（= main.js boot() 在 startAndShowGuarded 之前的序列，
     // 摘除 GUI 项）：市场排队 → 退役清理 → 配套插件/技能同步 → 模块遮蔽
     // 修复 → 构建产物回填。koffi 预检与 junction 巡检属 P3 壳层集成。
@@ -428,6 +671,14 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       await preBootSync();
     } catch (e) {
       say('boot 前置准备失败（继续尝试拉起服务）: ' + String(((e as Error).message) || e));
+    }
+    // 共享 profile 一次性迁移（= Electron main.js boot() 序列）：必须在
+    // syncCompanionPlugins 写新 profile 之后、皮肤行落位（applyLegacySkinChoice
+    // 在 sync 内消费）之前判定 —— preBootSync 已完成 sync，此处执行迁移清理。
+    try {
+      (shortcutsMod.migrateFromSharedWebProfile as () => void)();
+    } catch (e) {
+      say('共享 profile 迁移失败（不影响启动）: ' + String(((e as Error).message) || e));
     }
     // vnext（Phase 2）：插件档案登记 + 示例 SDK 插件安装（幂等）。
     try {
@@ -460,7 +711,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     }
     let r: { webUrl: string; port: number };
     try {
-      r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+      r = await guardedStartAndWait(overlays);
     } catch (e) {
       // 崩溃循环计数（= main.js recordBootFailureNow）：连续失败达阈值后，
       // 救援页据 rescue.state.crash 引导安全模式。
@@ -472,14 +723,66 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
     currentWebInfo = { webUrl: r.webUrl, port: r.port };
 
     notify('boot.web-ready', r);
-    startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
-    scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
-    // vnext（Phase 2）：并行拉起全部启用的 SDK 插件宿主（不阻塞 boot）。
-    void extHost.startEnabledExtensionHosts();
-    return r;
+    // 应答必须立刻返回：boot.start 是 Rust 壳 180s 超时的同步等待点，下面
+    // 的桌面集成序列（余额轮询/更新调度/快捷方式 PowerShell/junction 巡检）
+    // 全是同步重活，旧实现串行跑完才 return —— 慢机器/大 home 上事件循环
+    // 被占几十秒，应答迟到甚至叠加其他同步作业后超时弹 died 页。全部挪进
+    // setImmediate：应答先出，集成紧随其后照常执行。
+    setImmediate(() => {
+      try {
+        startBalanceLoop(); // 服务就绪后启动 15min 余额轮询（= main.js startBalanceLoop）
+        scheduleAutoUpdateChecks(); // 启动 60s 首检 + 12h 周期（P4 更新链）
+        // vnext（Phase 2）：并行拉起全部启用的 SDK 插件宿主（不阻塞 boot）。
+        void extHost.startEnabledExtensionHosts();
+        // ---- 5.3.3 批次 D 接线（= Electron main.js boot() 成功路径的桌面集成）----
+        // 预览静态服务：独立回环端口（不占 UI 的 6 连接池），chrome.init 的
+        // staticPort 字段从此有真实值（dsh-client-file-changes 预览面板消费）。
+        try {
+          (previewMod.startPreviewStaticServer as () => void)();
+        } catch (e) {
+          say('预览静态服务启动失败（不影响主流程）: ' + String(((e as Error).message) || e));
+        }
+        // 快捷方式维护（打包态 Windows 才生效：开始菜单 + 便携版桌面）与
+        // 临时目录运行告警（便携版解压在 %TEMP% 时提醒搬走）。
+        // maintainShortcuts 是 Promise（PowerShell 全异步批量）：sync try 接
+        // 不住 rejection，显式 .catch；旧同步实现逐图标起 PowerShell 冻结
+        // 事件循环数十秒（boot 后点「开始配对」必卡 —— 5.3.5 复现实测）。
+        try {
+          void (shortcutsMod.maintainShortcuts as () => Promise<void>)().catch((e) => {
+            say('快捷方式维护失败（不影响启动）: ' + String(((e as Error).message) || e));
+          });
+        } catch (e) {
+          say('快捷方式维护失败（不影响启动）: ' + String(((e as Error).message) || e));
+        }
+        try {
+          (shortcutsMod.warnTempRun as () => void)();
+        } catch (e) {
+          say('临时目录运行检测失败（不影响启动）: ' + String(((e as Error).message) || e));
+        }
+        // junction 归属巡检（5min 周期，外部原生 dsh 退出后自动修复指向）。
+        try {
+          (junctionPatrolMod.startJunctionWatchdog as () => void)();
+        } catch (e) {
+          say('junction 巡检启动失败（不影响启动）: ' + String(((e as Error).message) || e));
+        }
+      } catch (e) {
+        say('boot 桌面集成序列失败（不影响服务）: ' + String(((e as Error).message) || e));
+      }
+    });
+    // 会话任务完成通知（notifyOnTurnEnd 设置项控制）——同样属集成序列尾，
+    // 随 setImmediate 之后的下一拍执行，不占应答路径。
+    setImmediate(() => {
+      try { startSessionWatcher(); } catch (e) {
+        say('会话监听启动失败（不影响启动）: ' + String(((e as Error).message) || e));
+      }
+    });
+    return { ok: true, webUrl: r.webUrl, port: r.port };
   },
   'boot.stop': async (): Promise<RpcResult> => {
     await (bootMod.stopServer as () => Promise<void>)();
+    // 显式停服后必须清掉缓存：手机桥 getWebUrl() 拿着旧 webUrl 会逐请求
+    // 打死端口 502，而不是语义正确的「服务未运行」。
+    currentWebInfo = null;
     return { ok: true };
   },
   'boot.state': (): RpcResult => (bootMod.state as () => unknown)() as RpcResult,
@@ -495,13 +798,7 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       closeToTray?: boolean; exitAction?: string; shortcutPolicy?: string;
       notifyOnTurnEnd?: boolean; repos?: { github?: string; gitee?: string };
     };
-    let iconDataUri = '';
-    try {
-      const buf = fs.readFileSync(path.join(DSH_DESKTOP_ROOT, 'assets', 'icon.png'));
-      if (buf.length > 0 && buf[0] === 0x89 && buf[1] === 0x50) {
-        iconDataUri = 'data:image/png;base64,' + buf.toString('base64');
-      }
-    } catch { /* 无图标不致命 */ }
+    const iconDataUri = chromeIcon();
     const exitAction = s.exitAction === 'ask' || s.exitAction === 'minimize' || s.exitAction === 'quit'
       ? s.exitAction
       : s.closeToTray === false ? 'quit' : s.closeToTray === true ? 'minimize' : 'ask';
@@ -521,12 +818,17 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       capabilities: desktopPlatform.capabilities(),
       iconDataUri,
       repoUrls: { github: repos.github ? 'https://github.com/' + repos.github : '', gitee: repos.gitee ? 'https://gitee.com/' + repos.gitee : '' },
-      staticPort: 0,
+      // 预览静态服务端口（boot.start 里 startPreviewStaticServer 已 listen；
+      // 服务未起时 0 = 插件侧回退宿主 /dsh-files/static/ 路由）。
+      staticPort: (previewMod.getPreviewStaticPort as () => number)(),
     };
   },
   // 原地重启 Web 服务核心：无锁窗口内消费市场排队 → 同步配套插件 →
   // 修复模块遮蔽 → 恢复保留产物 → 重新拉起。
   'boot.restart': async (): Promise<RpcResult> => restartWebServiceCore(),
+  // bridge.ts 的 restartService() 调 service.restart（此前无注册 → -32601 被插件
+  // 静默吞掉，「重启服务后生效」实际不重启）：与 boot.restart 同一核心。
+  'service.restart': async (): Promise<RpcResult> => restartWebServiceCore(),
   // ---- 恢复中心（vnext-absorb Phase 2）：Rust 壳创建的恢复中心窗口经专用
   // preload（WS JSON-RPC）调用这两个方法；动作分发在 lib/recovery-center。----
   'rc.action': async (p): Promise<RpcResult> => {
@@ -722,8 +1024,14 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
           else results.push({ path: fp, status: 'conflict' });
         } else {
           if (content !== null && content.includes(newText)) {
-            fs.writeFileSync(fp, content.replace(newText, oldText), 'utf8');
-            results.push({ path: fp, status: 'reverted' });
+            // replace 只回滚第一处匹配：同一改动在文件中出现多处时只换一处
+            // 却报 reverted 会误导调用方。行为保持单处替换（与写入侧对称），
+            // 多于一处时附带 occurrences 供上层判断。
+            const occurrences = content.split(newText).length - 1;
+            fs.writeFileSync(fp, content.replace(newText, () => oldText), 'utf8');
+            results.push(occurrences > 1
+              ? { path: fp, status: 'reverted', occurrences, note: 'oldText 多处匹配，仅回滚第一处' }
+              : { path: fp, status: 'reverted' });
           } else if (content !== null && content === oldText) {
             results.push({ path: fp, status: 'skipped' });
           } else {
@@ -738,16 +1046,26 @@ const batch: Record<string, (p: RpcParams) => unknown> = {
     return { results };
   },
   'files.authorize-open': (p): Record<string, unknown> => {
-    const fp = (p && p.path) as string;
+    let fp = (p && p.path) as string;
     if (typeof fp !== 'string' || !path.isAbsolute(fp)) return { ok: false, error: 'path must be absolute' };
+    // 归一化必须先于前缀比对：原始串可携带 `..`/大小写变体/符号链接骗过
+    // 字面前缀命中，短路 isUnderFileRoots 后经壳层 files.open（ShellExecuteW
+    // 无二次校验）打开任意文件。realPath 跟随符号链接与 ..；叶子不存在时
+    // 用已解析的父目录拼回（随后 existsSync 把关）。
+    try {
+      fp = fs.realpathSync(fp);
+    } catch {
+      try {
+        fp = path.resolve(fs.realpathSync(path.dirname(fp)), path.basename(fp));
+      } catch { /* 连父目录都不可解析：保持原串，交给下方围栏判定 */ }
+    }
+    const lower = (x: string): string => (process.platform === 'win32' ? x.toLowerCase() : x);
     const skillsRoots = [
       path.join(home(), 'skills'),
       path.join(process.env.DSH_AGENTS_HOME || path.join(os.homedir(), '.agents'), 'skills'),
-    ];
-    const underSkillsRoot = skillsRoots.some((r) => {
-      const rp = path.resolve(r);
-      return fp === rp || fp.startsWith(rp + path.sep);
-    });
+    ].map((r) => lower(path.resolve(r)));
+    const fpL = lower(fp);
+    const underSkillsRoot = skillsRoots.some((r) => fpL === r || fpL.startsWith(r + path.sep));
     if (!underSkillsRoot && !(fileRootsMod.isUnderFileRoots as (x: string) => boolean)(fp)) {
       return { ok: false, error: 'path outside session workspace' };
     }
@@ -922,6 +1240,7 @@ const updater = require(path.join(DSH_DESKTOP_ROOT, 'updater.js')) as {
   saveSettings(c: unknown, s: unknown): void;
   compareVersions(a: string, b: string): number;
   applyUpdate(c: unknown, latest: string, o: { onProgress: (ev: string) => void }): Promise<void>;
+  confirmPreviousAgentHealthy(c: unknown): Promise<boolean>;
 };
 const onboardingLogic = require(path.join(DSH_DESKTOP_ROOT, 'scripts', 'onboarding.js')) as {
   CORE_PLUGIN_IDS: string[];
@@ -962,6 +1281,9 @@ async function runAgentUpdateFlow(manual: boolean): Promise<void> {
     title: '发现新版本',
     message: `官方 @deepseek-ai/dsh 发布了新版本：${latest}`,
     buttons: ['立即更新', '跳过此版本', '稍后'],
+    // 无头兜底按 cancelId 应答（fail-closed）：不传则回 0 =「立即更新」，
+    // 周期检查会在无人确认的情况下直接开更（见 showBoxFallback 注释）。
+    cancelId: 2,
   });
   if (response === 1) {
     settings.skipVersion = latest;
@@ -987,6 +1309,8 @@ async function runAgentUpdateFlow(manual: boolean): Promise<void> {
       message: `已更新到 @deepseek-ai/dsh@${latest}`,
       detail: '重启应用后生效。',
       buttons: ['立即重启', '稍后重启'],
+      // 同上：不传 cancelId 兜底会答 0 =「立即重启」，整壳无人值守重启。
+      cancelId: 1,
     });
     if (r2 === 0) {
       // 整壳重启（sidecar 随壳有界收口；run-state 属 Electron watchdog 机制，Tauri 用崩溃计数替代）。
@@ -1129,7 +1453,21 @@ rescueIntegration.initRescue({
   dshVersionSource: () => (pathsMod.dshVersionSource as () => string)(),
   log,
   notify,
-  mods: { boot: bootMod, guardBox: guardBoxMod, pluginOps: pluginOpsMod, companionSync: companionSyncMod, balance },
+  mods: {
+    boot: {
+      ...bootMod,
+      // rescue retry / recovery.reload 直调 startAndWait 会绕过守护启动链
+      //（快照/最后良好/事故留痕），更关键的是绕过 currentWebInfo 写入 ——
+      // 救援拉起后手机桥 getWebUrl() 仍返回旧值/空，代理恒 503。统一走
+      // guardedStartAndWait 并在成功后同步缓存。
+      startAndWait: async (overlays: string[]) => {
+        const r = await guardedStartAndWait(overlays);
+        currentWebInfo = { webUrl: r.webUrl, port: r.port };
+        return r;
+      },
+    },
+    guardBox: guardBoxMod, pluginOps: pluginOpsMod, companionSync: companionSyncMod, balance,
+  },
   bootRestart: () => (methods['boot.restart'] as (p?: unknown) => Promise<Record<string, unknown>>)({} as Record<string, unknown>),
 });
 Object.assign(methods, rescueIntegration.rescueMethods());
@@ -1144,6 +1482,7 @@ rl.on('close', () => { void gracefulExit(); });
 
 async function gracefulExit(): Promise<void> {
   quitting = true;
+  try { if (sessionWatcher) { sessionWatcher.stop(); sessionWatcher = null; } } catch { /* 尽力回收 */ }
   try { await (bootMod.stopServer as () => Promise<void>)(); } catch { /* 尽力回收 */ }
   process.exit(0);
 }

@@ -4,7 +4,8 @@
 //  2) phoneBridge.start() → LAN /pair?token= 200（配对等待页，不再 403/白块）
 //  3) desktop decide(true) → /api/pair-state approved + 下发 dsh_mobile cookie
 //  4) / 未配对 401 门页；配对后 / 返回完整内核 Web UI（5.2 代理版，非占位页）
-//  5) /api 代理往返真内核（client-request 信封 session.list）+ 喵丝滑 /pending 路由可达
+//  5) 经桥 WS 透传挂上内核 0.1.2 remote.mux（101 升级；旧扁平 /api RPC 已随
+//     dsh-host-apiproxy 移除）+ 喵丝滑 /pending 路由可达
 //  6) 顺带抽查：设置侧边栏出现「余额」「多智能体协作团队」入口（尽力而为）
 // 用法: node verify-phone-pair.cjs [exePath]
 const { spawn } = require('node:child_process');
@@ -136,20 +137,52 @@ const check = (name, ok, detail) => { console.log(`${ok ? '✔' : '✖'} ${name}
     check('P4 桌面批准 decide(true)', decided && decided.ok === true && decided.approved === true, JSON.stringify(decided));
     const poll = await httpReq(`http://127.0.0.1:${port}/api/pair-state?token=${encodeURIComponent(token)}`, {});
     const setCookie = poll.headers['set-cookie'] ? poll.headers['set-cookie'].join('; ') : '';
-    check('P5 状态 approved + 下发 dsh_mobile cookie', poll.status === 200 && poll.body.state === 'approved' && /dsh_mobile=1/.test(setCookie), JSON.stringify({ state: poll.body && poll.body.state, cookie: /dsh_mobile=1/.test(setCookie) }));
+    // 5.3.3 起 cookie 值 = 服务端随机会话密钥（不再是静态 dsh_mobile=1）：
+    // 从配对响应的 Set-Cookie 动态取回，后续请求原样回放。
+    const mobileCookie = (() => {
+      const m = /dsh_mobile=([^;\s]+)/.exec(setCookie);
+      return m ? 'dsh_mobile=' + m[1] : '';
+    })();
+    check('P5 状态 approved + 下发 dsh_mobile 会话 cookie', poll.status === 200 && poll.body.state === 'approved' && mobileCookie !== '', JSON.stringify({ state: poll.body && poll.body.state, cookie: mobileCookie !== '' }));
+
+    // 4b) 旧静态 cookie 已失效（5.3.3 安全语义回归）
+    const stale = await httpReq(`http://127.0.0.1:${port}/`, { cookie: 'dsh_mobile=1' });
+    check('P5b 旧静态 cookie dsh_mobile=1 已 401 失效', stale.status === 401, 'status=' + stale.status);
 
     // 5) 手机端 = 完整内核 Web UI 反向代理（未配对 401 门页，配对后真页面）
     const gate = await httpReq(`http://127.0.0.1:${port}/`, {});
     check('P6 未配对 / 返回 401 门页', gate.status === 401 && /需要重新配对/.test(gate.raw), 'status=' + gate.status);
-    const home = await httpReq(`http://127.0.0.1:${port}/`, { cookie: 'dsh_mobile=1' });
+    const home = await httpReq(`http://127.0.0.1:${port}/`, { cookie: mobileCookie });
     check('P6b 配对后 / 返回完整内核页面', home.status === 200 && /id="root"|DeepSeek Harness/.test(home.raw), 'len=' + home.raw.length);
 
-    // 6) /api 代理往返真内核（client-request 信封，内核按 server-response 应答）
-    const envelope = { type: 'client-request', rpcId: 'e2e-' + Date.now(), method: 'session.list', payload: {} };
-    const rpc = await httpReq(`http://127.0.0.1:${port}/api/session.list`, { method: 'POST', body: envelope, cookie: 'dsh_mobile=1' });
-    check('P7 /api 代理往返真内核成功', rpc.status === 200 && /server-response|session/.test(rpc.raw), 'status=' + rpc.status + ' body=' + String(rpc.raw).slice(0, 120));
+    // 6) 经桥 WS 透传挂上内核 0.1.2 typert 传输面（remote.mux）：
+    //    rc.2 时代的扁平 HTTP RPC（/api/session.list 信封）已随 dsh-host-apiproxy
+    //    移除，0.1.2 的 API 全走 /api/remote.mux WebSocket —— 桥能完成 101
+    //    升级即证明 Host/Cookie/流式透传对 API 面成立。
+    const mux = await new Promise((resolve) => {
+      const url = new URL(`http://127.0.0.1:${port}/api/remote.mux`);
+      const key = Buffer.from(Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).toString('base64').slice(0, 22) + '==';
+      const req = http.request(
+        {
+          hostname: url.hostname, port: url.port, path: url.pathname,
+          headers: {
+            connection: 'Upgrade', upgrade: 'websocket',
+            'sec-websocket-version': 13, 'sec-websocket-key': key,
+            cookie: mobileCookie,
+          },
+          timeout: 8000,
+        },
+        (res) => { res.resume(); resolve({ upgrade: false, status: res.statusCode || 0 }); },
+      );
+      req.on('upgrade', (res) => { res.resume(); resolve({ upgrade: true, status: res.statusCode || 0 }); });
+      req.on('response', (res) => { res.resume(); resolve({ upgrade: false, status: res.statusCode || 0 }); });
+      req.on('error', (e) => resolve({ upgrade: false, status: 0, error: String(e && e.message).slice(0, 80) }));
+      req.on('timeout', () => { req.destroy(); resolve({ upgrade: false, status: 0, error: 'timeout' }); });
+      req.end();
+    });
+    check('P7 经桥 WS 透传挂上内核 remote.mux（101 升级）', mux.upgrade === true, JSON.stringify(mux));
     // 喵丝滑 host 路由（5.2 内置）经代理可达
-    const pending = await httpReq(`http://127.0.0.1:${port}/plugins/meow-smooth/pending`, { cookie: 'dsh_mobile=1' });
+    const pending = await httpReq(`http://127.0.0.1:${port}/plugins/meow-smooth/pending`, { cookie: mobileCookie });
     check('P7b 喵丝滑 /pending 路由经代理可达', pending.status === 200 && /hostVersion/.test(pending.raw), 'status=' + pending.status);
 
     // 7) 状态面
@@ -168,14 +201,42 @@ const check = (name, ok, detail) => { console.log(`${ok ? '✔' : '✖'} ${name}
         if (el) { el.click(); return true; }
         return false;
       };
-      const opened = clickByText('设置');
-      if (!opened) return { opened: false };
+      const clickByAttr = (text) => {
+        const els = Array.from(document.querySelectorAll('a,button,[role="button"],[role="tab"]'));
+        const el = els.find((e) => {
+          const r = e.getBoundingClientRect();
+          const hay = ((e.getAttribute('aria-label') || '') + ' ' + (e.title || '') + ' ' + (e.textContent || '')).toLowerCase();
+          return r.width > 0 && r.height > 0 && hay.includes(text.toLowerCase());
+        });
+        if (el) { el.click(); return true; }
+        return false;
+      };
+      // 0.1.2 UI 的设置入口不一定是精确「设置」文本按钮（图标/aria-label）：
+      // 匹配集合逐级放宽。
+      // 0.1.2 UI：设置入口在「打开侧边栏」抽屉内 —— 先展开抽屉再点设置。
+      let opened = clickByText('设置')
+        || clickByAttr('设置');
+      if (!opened) {
+        clickByText('打开侧边栏') || clickByAttr('打开侧边栏');
+        await wait(700);
+        opened = clickByText('设置') || clickByAttr('设置');
+      }
+      if (!opened) {
+        // 诊断面：返回前 30 个可点元素概要，便于按实际 UI 调整匹配。
+        const cands = Array.from(document.querySelectorAll('a,button,[role="button"],[role="tab"]')).slice(0, 30)
+          .map((e) => ((e.textContent || '').trim().slice(0, 10) + '|' + (e.getAttribute('aria-label') || '') + '|' + (e.title || '')));
+        return { opened: false, cands };
+      }
       await wait(1200);
       const side = document.body.innerText;
-      return { opened: true, hasBalance: side.includes('余额'), hasTeams: side.includes('多智能体协作团队') };
+      // 「增强功能」分区面板默认不渲染：点进分区后 AgentTeams 卡片才进 DOM。
+      clickByText('增强功能');
+      await wait(900);
+      const side2 = document.body.innerText;
+      return { opened: true, hasBalance: side.includes('余额'), hasTeams: side2.includes('AgentTeams') };
     })()`);
     check('P9 设置侧边栏含「余额」入口', nav && nav.opened === true && nav.hasBalance === true, JSON.stringify(nav));
-    check('P10 设置侧边栏含「多智能体协作团队」入口', nav && nav.opened === true && nav.hasTeams === true, JSON.stringify(nav));
+    check('P10 设置「增强功能」含 AgentTeams 开关（默认启用，独立分区已撤）', nav && nav.opened === true && nav.hasTeams === true, JSON.stringify(nav));
 
     console.log(failures === 0 ? '\n[pair] PASS' : `\n[pair] FAIL (${failures})`);
     client.close();

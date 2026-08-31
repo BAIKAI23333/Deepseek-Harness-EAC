@@ -24,8 +24,9 @@ import fs = require('node:fs');
 import path = require('node:path');
 import os = require('node:os');
 
-const { writeJsonAtomic } = require('./lib/atomic-json') as {
+const { writeJsonAtomic, writeFileAtomic } = require('./lib/atomic-json') as {
   writeJsonAtomic(file: string, value: unknown): void;
+  writeFileAtomic(file: string, content: string | Buffer): void;
 };
 const { healProfileModuleShadowing } = require('./profile-module-heal') as {
   healProfileModuleShadowing(home: string, profile?: string, log?: (m: string) => void): string[];
@@ -99,14 +100,12 @@ interface GuardApi {
   lastGoodSnapshot(): SnapshotMeta | null;
   healthCheck(): { at: string; profile: string; findings: Finding[] };
   repair(findings?: Finding[]): { applied: string[] };
-  repairJunctions(): { repaired: string[]; unknown: string[] };
+  repairJunctions(): { repaired: string[]; unknown: string[]; pruned: string[] };
   junctionFindings(): Finding[];
   reportIncident(title: string, detail: string): { ok: boolean; file?: string; error?: string };
   listIncidents(): { id: string; title: string }[];
   readIncident(id: string): { ok: boolean; content?: string; error?: string };
   resolveIncident(id: string): { ok: boolean; error?: string };
-  guardedBoot(startOnce: () => Promise<string>, describeFailure?: () => string, opts?: { preRetry?: (errText: string) => Promise<unknown> }): Promise<string>;
-  setRollbackLift(fn: () => Promise<string>): void;
   attributeBootFailure(errText: string): BootAttribution | null;
 }
 
@@ -219,7 +218,9 @@ function createGuard(opts: GuardOpts): GuardApi {
       for (const name of GUARD_FILES) {
         const src = path.join(snapDir, name);
         if (!fs.existsSync(src)) continue;
-        fs.copyFileSync(src, path.join(dir, name));
+        // restore 目标是 cordis.patch.yml 等启动关键文件：copyFileSync 裸写
+        // 中断即截断。读出字节后走原子写（保内容逐字节一致）。
+        writeFileAtomic(path.join(dir, name), fs.readFileSync(src));
         restored.push(name);
       }
       log('guard', `已回滚 profile 到快照 ${id}（${restored.join(', ')}）`);
@@ -499,7 +500,8 @@ function createGuard(opts: GuardOpts): GuardApi {
           patch = deduped;
           applied.push('移除与 bundle 重复的 patch 行: ' + removed.join(', '));
         }
-        if (healed.healed.length || removed.length) fs.writeFileSync(file, patch);
+        // cordis.patch.yml 是启动关键文件：裸写中断即截断 → boot 死循环。
+        if (healed.healed.length || removed.length) writeFileAtomic(file, patch);
       } catch (err) {
         log('guard', '修复 patch 行失败: ' + (err as Error).message);
       }
@@ -519,13 +521,14 @@ function createGuard(opts: GuardOpts): GuardApi {
   // 一跑，桌面的模块解析就被换血（版本错位 / npx 缓存被清后悬空）。
   // 这里以 dshBin() 推导闭包根，逐个纠正指向；闭包里不存在的名字（原生
   // 新版才有的包）保留原样并报告。
-  function repairJunctions(): { repaired: string[]; unknown: string[] } {
+  function repairJunctions(): { repaired: string[]; unknown: string[]; pruned: string[] } {
     const repaired: string[] = [];
     const unknown: string[] = [];
+    const pruned: string[] = [];
     try {
       const fallbackDir = path.join(home(), 'profiles', 'node_modules');
       const expected = expectedClosureRoot();
-      if (!expected || !fs.existsSync(fallbackDir)) return { repaired, unknown };
+      if (!expected || !fs.existsSync(fallbackDir)) return { repaired, unknown, pruned };
       fs.mkdirSync(fallbackDir, { recursive: true });
       const expRoot = safeRealpath(expected) || expected;
       const norm = (p: string) => String(p).replace(/\//g, '\\').toLowerCase();
@@ -542,7 +545,21 @@ function createGuard(opts: GuardOpts): GuardApi {
         if (good) continue;
         const want = path.join(expRoot, rel);
         if (!fs.existsSync(path.join(want, 'package.json'))) {
-          unknown.push(full);
+          // 闭包里没有这个名字:目标还活着（原生新版 CLI 才有的包）→ 保留原
+          // 指向；目标已死（升级/卸载遗留的悬空链，如 0.1.2 升级后残留的
+          // 104 条指向已卸载 Electron 目录的死链 —— 内核 heal 只增链不清理，
+          // 永不可能自愈）→ 剪除。悬空链对任何一方都不可解析，只会让模块
+          // 解析反复撞 ENOENT。
+          if (!fs.existsSync(real)) {
+            try {
+              removeLink(link);
+              pruned.push(full);
+            } catch (err) {
+              log('guard', `剪除悬空共享模块 ${full} 失败: ` + (err as Error).message);
+            }
+          } else {
+            unknown.push(full);
+          }
           continue;
         }
         try {
@@ -556,13 +573,16 @@ function createGuard(opts: GuardOpts): GuardApi {
       if (repaired.length) {
         log('guard', '已把 ' + repaired.length + ' 个共享模块指回客户端闭包');
       }
+      if (pruned.length) {
+        log('guard', '已剪除 ' + pruned.length + ' 条悬空共享模块死链（目标已不存在）');
+      }
       if (unknown.length) {
         log('guard', '闭包中不存在的共享模块（保留原指向）: ' + unknown.slice(0, 10).join(', '));
       }
     } catch (err) {
       log('guard', 'junction 归属修复失败: ' + (err as Error).message);
     }
-    return { repaired, unknown };
+    return { repaired, unknown, pruned };
   }
 
   // ── 事故报告（plugin-guard 的 incident）──────────────────────────────
@@ -586,7 +606,7 @@ function createGuard(opts: GuardOpts): GuardApi {
         '```',
         '',
       ].join('\n');
-      fs.writeFileSync(file, body);
+      writeFileAtomic(file, body);
       return { ok: true, file };
     } catch (err) {
       return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
@@ -628,85 +648,6 @@ function createGuard(opts: GuardOpts): GuardApi {
     } catch (err) {
       return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
     }
-  }
-
-  // ── 守护启动（guarded boot）──────────────────────────────────────────
-  // startOnce: () => Promise<url>（真正的拉起动作）。失败链路：
-  //   体检 → 可修复项修复 → 重试 → 仍有最后良好快照则回滚 → 重试 → 事故报告。
-  // 每层只重试一次，绝不无限循环。
-  // V4.2：opts.preRetry(errText) 是配置级修复钩子（pnpm allowBuilds 等），
-  // 返回 { applied: [...] }（或真值）即视为「已修复」，与 repair() 结果合并
-  // 后一起重试一次；返回 false 则走原链路。钩子只调用一次。
-  async function guardedBoot(startOnce: () => Promise<string>, describeFailure?: () => string, opts: { preRetry?: (errText: string) => Promise<unknown> } = {}): Promise<string> {
-    const snap = snapshot('boot');
-    try {
-      const url = await startOnce();
-      if (snap) markGood(snap.id);
-      return url;
-    } catch (firstErr) {
-      log('guard', '守护启动：首次拉起失败，进入体检修复流程');
-      const { findings } = healthCheck();
-      const fixable = findings.filter((f) => f.fixable);
-      for (const f of findings) log('guard', `[体检] ${f.code}(${f.severity}): ${f.message}`);
-
-      // V4.2：allowBuilds 等配置级修复钩子（只调用一次，返回 false 不打扰）。
-      let preApplied: string[] = [];
-      if (opts.preRetry) {
-        try {
-          const r: any = await opts.preRetry(String(((firstErr as Error) && (firstErr as Error).message) || firstErr));
-          if (r && Array.isArray(r.applied) && r.applied.length) preApplied = r.applied;
-          else if (r) preApplied = ['配置级修复钩子已应用'];
-        } catch (err) {
-          log('guard', 'preRetry 钩子失败: ' + String(((err as Error) && (err as Error).message) || err));
-        }
-      }
-
-      if (fixable.length || preApplied.length) {
-        const { applied } = repair(findings);
-        const all = [...applied, ...preApplied];
-        if (all.length) {
-          log('guard', '已应用修复: ' + all.join('；'));
-          try {
-            const url = await startOnce();
-            if (snap) markGood(snap.id);
-            reportIncident('boot-recovered', '首次启动失败，自动修复后恢复。\n修复项：\n- ' + all.join('\n- ') + '\n\n原始错误：\n' + String(((firstErr as Error) && (firstErr as Error).message) || firstErr));
-            return url;
-          } catch (secondErr) {
-            log('guard', '修复后重试仍失败，进入回滚流程');
-            return rollbackPath(secondErr, snap, describeFailure);
-          }
-        }
-      }
-      return rollbackPath(firstErr, snap, describeFailure);
-    }
-  }
-
-  async function rollbackPath(err: unknown, bootSnap: SnapshotMeta | null, describeFailure?: () => string): Promise<string> {
-    const good = lastGoodSnapshot();
-    if (good && (!bootSnap || good.id !== bootSnap.id)) {
-      log('guard', `回滚到最后良好快照 ${good.id}（${good.reason}）`);
-      const res = restore(good.id);
-      if (res.ok) {
-        repair(healthCheck().findings); // 回滚后再清一次遮蔽（pnpm 可能刚 hoist 过）
-        try {
-          const url = await guardedBootRetryOnce();
-          return url;
-        } catch (finalErr) {
-          reportIncident('rollback-failed', '回滚到快照 ' + good.id + ' 后仍无法启动。\n\n最终错误：\n' + String(((finalErr as Error) && (finalErr as Error).message) || finalErr));
-          throw finalErr;
-        }
-      }
-    }
-    reportIncident('boot-failed', '启动失败且无可回滚快照。\n\n错误：\n' + String(((err as Error) && (err as Error).message) || err) + (describeFailure ? '\n\n' + describeFailure() : ''));
-    throw err;
-  }
-
-  // 回滚后的拉起也要留「最后良好」标记 —— 交给调用方包一层。
-  let rollbackLift: (() => Promise<string>) | null = null;
-  function setRollbackLift(fn: () => Promise<string>): void { rollbackLift = fn; }
-  async function guardedBootRetryOnce(): Promise<string> {
-    if (rollbackLift) return rollbackLift();
-    throw new Error('rollback lift not configured');
   }
 
   // ── 启动失败归因（V4.2）────────────────────────────────────────────
@@ -800,8 +741,8 @@ function createGuard(opts: GuardOpts): GuardApi {
     snapshot, listSnapshots, restore, markGood, lastGoodSnapshot,
     healthCheck, repair, repairJunctions, junctionFindings,
     reportIncident, listIncidents, readIncident, resolveIncident,
-    guardedBoot, setRollbackLift, attributeBootFailure,
+    attributeBootFailure,
   };
 }
 
-export = { createGuard, GUARD_FILES };
+export = { createGuard };

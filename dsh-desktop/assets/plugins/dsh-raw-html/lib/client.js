@@ -36,6 +36,8 @@ window.__ModuleLoader__.load({
     var hostRpc = null
     /** 延迟刷新定时器（防连点：后一次切换重置前一次）。 */
     var reloadTimer = null
+    /** AgentTeams 团队模式（会话级；「更多模式」菜单行驱动，见 createPanel）。 */
+    var teamsModeOn = false
     /** 面板内两个开关行的刷新回调（面板打开时挂载，关闭时清空）。 */
     var renderRowRefresh = null
     var aestheticRowRefresh = null
@@ -150,68 +152,61 @@ window.__ModuleLoader__.load({
     // ---- 「</>」按钮 + 设置面板（自 B 移植 · 2026-08-24）-------------------
     // 主题令牌（跟随皮肤）：--dsw-alias-* 为 DSH 设计系统别名层，各皮肤都会映射——
     // 按钮/面板自动契合用户切换的深色/浅色主题，看起来像原生 DSH 控件。
-    var STYLE_OFF =
-      'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
-      'border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:999px;' +
-      'background:var(--dsw-alias-button-tool-bar-fill,rgba(84,85,87,.5));color:var(--dsw-alias-label-secondary,#555);font-size:12px;' +
-      'font-family:inherit;cursor:pointer;white-space:nowrap;margin:0 6px;' +
-      'transition:all .15s ease;'
-    var STYLE_ON =
-      'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
-      'border:1px solid var(--dsw-alias-brand-primary,transparent);border-radius:999px;' +
-      'background:var(--dsw-alias-button-primary-fill,#0d1f33);' +
-      'color:var(--dsw-alias-label-primary-inverted,#fff);font-size:12px;font-family:inherit;cursor:pointer;' +
-      'white-space:nowrap;margin:0 6px;font-weight:600;' +
-      'transition:all .15s ease;'
-    // 渲染开启但美学关闭：用 dimmed 主色，示意「纯净渲染」
-    var STYLE_PURE =
-      'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
-      'border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:999px;' +
-      'background:var(--dsw-alias-button-primary-dimmed,rgba(0,0,0,.08));color:var(--dsw-alias-label-primary,#111);font-size:12px;' +
-      'font-family:inherit;cursor:pointer;white-space:nowrap;margin:0 6px;' +
-      'transition:all .15s ease;'
-
-    function buttonLabel() {
-      if (!isRenderEnabled()) return '</> OFF'
-      return isAestheticEnabled() ? '</> ON' : '</> 渲染'
-    }
-
-    function refreshButton(btn) {
-      if (!btn) btn = document.getElementById(BTN_ID)
-      if (!btn) return
-      var render = isRenderEnabled()
-      btn.setAttribute('aria-pressed', render ? 'true' : 'false')
-      btn.textContent = buttonLabel()
-      btn.style.cssText = render ? (isAestheticEnabled() ? STYLE_ON : STYLE_PURE) : STYLE_OFF
-    }
-
     function createButton() {
       var btn = document.createElement('button')
       btn.id = BTN_ID
       btn.type = 'button'
       btn.setAttribute('aria-haspopup', 'true')
-      btn.title = 'VCP 渲染设置：点击打开面板，可分别开关「渲染 HTML」与「美学注入」（切换后自动强制刷新）'
+      btn.title = '更多模式：AgentTeams 团队模式 / HTML 渲染与美学（渲染类开关切换后自动强制刷新）'
+      btn.textContent = '模式'
+      btn.style.cssText =
+        'display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;' +
+        'border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));border-radius:999px;' +
+        'background:var(--dsw-alias-button-tool-bar-fill,rgba(84,85,87,.5));color:var(--dsw-alias-label-secondary,#555);font-size:12px;' +
+        'font-family:inherit;cursor:pointer;white-space:nowrap;margin:0;flex:none;' +
+        'transition:all .15s ease;'
       btn.addEventListener('click', function (e) {
         e.stopPropagation()
         togglePanel(btn)
       })
-      refreshButton(btn)
       return btn
     }
 
-    function ensureButton() {
-      if (document.getElementById(BTN_ID)) return true
-      var composer = findComposer()
-      if (!composer) return false
-      var host = findTrailing(composer)
-      if (!host) return false
-      host.appendChild(createButton())
-      return true
+    /** 「更多模式」芯片挂载点：conversation.input.right 槽（order 4.5 →
+     *  优化提示词按钮左边；列表按 order 升序渲染）。组件按会话挂载，
+     *  每个会话拿到独立芯片；teamsMode 会话级状态随之复位。 */
+    function registerModesChip(ctx) {
+      if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return
+      ctx.slots.inject('conversation.input.right', function () {
+        return ctx.slots.register({
+          name: 'conversation.input.right',
+          key: 'raw-html-modes',
+          id: 'raw-html-modes',
+          order: 4.5,
+        }, ModesChip)
+      })
     }
 
-    // 面板内状态变化：刷新按钮 + 面板开关行 + 上报 Host
+    function ModesChip() {
+      var ref = React.useRef(null)
+      React.useEffect(function () {
+        var el = ref.current
+        if (!el) return
+        teamsModeOn = false // 会话级状态：切换会话即复位
+        var btn = document.getElementById(BTN_ID)
+        if (btn && btn.parentNode) btn.parentNode.removeChild(btn)
+        btn = createButton()
+        el.appendChild(btn)
+        return function () { if (btn.parentNode === el) el.removeChild(btn) }
+      }, [])
+      return h('div', {
+        ref: ref,
+        style: { display: 'inline-flex', alignItems: 'center', margin: '0 6px', flex: 'none' },
+      })
+    }
+
+    // 面板内状态变化：刷新面板开关行 + 上报 Host
     function onChange() {
-      refreshButton()
       if (renderRowRefresh) renderRowRefresh()
       if (aestheticRowRefresh) aestheticRowRefresh()
       syncHostState(hostRpc, isRenderEnabled(), isAestheticEnabled())
@@ -283,12 +278,53 @@ window.__ModuleLoader__.load({
         'border-radius:var(--dsl-web-radius,12px);box-shadow:0 12px 34px rgba(0,0,0,.28);' +
         'font-family:inherit;color:var(--dsw-alias-label-primary,#111);'
       var title = document.createElement('div')
-      title.textContent = 'VCP 渲染设置'
+      title.textContent = '更多模式'
       title.style.cssText = 'font-size:11px;letter-spacing:.14em;color:var(--dsw-alias-label-secondary,#555);margin:0 2px 8px;'
       panel.appendChild(title)
 
+      // AgentTeams 团队模式行（会话级开关）：开 = 发送 /agent-teams 激活；
+      // 关 = 发送归档指令。与渲染类开关不同：发消息驱动，不刷新页面。
+      var teamsRow = document.createElement('div')
+      teamsRow.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:8px 2px;'
+      var teamsLeft = document.createElement('div')
+      teamsLeft.style.cssText = 'flex:1;min-width:0;'
+      var teamsName = document.createElement('div')
+      teamsName.textContent = 'AgentTeams 团队模式'
+      teamsName.style.cssText = 'font-size:13px;font-weight:600;color:var(--dsw-alias-label-primary,#111);line-height:1.4;'
+      var teamsDesc = document.createElement('div')
+      teamsDesc.textContent = '本会话进入多智能体协作（队长 / 子代理 / 任务 DAG）。开启发送 /agent-teams 激活；关闭发送归档指令。'
+      teamsDesc.style.cssText = 'font-size:11px;color:var(--dsw-alias-label-tertiary,#666);line-height:1.45;margin-top:2px;'
+      teamsLeft.appendChild(teamsName)
+      teamsLeft.appendChild(teamsDesc)
+      var teamsSw = document.createElement('button')
+      teamsSw.type = 'button'
+      function refreshTeamsRow() {
+        teamsSw.textContent = teamsModeOn ? 'ON' : 'OFF'
+        teamsSw.style.cssText =
+          'min-width:44px;height:24px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:600;flex:none;cursor:pointer;' +
+          (teamsModeOn
+            ? 'background:var(--dsw-alias-button-primary-fill,#0d1f33);color:var(--dsw-alias-label-primary-inverted,#fff);border:1px solid var(--dsw-alias-brand-primary,transparent);'
+            : 'background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,#555);border:1px solid var(--dsw-alias-border-l2,rgba(0,0,0,.12));')
+      }
+      teamsSw.addEventListener('click', function () {
+        teamsModeOn = !teamsModeOn
+        refreshTeamsRow()
+        sendText(teamsModeOn
+          ? '/agent-teams'
+          : '结束并归档当前 AgentTeams 团队。')
+        window.setTimeout(closePanel, 200) // 让 sendText 的自动点击先落，再收起菜单
+      })
+      teamsRow.appendChild(teamsLeft)
+      teamsRow.appendChild(teamsSw)
+      refreshTeamsRow()
+      panel.appendChild(teamsRow)
+
+      var teamsDivider = document.createElement('div')
+      teamsDivider.style.cssText = 'height:1px;background:var(--dsw-alias-border-l1,rgba(0,0,0,.08));margin:6px 0;'
+      panel.appendChild(teamsDivider)
+
       var hint = document.createElement('div')
-      hint.textContent = '切换任一开关将自动强制刷新页面，立即以新状态重渲染全部消息'
+      hint.textContent = '渲染类开关切换后自动强制刷新页面；团队模式开关即时发消息，不刷新'
       hint.style.cssText = 'font-size:10px;line-height:1.45;color:var(--dsw-alias-label-tertiary,#777);margin:0 2px 8px;'
       panel.appendChild(hint)
 
@@ -534,11 +570,93 @@ window.__ModuleLoader__.load({
       return segments
     }
 
+    // CSS url() 白名单：模型可控 CSS 里的外链 url（background:url(//evil.com/…)、
+    // url(http://…) 等）会随渲染向第三方发起请求，可做追踪像素/数据外带。
+    // 因此只放行不产生跨域请求的形态：
+    //   · #…            同文档引用：SVG 渐变/裁剪 url(#g)、应用内 #/ 路由相对路径
+    //   · /…（非 //）   同源根相对路径：插件文档约定的 /fonts/… 字体契约
+    //                  （DESIGN.md / VCP-INTERACTIONS §8，下载内嵌也依赖它），
+    //                  同源请求无第三方外带面；协议相对 //… 明确不放行
+    //   · data:image/…  内联图片数据；data:text/html 等其余 data: 一律不放行
+    // 其余（http(s)、协议相对 //、javascript:、未知协议、其余 data:）整体替换为
+    // url(about:blank)，三种引号形态（"…"、'…'、无引号）均覆盖。白名单按原始
+    // 文本判定。注意原注释「转义形态无法命中白名单只会落入替换分支」是错的：
+    // 正则的引号分支 [^"]* 遇到 CSS 转义引号（\"）会提前失配，导致整个 url()
+    // 匹配失败、原文存活（实测 url("//evil.com/\"x") 逐字节通过）。因此：
+    //   1) 匹配正则必须转义感知（\\ 消费转义对，引号串/裸串都一样）；
+    //   2) 判定前先把 CSS 转义解码（\73→s、\"→"），按浏览器语义判定；
+    //   3) 未闭合引号串 url("… 兜底吞掉（fail-closed）。
+    function cssUnescape(value) {
+      return String(value).replace(/\\([0-9a-fA-F]{1,6}\s|[0-9a-fA-F]{1,6}|.)/g, function (all, esc) {
+        if (/^[0-9a-fA-F]/.test(esc)) {
+          var cp = parseInt(esc.trim(), 16)
+          return String.fromCodePoint(!isNaN(cp) && cp <= 0x10ffff && cp > 0 ? cp : 0xfffd)
+        }
+        return esc
+      })
+    }
+
+    // 转义感知的 @import 剥离：@\69 mport 这类 at-keyword 转义浏览器照样执行，
+    // 字面正则 /\@import/ 打不到。逐字符扫描，@ 后解码 ident 命中 import 即
+    // 跳到下一个分号（@import 无块形态），其余原样拷贝。
+    function stripCssImports(css) {
+      var out = ''
+      var i = 0
+      var n = css.length
+      while (i < n) {
+        var ch = css.charAt(i)
+        if (ch !== '@') { out += ch; i++; continue }
+        var j = i + 1
+        var ident = ''
+        while (j < n) {
+          var c = css.charAt(j)
+          if (c === '\\') {
+            var m = /^\\([0-9a-fA-F]{1,6})(\s)?/.exec(css.slice(j, j + 9))
+            if (m) {
+              var cp2 = parseInt(m[1], 16)
+              ident += String.fromCodePoint(!isNaN(cp2) && cp2 <= 0x10ffff && cp2 > 0 ? cp2 : 0xfffd)
+              j += m[0].length
+              continue
+            }
+            if (j + 1 < n) { ident += css.charAt(j + 1); j += 2; continue }
+            j++
+            continue
+          }
+          if (/[a-zA-Z0-9_-]/.test(c)) { ident += c; j++; continue }
+          break
+        }
+        if (ident.toLowerCase() === 'import') {
+          while (j < n && css.charAt(j) !== ';') j++
+          if (j < n) j++
+          i = j
+          continue
+        }
+        out += ch
+        i++
+      }
+      return out
+    }
+
+    function sanitizeCssUrl(all, dq, sq, bare) {
+      var value = dq != null ? dq : sq != null ? sq : bare
+      value = cssUnescape(String(value == null ? '' : value)).trim()
+      if (!value) return 'url()'
+      // 判定按解码后语义；放行时回原文（all）——原文解码后与判定值恒等，
+      // 不存在「解码后允许但原文更危险」的形态。
+      if (value.charAt(0) === '#') return all
+      if (value.charAt(0) === '/' && value.charAt(1) !== '/') return all
+      if (/^data:image\//i.test(value)) return all
+      return 'url(about:blank)'
+    }
+
     function sanitizeCss(css) {
-      return String(css || '')
-        .replace(/@import\b[^;]*;?/gi, '')
+      return stripCssImports(String(css || ''))
         .replace(/expression\s*\([^)]*\)/gi, '')
-        .replace(/url\s*\(\s*(['"]?)\s*javascript:[^)]*\)/gi, 'url()')
+        .replace(/url\s*\(\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'((?:[^'\\]|\\[\s\S])*)'|((?:[^)'"\\]|\\[\s\S])*))\s*\)/gi, sanitizeCssUrl)
+        // fail-closed：未闭合引号串的 url("…/url('… 吞到样式表尾（浏览器对
+        // 未闭合串同样吞到块尾，判定面必须与浏览器一致，兜底即中和）。
+        .replace(/url\s*\(\s*"(?:[^"\\]|\\[\s\S])*$/gi, 'url(about:blank)')
+        .replace(/url\s*\(\s*'(?:[^'\\]|\\[\s\S])*$/gi, 'url(about:blank)')
         .replace(/(^|[;{])\s*(?:behavior|-moz-binding)\s*:[^;}]*(?=[;}])/gi, '$1')
         .replace(/(^|[;{])\s*position\s*:\s*(?:fixed|sticky)\s*;?/gi, '$1')
         .replace(/(^|[;{])\s*content\s*:[^;}]*(?=[;}])/gi, '$1')
@@ -559,54 +677,83 @@ window.__ModuleLoader__.load({
       return !/^[a-z][a-z0-9+.-]*:/i.test(raw)
     }
 
+    // 脚本/嵌套浏览上下文类标签整体移除。SMIL 动画元素（animate/set/animateTransform）
+    // 会在渲染期间动态改写其他元素的属性（如把 <a> 的 href 动画成 javascript: 协议），
+    // 让静态属性净化失效，因此与脚本类标签一并整体禁止。animateTransform 用
+    // 两种大小写形态登记：SVG 命名空间内解析器会调整为驼峰 localName（大小写敏感），
+    // SVG 外的未知元素归 HTML 命名空间（大小写不敏感匹配），双写确保两条路径都命中。
+    var VCP_BLOCKED_TAGS =
+      'script,iframe,object,embed,base,meta,link,animate,set,animatetransform,animateTransform'
+
+    // 单元素净化：内联样式清洗 + 属性白名单化 + 外链隔离。
+    // 抽成独立函数，供 sanitizeVcpTree 对 <template> content 子树复用。
+    function sanitizeVcpElement(el) {
+      if (el.localName === 'style') {
+        el.textContent = sanitizeCss(el.textContent)
+        return
+      }
+      var attrs = Array.prototype.slice.call(el.attributes || [])
+      for (var ai = 0; ai < attrs.length; ai++) {
+        var attr = attrs[ai]
+        var name = attr.name.toLowerCase()
+        var value = attr.value
+        if (name === 'onclick') {
+          var inputMatch = /^input\s*\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?\s*$/.exec(value)
+          if (inputMatch) el.setAttribute('data-vcp-input', inputMatch[2])
+          el.removeAttribute(attr.name)
+          continue
+        }
+        if (/^on/i.test(name) || name === 'srcdoc' || name === 'srcset' || name === 'action' || name === 'formaction') {
+          el.removeAttribute(attr.name)
+          continue
+        }
+        if (name === 'style') {
+          var safeStyle = sanitizeCss(value)
+          if (safeStyle.trim()) el.setAttribute('style', safeStyle)
+          else el.removeAttribute('style')
+          continue
+        }
+        if (name === 'href' || name === 'xlink:href') {
+          if (!isAllowedUrl(value, false)) el.removeAttribute(attr.name)
+          continue
+        }
+        if (name === 'src' || name === 'poster') {
+          if (!isAllowedUrl(value, true)) el.removeAttribute(attr.name)
+        }
+      }
+      if (el.localName === 'a') {
+        // http(s) 外链若在当前窗口点击，会把整个 Web UI 导航离站：统一改为新窗口
+        // 打开；rel="noopener noreferrer" 切断新窗口对 window.opener 的访问，
+        // 防止外站反向操控本页（反向标签劫持）。
+        var linkHref = (el.getAttribute('href') || '').trim()
+        if (/^https?:/i.test(linkHref)) el.setAttribute('target', '_blank')
+        if (el.getAttribute('target') === '_blank') {
+          el.setAttribute('rel', 'noopener noreferrer')
+        }
+      }
+    }
+
+    // 子树净化。<template> 的 content 是独立 DocumentFragment，
+    // querySelectorAll('*') 不会进入其中——模板内的节点原本会整体绕过属性净化，
+    // 在模板被克隆/实例化时原样生效，必须对每个 template 的 content 显式递归
+    // （嵌套模板同样覆盖）。危险标签移除也按子树执行，模板内的脚本类/SMIL
+    // 元素同样无处遁形。
+    function sanitizeVcpTree(root) {
+      var blocked = root.querySelectorAll(VCP_BLOCKED_TAGS)
+      for (var bi = 0; bi < blocked.length; bi++) blocked[bi].remove()
+      var elements = root.querySelectorAll('*')
+      for (var i = 0; i < elements.length; i++) {
+        var el = elements[i]
+        sanitizeVcpElement(el)
+        if (el.localName === 'template' && el.content) sanitizeVcpTree(el.content)
+      }
+    }
+
     function sanitizeVcpHtml(rawHtml) {
       var parser = new window.DOMParser()
       var doc = parser.parseFromString(String(rawHtml || ''), 'text/html')
       if (!doc.body || !doc.body.querySelector('[id="vcp-root"]')) return ''
-
-      var blocked = doc.body.querySelectorAll('script,iframe,object,embed,base,meta,link')
-      for (var bi = 0; bi < blocked.length; bi++) blocked[bi].remove()
-
-      var elements = doc.body.querySelectorAll('*')
-      for (var i = 0; i < elements.length; i++) {
-        var el = elements[i]
-        if (el.localName === 'style') {
-          el.textContent = sanitizeCss(el.textContent)
-          continue
-        }
-        var attrs = Array.prototype.slice.call(el.attributes || [])
-        for (var ai = 0; ai < attrs.length; ai++) {
-          var attr = attrs[ai]
-          var name = attr.name.toLowerCase()
-          var value = attr.value
-          if (name === 'onclick') {
-            var inputMatch = /^input\s*\(\s*(['"])([\s\S]*?)\1\s*\)\s*;?\s*$/.exec(value)
-            if (inputMatch) el.setAttribute('data-vcp-input', inputMatch[2])
-            el.removeAttribute(attr.name)
-            continue
-          }
-          if (/^on/i.test(name) || name === 'srcdoc' || name === 'srcset' || name === 'action' || name === 'formaction') {
-            el.removeAttribute(attr.name)
-            continue
-          }
-          if (name === 'style') {
-            var safeStyle = sanitizeCss(value)
-            if (safeStyle.trim()) el.setAttribute('style', safeStyle)
-            else el.removeAttribute('style')
-            continue
-          }
-          if (name === 'href' || name === 'xlink:href') {
-            if (!isAllowedUrl(value, false)) el.removeAttribute(attr.name)
-            continue
-          }
-          if (name === 'src' || name === 'poster') {
-            if (!isAllowedUrl(value, true)) el.removeAttribute(attr.name)
-          }
-        }
-        if (el.localName === 'a' && el.getAttribute('target') === '_blank') {
-          el.setAttribute('rel', 'noopener noreferrer')
-        }
-      }
+      sanitizeVcpTree(doc.body)
       return doc.body.innerHTML
     }
 
@@ -2476,20 +2623,12 @@ window.__ModuleLoader__.load({
       // 不再回退系统黑体（先生 2026-08-27 实测：此前仅面板打开时才注册）
       ensureGlobalFonts(ctx)
 
-      // 启动：等 composer 出现后挂按钮
-      function boot() {
-        if (ensureButton()) return
-        window.setTimeout(boot, 400)
-      }
-      boot()
+      // 「更多模式」芯片：conversation.input.right 槽（order 4.5 → 优化提示词
+      // 左边；槽渲染随 composer zone 出现，hero 与会话内均显示）。原 send 键
+      // 尾部 DOM 注入 + MutationObserver 补挂机制整体退役。
+      registerModesChip(ctx)
 
-      // React 重渲染会移除注入节点：用 MutationObserver 补回
-      var mo = new window.MutationObserver(function () {
-        if (!document.getElementById(BTN_ID)) ensureButton()
-      })
-      mo.observe(document.body, { childList: true, subtree: true })
       window.addEventListener('pagehide', function () {
-        mo.disconnect()
         closePanel()
       })
     }

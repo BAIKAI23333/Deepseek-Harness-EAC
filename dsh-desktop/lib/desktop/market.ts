@@ -10,6 +10,7 @@ import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
 import { spawn } from 'node:child_process';
+import { writeFileAtomic } from '../atomic-json';
 import type { ChildProcess } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { nodeExe, dshBin, APP_ROOT } from './runtime-paths';
@@ -123,7 +124,7 @@ export function finishMarketMarker(marker: string, job: MarketJob, attempts: num
     removeMarkerFile(marker);
     return;
   }
-  try { fs.writeFileSync(marker, JSON.stringify({ ...job, attempts }, null, 2)); } catch { /* 尽力重试 */ }
+  try { writeFileAtomic(marker, JSON.stringify({ ...job, attempts }, null, 2)); } catch { /* 尽力重试 */ }
   ctx.log('market-pending', '排队任务失败（下次启动重试）: ' + (job.label || job.target));
 }
 
@@ -264,7 +265,7 @@ export async function processPendingMarketOps(): Promise<void> {
         : [bin, 'plugin', '--profile', job.profile, job.kind === 'uninstall' ? 'remove' : 'add', job.target];
       // 安装前快照（保护中心）：排队任务改的是 profile 配置面，出问题可
       // 一键/自动回滚到这里。
-      ensureGuard().snapshot('market:' + job.label || job.target);
+      ensureGuard().snapshot('market:' + (job.label || job.target));
       ctx.log('market-pending', `执行(${attempts}/${MARKER_MAX_ATTEMPTS}): ${spawnArgs.join(' ')}`);
       const child = spawn(nodeBin, spawnArgs, {
         cwd: ctx.getUserDataDir(),
@@ -286,20 +287,36 @@ export async function processPendingMarketOps(): Promise<void> {
       };
       child.stdout?.on('data', onData);
       child.stderr?.on('data', onData);
+      // 超时强杀：Windows 用 taskkill /T /F（进程可能带孙进程）；POSIX 直接
+      // SIGKILL（未 detached 无进程组可杀，taskkill 不存在 —— 5.3.2 及以前
+      // 无平台分支，Linux 上 spawn ENOENT 的异步 'error' 无人接会崩进程）。
       const timer = setTimeout(() => {
         ctx.log('market-pending', '排队任务超时（5 分钟），强制终止');
-        try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); } catch { /* 已退出 */ }
+        if (!child.pid) return;
+        if (process.platform === 'win32') {
+          const tk = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+          tk.on('error', () => { /* 已退出 */ });
+        } else {
+          try { child.kill('SIGKILL'); } catch { /* 已退出 */ }
+        }
       }, 5 * 60 * 1000);
-      child.on('error', (err) => {
+      // error 与 close 非互斥（spawn 后才发生的 error 会先 error 再 close）：
+      // settled 标志保证收尾（marker + idx + next）只执行一次，否则 attempts
+      // 双计、下一排队任务被跳过。
+      let settled = false;
+      const settle = (ok: boolean, detail: string): void => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         if (getMarketOpChild() === child) setMarketOpChild(null);
-        finishMarketMarker(marker, job, attempts, false, String(err.message));
+        finishMarketMarker(marker, job, attempts, ok, detail);
         idx += 1;
         next().catch(() => {});
+      };
+      child.on('error', (err) => {
+        settle(false, String(err.message));
       });
       child.on('close', async (code) => {
-        clearTimeout(timer);
-        if (getMarketOpChild() === child) setMarketOpChild(null);
         // V4.2：pnpm 封锁构建脚本硬失败时，从输出解析包名、自动写入
         // pnpm-workspace.yaml 的 allowBuilds（兼容旧名 onlyBuiltDependencies）
         // 后重试同一任务一次（不消耗 attempts）。
@@ -313,6 +330,9 @@ export async function processPendingMarketOps(): Promise<void> {
               if (r && r.wrote) {
                 ctx.log('market-pending', `[allowBuilds] 已自动放行 ${r.added.join(', ')}，自动重试`);
                 retriedMarkers.add(marker);
+                settled = true; // 本任务让位重试：不再走 finishMarketMarker
+                clearTimeout(timer);
+                if (getMarketOpChild() === child) setMarketOpChild(null);
                 next().catch(() => {});
                 return;
               }
@@ -321,9 +341,7 @@ export async function processPendingMarketOps(): Promise<void> {
             ctx.log('market-pending', '[allowBuilds] 自动放行失败: ' + String(((err as Error).message) || err));
           }
         }
-        finishMarketMarker(marker, job, attempts, code === 0, tail);
-        idx += 1;
-        next().catch(() => {});
+        settle(code === 0, tail);
       });
     };
     next().catch(() => {});

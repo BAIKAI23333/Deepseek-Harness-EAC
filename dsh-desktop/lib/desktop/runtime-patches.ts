@@ -25,7 +25,7 @@ export interface RuntimePatchesCtx {
 let ctx!: RuntimePatchesCtx;
 export function init(d: RuntimePatchesCtx): void { ctx = d; }
 
-export function runtimePatchRoots(): string[] {
+function runtimePatchRoots(): string[] {
   const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
   return [
     path.join(home, 'profiles', 'node_modules'),

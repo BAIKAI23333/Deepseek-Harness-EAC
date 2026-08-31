@@ -116,6 +116,13 @@ window.__ModuleLoader__.load({
       return t("statusRunning").replace("{port}", String(status.port || ""));
     }
 
+    // qrcode 脚本挂载状态（模块级）：Section 每次重新挂载都会进下面的
+    // effect，旧实现每次都 append 一份同一 src 的 <script> 反复加载。模块级
+    // 只允许一个在途元素；"" 未挂载 / "loading" 在途 / "loaded" 已就绪 /
+    // "failed" 先前 onerror 失败（允许下次挂载重试）。
+    var qrScriptEl = null;
+    var qrScriptState = "";
+
     function Section(props) {
       var t = props.t;
       var [status, setStatus] = react.useState(null);
@@ -135,7 +142,10 @@ window.__ModuleLoader__.load({
           if (!b) return;
           b.status().then(function (r) {
             if (!aliveRef.current) return;
-            setStatus(r && r.ok ? r : r);
+            // 两臂原写法相同恒等 setStatus(r)：状态读取失败（ok:false）时会把
+            // 错误响应对象当状态渲染，statusText 误报「桥已运行」。失败臂置
+            // null 回到未连接态 —— 渲染链 statusText/state/running 均兼容 null。
+            setStatus(r && r.ok ? r : null);
             setError(null);
           }).catch(function (e) {
             if (aliveRef.current) setError(String((e && e.message) || e));
@@ -151,12 +161,31 @@ window.__ModuleLoader__.load({
       react.useEffect(function () {
         if (typeof window === "undefined") return;
         if (typeof window.qrcode !== "undefined" || qrReady) { setQrReady(true); return; }
-        var s = document.createElement("script");
-        s.src = "/plugins/dsh-phone/qrcode.js";
-        s.async = true;
-        s.onload = function () { if (aliveRef.current) setQrReady(true); };
-        s.onerror = function () { if (aliveRef.current) setQrErr(t("qrFailed")); };
-        document.head.appendChild(s);
+        if (qrScriptState === "loaded") { setQrReady(true); return; }
+        var onLoad = function () { qrScriptState = "loaded"; if (aliveRef.current) setQrReady(true); };
+        var onError = function () {
+          qrScriptState = "failed";
+          if (aliveRef.current) setQrErr(t("qrFailed"));
+        };
+        // 在途脚本被外力移出文档（head 重排/皮肤重建）：脱离文档的经典
+        // async script 不再执行，load/error 永不到来 —— 状态复位允许重建，
+        // 否则二维码区永久停在「加载中」且 failed 重试机制不可达。
+        if (qrScriptState === "loading" && qrScriptEl && !qrScriptEl.isConnected) {
+          qrScriptState = "failed";
+        }
+        // 已在加载中：不重复 append，只给本挂载实例补挂同一元素的 load/error
+        // 监听（一元素可多监听），避免重挂载实例错过 onload 永远停在「加载中」。
+        // 首挂或先前 onerror 失败：重建元素重新挂载，失败标记允许重试。
+        if (qrScriptState !== "loading" || !qrScriptEl) {
+          if (qrScriptEl && qrScriptEl.parentNode) qrScriptEl.parentNode.removeChild(qrScriptEl);
+          qrScriptEl = document.createElement("script");
+          qrScriptEl.src = "/plugins/dsh-phone/qrcode.js";
+          qrScriptEl.async = true;
+          qrScriptState = "loading";
+          document.head.appendChild(qrScriptEl);
+        }
+        qrScriptEl.addEventListener("load", onLoad);
+        qrScriptEl.addEventListener("error", onError);
       }, []);
 
       var b = bridge();

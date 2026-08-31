@@ -84,7 +84,9 @@ async function waitForAppReady(client, timeoutMs) {
     try {
       const state = await client.evalJs(`(() => {
         const root = document.querySelector('#root');
-        return { phase: document.querySelector('.wSkVaW_root')?.getAttribute('data-phase') ?? null, hero: !!document.querySelector('.pXSMma_root'), root: !!root };
+        // 0.1.2 起 CSS Modules 哈希前缀随内核版本漂移，改锚稳定契约 data-phase。
+        const phaseEl = document.querySelector('[data-phase]');
+        return { phase: phaseEl ? phaseEl.getAttribute('data-phase') : null, hero: !!document.querySelector('[data-phase="hero"]'), root: !!root };
       })()`);
       if (state && state.root && state.phase !== null) return state;
     } catch { /* 页面还在切换/注入中 */ }
@@ -146,7 +148,8 @@ async function waitForAppReady(client, timeoutMs) {
     await client.call('Emulation.setDeviceMetricsOverride', { width: 1100, height: 470, deviceScaleFactor: 1, mobile: false });
     await sleep(1200);
     const hero = await client.evalJs(`(() => {
-      const card = document.querySelector('.uV2eYG_card'); if (!card) return null;
+      // 0.1.2：输入卡换锚稳定契约 data-composer-card（rc.2 哈希 .uV2eYG_card 已换代）。
+      const card = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]'); if (!card) return null;
       const r = card.getBoundingClientRect();
       return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: innerHeight, topGap: Math.round(r.top - 36), bottomGap: Math.round(innerHeight - r.bottom) };
     })()`);
@@ -173,14 +176,19 @@ async function waitForAppReady(client, timeoutMs) {
     check('C0 关闭首启模态（若有）', modalDismiss === 'none' || modalDismiss === 'dismissed', String(modalDismiss));
     const menu = await client.evalJs(`(async () => {
       const wait = (ms) => new Promise((res) => setTimeout(res, ms));
-      const trailing = document.querySelector('.uV2eYG_trailing'); if (!trailing) return null;
+      // 0.1.2：composer 尾部容器改锚 data-composer-seat / data-composer-card
+      //（rc.2 哈希 .uV2eYG_trailing 已换代）；注入 root 自带 position:relative，
+      // 绝对定位菜单几何不再依赖宿主容器的定位方式。
+      const seat = document.querySelector('[data-composer-seat]') || document.querySelector('[data-composer-card]');
+      if (!seat) return null;
       if (document.getElementById('g3-fake-model-menu')) return { already: true };
       const root = document.createElement('div');
+      root.id = 'g3-fake-model-root';
       root.className = '_7KE1Ra_root';
       root.style.cssText = 'min-width:0;position:relative;margin-left:auto;';
       root.innerHTML = '<button id="g3-fake-trigger" style="width:220px;height:28px;">模型(模拟)</button>' +
-        '<div id="g3-fake-model-menu" class="_7KE1Ra_menu" style="z-index:20;position:absolute;bottom:calc(100% + 8px);right:0;width:280px;height:360px;background:#1b2438;border:1px solid rgba(255,255,255,.35);border-radius:12px;"></div>';
-      trailing.appendChild(root);
+        '<div id="g3-fake-model-menu" class="_7KE1Ra_menu ra1x4W_menu" style="z-index:20;position:absolute;bottom:calc(100% + 8px);right:0;width:280px;height:360px;background:#1b2438;border:1px solid rgba(255,255,255,.35);border-radius:12px;"></div>';
+      seat.appendChild(root);
       await wait(900); // 等 bridge rescue 的 MutationObserver + 翻转生效
       const m = document.getElementById('g3-fake-model-menu');
       const r = m.getBoundingClientRect();
@@ -199,7 +207,7 @@ async function waitForAppReady(client, timeoutMs) {
           onMask: hit ? cls.includes('_mask_') : false,
           hitIsMenu: hit === m || (hit && hit.closest && Boolean(hit.closest('#g3-fake-model-menu'))),
           hitClass: hit ? ((hit.id ? '#' + hit.id : '') + '.' + cls + hit.tagName) : 'null',
-          seatVis: (() => { const s = m.closest('.wSkVaW_composerSeat'); return s ? getComputedStyle(s).visibility : null; })(),
+          seatVis: (() => { const s = m.closest('[data-composer-seat]'); return s ? getComputedStyle(s).visibility : null; })(),
         };
       };
       let p = probeInfo();
@@ -219,7 +227,7 @@ async function waitForAppReady(client, timeoutMs) {
       return {
         flipped, maxH, rect, hitIsMenu: p.hitIsMenu, onMask: p.onMask, hitClass: p.hitClass, seatVis: p.seatVis,
         triggerRect: (() => { const t = document.getElementById('g3-fake-trigger'); if (!t) return null; const r = t.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height) }; })(),
-        trailingRect: (() => { const t = document.querySelector('.uV2eYG_trailing'); if (!t) return null; const r = t.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), visible: getComputedStyle(t).display !== 'none' }; })(),
+        trailingRect: (() => { const t = document.getElementById('g3-fake-model-root'); if (!t) return null; const r = t.getBoundingClientRect(); return { top: Math.round(r.top), bottom: Math.round(r.bottom), visible: getComputedStyle(t).display !== 'none' }; })(),
       };
     })()`);
     check('C1 越界菜单被翻转向下（dsh-popup-flip）', menu && menu.flipped === true, JSON.stringify(menu && { flipped: menu.flipped, maxH: menu.maxH, rect: menu.rect, trigger: menu.triggerRect, trailing: menu.trailingRect }));
@@ -234,10 +242,11 @@ async function waitForAppReady(client, timeoutMs) {
     // 再注入 320px 绝对定位浮层，断言四个时刻都无横向溢出且输入卡完整可见。
     await client.evalJs(`(() => {
       window.__dshOverflowProbe = function (label) {
-        const scrollBody = document.querySelector('.wSkVaW_scrollBody');
+        // 0.1.2：滚动体/输入卡换锚稳定契约（rc.2 哈希 .wSkVaW_scrollBody/.uV2eYG_card 已换代）。
+        const scrollBody = document.querySelector('[data-conversation-scroll]');
         const de = document.documentElement;
         const sw = Math.max(document.body.scrollWidth, de.scrollWidth);
-        const card = document.querySelector('.uV2eYG_card');
+        const card = document.querySelector('[data-phase="hero"] [data-composer-card]') || document.querySelector('[data-composer-card]');
         const cr = card ? card.getBoundingClientRect() : null;
         const panelEl = document.querySelector('.webui-po-panel');
         return {
@@ -263,15 +272,20 @@ async function waitForAppReady(client, timeoutMs) {
     let realHover = !!hoverPoint;
     if (!hoverPoint) {
       const injected = await client.evalJs(`(() => {
-        const trailing = document.querySelector('.uV2eYG_trailing'); if (!trailing) return false;
+        const seat = document.querySelector('[data-composer-seat]') || document.querySelector('[data-composer-card]'); if (!seat) return false;
+        // 注入自带 position:relative 的宿主，绝对定位面板几何不依赖内核容器。
+        const host = document.createElement('div');
+        host.id = 'g3-fake-po-host';
+        host.style.cssText = 'position:relative;display:inline-block;margin-left:auto;';
         const btn = document.createElement('button');
         btn.id = 'g3-fake-po-trigger';
         btn.style.cssText = 'width:28px;height:28px;';
         const panel = document.createElement('div');
         panel.className = 'webui-po-panel webui-po-panel-open';
         panel.style.cssText = 'position:absolute;bottom:calc(100% + 10px);right:0;width:320px;height:200px;background:#1b2438;border:1px solid rgba(255,255,255,.35);border-radius:12px;';
-        trailing.appendChild(btn);
-        trailing.appendChild(panel);
+        host.appendChild(btn);
+        host.appendChild(panel);
+        seat.appendChild(host);
         return true;
       })()`);
       if (injected) {
@@ -292,18 +306,22 @@ async function waitForAppReady(client, timeoutMs) {
     check('D2 悬停提示词优化（面板打开）无横向溢出', during && during.overflowX <= 1 && during.panelOpen === true, JSON.stringify({ realHover, ...during }));
     // 注入式绝对定位浮层（「/」命令菜单同款）：320px 宽向上展开。
     await client.evalJs(`(() => {
-      const trailing = document.querySelector('.uV2eYG_trailing');
-      if (!trailing) return false;
+      const seat = document.querySelector('[data-composer-seat]') || document.querySelector('[data-composer-card]');
+      if (!seat) return false;
+      const host = document.createElement('div');
+      host.id = 'g3-fake-slash-host';
+      host.style.cssText = 'position:relative;display:inline-block;margin-left:auto;';
       const fake = document.createElement('div');
       fake.id = 'g3-fake-slash-menu';
       fake.style.cssText = 'position:absolute;bottom:calc(100% + 10px);right:0;width:320px;height:240px;background:#1b2438;border-radius:12px;z-index:80;';
-      trailing.appendChild(fake);
+      host.appendChild(fake);
+      seat.appendChild(host);
       return true;
     })()`);
     await sleep(300);
     const withFake = await client.evalJs(`window.__dshOverflowProbe('withFake')`);
     check('D4 绝对定位浮层（/ 命令菜单同款）无横向溢出', withFake && withFake.overflowX <= 1, JSON.stringify(withFake));
-    await client.evalJs(`(() => { const f = document.getElementById('g3-fake-slash-menu'); if (f) f.remove(); return true; })()`);
+    await client.evalJs(`(() => { const f = document.getElementById('g3-fake-slash-host'); if (f) f.remove(); return true; })()`);
     if (hoverPoint) {
       await client.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 30, y: 300, button: 'none' });
       await sleep(600);

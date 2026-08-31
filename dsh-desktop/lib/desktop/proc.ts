@@ -93,19 +93,33 @@ export async function killTreeAndWait(
 // sandbox.mode，设置了的用户在写工作区外/经旧会话时仍被 workspace-write
 // 拒绝（issue #196）。DSH_PERMISSION_MODE 由内核 dsh-base/cordis.patch.yml
 // 的 !!js process.env 行消费，注入后 approval 联动降为 never。
+// settings.yaml 的 mtime 记忆化：childEnv 在每次 spawn 前都调，全量读 +
+// yaml.parse settings.yaml 是重复热点；文件未变时复用上次解析结果。
+// TTL 短（5s）：权限选择改动后最迟 5s 内生效，同时吸收同秒多次调用。
+const presetCache: { at: number; mtimeMs: number | null; value: 'danger-full-access' | null } = {
+  at: 0, mtimeMs: null, value: null,
+};
 function userDefaultPreset(): 'danger-full-access' | null {
   try {
     const home = ctx.getDshHome();
     if (!home) return null;
     const file = path.join(home, 'settings.yaml');
-    if (!fs.existsSync(file)) return null;
+    let mtimeMs: number | null = null;
+    try { mtimeMs = fs.statSync(file).mtimeMs; } catch { /* 不存在 */ }
+    const now = Date.now();
+    if (mtimeMs === presetCache.mtimeMs && now - presetCache.at < 5000) return presetCache.value;
+    if (mtimeMs === null) return null;
     const text = fs.readFileSync(file, 'utf8');
     // yaml 随 dsh-settings-file 进入内置依赖树；解析失败宁可返回空
     // （不注入，保持内核默认 workspace-write），也绝不误判成完全访问。
     const yaml = require('yaml');
     const doc = ((yaml.parse && yaml.parse(text)) ?? null) as Record<string, unknown> | null;
     const permission = doc && typeof doc.permission === 'object' ? doc.permission as Record<string, unknown> : null;
-    return permission && permission.defaultPreset === 'danger-full-access' ? 'danger-full-access' : null;
+    const value = permission && permission.defaultPreset === 'danger-full-access' ? 'danger-full-access' : null;
+    presetCache.at = now;
+    presetCache.mtimeMs = mtimeMs;
+    presetCache.value = value;
+    return value;
   } catch {
     return null;
   }
@@ -131,14 +145,23 @@ export function childEnv(): NodeJS.ProcessEnv {
 }
 
 // 等待一个子进程真正退出（taskkill 先优雅后强杀，锁住的 DLL 要等进程
-// 终止才释放）。轮询 tasklist，超时后放行由调用方自行处理。
+// 终止才释放）。'exit' 事件优先（零开销、不阻塞事件循环），tasklist 轮询
+// 兜底覆盖 detached/re-parent 后事件丢失的场景，超时后放行由调用方处理。
 export function waitForProcExit(proc: ChildProcess | null | undefined, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
     if (!proc || !proc.pid) { resolve(); return; }
+    if (proc.exitCode !== null || proc.signalCode !== null) { resolve(); return; }
     const pid = proc.pid;
     const started = Date.now();
+    let pollTimer: NodeJS.Timeout | null = null;
+    const finish = (): void => {
+      if (pollTimer !== null) clearTimeout(pollTimer);
+      resolve();
+    };
+    proc.once('exit', finish);
+    proc.once('error', finish);
     const isAlive = (): boolean => {
-      if (proc.exitCode !== null) return false;
+      if (proc.exitCode !== null || proc.signalCode !== null) return false;
       if (!IS_WIN) {
         try { process.kill(pid, 0); return true; } catch { return false; }
       }
@@ -149,14 +172,15 @@ export function waitForProcExit(proc: ChildProcess | null | undefined, timeoutMs
       } catch { return false; }
     };
     const check = (): void => {
-      if (!isAlive()) { resolve(); return; }
+      if (!isAlive()) { finish(); return; }
       if (Date.now() - started >= timeoutMs) {
         ctx.log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
-        resolve();
+        finish();
         return;
       }
-      setTimeout(check, 200);
+      pollTimer = setTimeout(check, 500);
     };
-    check();
+    // 首轮兜底轮询延后：给 'exit' 事件留出优先到达的窗口。
+    pollTimer = setTimeout(check, 500);
   });
 }

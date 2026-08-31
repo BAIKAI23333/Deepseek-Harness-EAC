@@ -59,6 +59,17 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
     if (manual) await mod.showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
     return;
   }
+  // busy 从入口即置位：5.3.2 及以前置位在弹窗/快照之后，12h 周期检查与
+  // 手动检查并发时可双双通过守卫 → 双弹窗/双下载。
+  clientUpdateBusy = true;
+  try {
+    await runClientUpdateFlowInner(manual);
+  } finally {
+    clientUpdateBusy = false;
+  }
+}
+
+async function runClientUpdateFlowInner(manual: boolean): Promise<void> {
   const ctx = updCtx();
   const settings = updater.loadSettings(ctx) as SettingsLike;
   const platform = mod.getPlatform();
@@ -136,7 +147,6 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
     return;
   }
 
-  clientUpdateBusy = true;
   const progressWin = mod.showUpdateWindow(release.version, 'client');
   const progress = mod.makeUpdateProgressPusher(progressWin);
   try {
@@ -210,7 +220,6 @@ export async function runClientUpdateFlow(manual: boolean): Promise<void> {
       buttons: ['确定'],
     });
   } finally {
-    clientUpdateBusy = false;
     if (progressWin && !progressWin.isDestroyed()) progressWin.destroy();
   }
 }

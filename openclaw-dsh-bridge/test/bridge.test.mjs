@@ -5,8 +5,19 @@
 import assert from "node:assert";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---- 测试隔离（必须在导入插件前）----
+// 插件把桥接数据（session-map.json / wechat-session.json / token.txt /
+// workspace/）落在 DSH_HOME 下：不隔离时每轮测试都会写真实 ~/.dsh，
+// session-map 残留还会让下一轮按映射 resume、mock 键对不上断言崩。
+const testHome = mkdtempSync(join(tmpdir(), "openclaw-bridge-test-"));
+process.env.DSH_HOME = testHome;
+// token.txt 不存在时插件自动生成并写回 —— 同样落在 DSH_HOME 下，已覆盖。
 
 // ---- mock 腾讯 iLink 云（ilinkai.weixin.qq.com 的替身） ----
 const sentMessages = [];
@@ -520,4 +531,5 @@ console.log("\nall " + passed + " checks passed");
 cleanup();
 mockIlink.close();
 mockOpenAi.close();
+try { rmSync(testHome, { recursive: true, force: true }); } catch { /* 尽力清理 */ }
 setTimeout(() => process.exit(0), 800);
