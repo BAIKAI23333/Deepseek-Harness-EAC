@@ -10,8 +10,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 // Windows 补丁两处（均为构建工具脚本，不进任何包产物）：
 //   1. scripts/release/pack.ts  —— 裸 spawn('pnpm') 在 Windows 找不到 .cmd，
 //      改走 pnpmInvocation（npm_execpath + node）；
-//   2. scripts/release/tarball.ts —— GNU tar 把 `D:\...` 当远程 tape 主机，
-//      win32 下加 --force-local。
+//   2. scripts/release/tarball.ts —— tar 走相对路径，GNU tar / bsdtar
+//      均不把 `D:\...` 当远程 tape 主机，避免依赖 --force-local。
 //
 // 前置：pnpm 版本必须等于内核 packageManager 钉住的版本（脚本自校验）。
 // 用法：npm run fetch-kernel [-- <tag>]（默认 dsh-v0.1.2-alpha.1）
@@ -67,7 +67,16 @@ function capture(command, args) {
 function resolveNpmCli() {
     if (process.env.npm_execpath)
         return process.env.npm_execpath;
-    return path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    let dir = path.dirname(process.execPath);
+    for (let depth = 0; depth < 4; depth += 1) {
+        for (const sub of ['node_modules/npm/bin/npm-cli.js', 'lib/node_modules/npm/bin/npm-cli.js']) {
+            const candidate = path.join(dir, sub);
+            if (fs.existsSync(candidate))
+                return candidate;
+        }
+        dir = path.dirname(dir);
+    }
+    throw new Error(`找不到 npm CLI（从 ${path.dirname(process.execPath)} 向上查找失败）`);
 }
 /** 解析 pnpm 的 JS 入口（npm 全局 root 下的 pnpm/bin/pnpm.cjs）。 */
 function resolvePnpmEntry() {
@@ -104,10 +113,7 @@ function main() {
     console.log(`fetch-kernel: 下载 ${url}`);
     run('curl', curlArgs, WORK);
     console.log('fetch-kernel: 解包');
-    const tarArgs = ['-xzf', tgzPath];
-    if (process.platform === 'win32')
-        tarArgs.unshift('--force-local');
-    run('tar', tarArgs, WORK);
+    run('tar', ['-xzf', path.basename(tgzPath)], WORK);
     const srcDir = fs.readdirSync(WORK).find((e) => e.startsWith('deepseek-harness-') && fs.statSync(path.join(WORK, e)).isDirectory());
     if (!srcDir)
         throw new Error('解包后找不到源码目录');
@@ -120,15 +126,24 @@ function main() {
         throw new Error('pack.ts 锚点未命中，上游脚本已变化，需人工评估补丁');
     pack = pack.replace("import { isEntry, runConcurrent } from './process.ts'", "import { pnpmInvocation } from '../pnpm-invocation.ts'\nimport { isEntry, runConcurrent } from './process.ts'").replace(packAnchor, "const invocation = pnpmInvocation(['--dir', member.directory, 'pack', '--pack-destination', destination])\n  await runConcurrent(invocation.command, invocation.args)");
     fs.writeFileSync(packTs, pack);
-    // 补丁 2：tarball.ts 的 tar 盘符问题（win32 加 --force-local）。
+    // 补丁 2：tarball.ts 的 tar 盘符问题（相对路径，GNU tar / bsdtar 通用）。
     const tarballTs = path.join(src, 'scripts', 'release', 'tarball.ts');
     let tarball = fs.readFileSync(tarballTs, 'utf8');
-    const tarAnchors = ["capture('tar', ['-tzf', tarball])", "capture('tar', ['-xOzf', tarball, 'package/package.json'])"];
-    for (const anchor of tarAnchors) {
+    const tarImport = "import { readFileSync } from 'node:fs'";
+    if (!tarball.includes(tarImport))
+        throw new Error('tarball.ts 锚点未命中: import');
+    tarball = tarball.replace(tarImport, "import { readFileSync } from 'node:fs'\nimport { relative } from 'node:path'").replace("import { capture } from './process.ts'", "import { capture } from './process.ts'\n\nfunction tarCmd(tarball: string, ...rest: string[]): string[] {\n  return [...rest, relative(process.cwd(), tarball)]\n}");
+    const tarAnchorList = [
+        "capture('tar', ['-tzf', tarball])",
+        "capture('tar', ['-xOzf', tarball, 'package/package.json'])",
+    ];
+    for (const anchor of tarAnchorList) {
         if (!tarball.includes(anchor))
             throw new Error(`tarball.ts 锚点未命中: ${anchor}`);
-        tarball = tarball.replace(anchor, anchor.replace("capture('tar', [", "capture('tar', [...(process.platform === 'win32' ? ['--force-local'] : []), "));
     }
+    tarball = tarball
+        .replace(tarAnchorList[0], "capture('tar', tarCmd(tarball, '-tzf'))")
+        .replace(tarAnchorList[1], "capture('tar', tarCmd(tarball, '-xOzf', 'package/package.json'))");
     fs.writeFileSync(tarballTs, tarball);
     // git init：lefthook postinstall 等 git 探针在无仓库目录会失败。
     cp.spawnSync('git', ['init', '-q'], { cwd: src });
