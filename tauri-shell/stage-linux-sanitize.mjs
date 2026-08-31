@@ -2,7 +2,7 @@ import { cpSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync 
 import path from 'node:path';
 
 const CLIENT_CSS_REGION_BUILD_PATH =
-  /(^[ \t]*\/\/#region \\0dsh-css:)(?:[A-Za-z]:)?[^\r\n]*?[\\/](deepseek-harness-[^\\/\r\n]+)[\\/](.+)$/gm;
+  /(^[ \t]*\/\/#region \\0dsh-(?:inline-)?css:)(?:[A-Za-z]:)?[^\r\n]*?[\\/](deepseek-harness-[^\\/\r\n]+)[\\/](.+)$/gm;
 
 export function copyKernelCacheForTarget(source, destination, targetPlatform) {
   const buildTree = path.resolve(source, '.build');

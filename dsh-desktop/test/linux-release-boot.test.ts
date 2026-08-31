@@ -53,6 +53,7 @@ test('Linux staging excludes the kernel build tree and removes client build path
     writeFileSync(client, [
       '//#region \\0dsh-css:/home/runner/work/repo/dsh-desktop/vendor/kernel/.build/deepseek-harness-dsh-v0.1.2-alpha.1/packages/example/src/client.css.mjs',
       '//#region \\0dsh-css:D:\\build\\dsh-desktop\\vendor\\kernel\\.build\\deepseek-harness-dsh-v0.1.2-alpha.1\\packages\\example\\src\\client.css.mjs',
+      '//#region \\0dsh-inline-css:/home/runner/work/repo/dsh-desktop/vendor/kernel/.build/deepseek-harness-dsh-v0.1.2-alpha.1/packages/example/src/base.css.mjs',
       'const value = 1;',
     ].join('\n'));
     assert.equal(sanitizeLinuxClientBuildPaths(join(temp, 'node_modules')), 1);
@@ -60,6 +61,7 @@ test('Linux staging excludes the kernel build tree and removes client build path
     assert.doesNotMatch(sanitized, /\/home\/runner/);
     assert.doesNotMatch(sanitized, /D:\\build/);
     assert.match(sanitized, /\\0dsh-css:deepseek-harness-dsh-v0\.1\.2-alpha\.1\/packages\/example/);
+    assert.match(sanitized, /\\0dsh-inline-css:deepseek-harness-dsh-v0\.1\.2-alpha\.1\/packages\/example/);
     assert.equal(sanitizeLinuxClientBuildPaths(join(temp, 'node_modules')), 0);
   } finally {
     rmSync(temp, { recursive: true, force: true });

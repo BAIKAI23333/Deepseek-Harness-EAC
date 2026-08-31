@@ -336,8 +336,6 @@ if (targetPlatform === 'linux') {
     path.join(nmDest, '@koromix', 'koffi-linux-x64', 'musl_x64'),
     { recursive: true, force: true },
   );
-  const sanitizedClients = sanitizeLinuxClientBuildPaths(nmDest);
-  console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
 }
 if (targetPlatform === 'darwin') {
   console.log('[stage] 移除 Darwin 不可达的 Windows/Linux payload');
@@ -372,6 +370,11 @@ const vendoredBashFix = path.join(dd, 'node_modules', '@deepseek-ai', 'dsh-tool-
 if (existsSync(vendoredBashFix)) {
   cpSync(vendoredBashFix, path.join(nmDest, '@deepseek-ai', 'dsh-tool-bash', 'lib', 'index.js'));
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
+}
+
+if (targetPlatform === 'linux') {
+  const sanitizedClients = sanitizeLinuxClientBuildPaths(nmDest);
+  console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
 }
 
 // 捆绑依赖完整性清单（issue #7）：对**最终载荷**（npm ci + 补丁 + vendored
