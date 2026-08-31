@@ -17,6 +17,7 @@ export interface RuntimePathsCtx {
   getUserDataDir(): string;
   isPackaged?(): boolean;
   resourcesPath?(): string;
+  appRoot?(): string;
   platform?: NodeJS.Platform;
 }
 
@@ -49,13 +50,17 @@ function runtimePlatform(): NodeJS.Platform {
   return ctx.platform ?? process.platform;
 }
 
+function appRoot(): string {
+  return typeof ctx.appRoot === 'function' ? ctx.appRoot() : APP_ROOT;
+}
+
 export function nodeExe(): string {
   const executable = nodeExecutableName(runtimePlatform());
   // Tauri 布局：应用树 = <DSH_RESOURCE_ROOT>/dsh-desktop（= APP_ROOT），内置
   // Node 在 vendor/node/ 下；isPackaged 真实判定（5.3.3 批次 D）后打包分支
   // 必须优先走这里 —— 5.3.2 恒 false 掩盖了该差异（打包态其实一直在用
   // 开发分支的路径）。旧 Electron 布局 resources/node/ 保留为兼容候选。
-  const tauriBundled = path.resolve(APP_ROOT, 'vendor', 'node', executable);
+  const tauriBundled = path.resolve(appRoot(), 'vendor', 'node', executable);
   if (isPackaged()) {
     if (fs.existsSync(tauriBundled)) return tauriBundled;
     return path.join(resourcesDir(), 'node', executable);
@@ -64,7 +69,7 @@ export function nodeExe(): string {
 }
 
 export function npmCli(): string {
-  const tauriBundled = path.resolve(APP_ROOT, 'vendor', 'npm', 'bin', 'npm-cli.js');
+  const tauriBundled = path.resolve(appRoot(), 'vendor', 'npm', 'bin', 'npm-cli.js');
   if (isPackaged()) {
     if (fs.existsSync(tauriBundled)) return tauriBundled;
     return path.join(resourcesDir(), 'npm', 'bin', 'npm-cli.js');

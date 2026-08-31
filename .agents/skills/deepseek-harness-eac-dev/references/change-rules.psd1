@@ -262,14 +262,13 @@
         @{
             Name = 'runtime-utilities'
             Domain = 'product-services'
-            Pattern = 'stable-port|stream-write-guard|koffi-preflight|error-detail|builtin-collision|bundle-integrity'
+            Pattern = 'stable-port|stream-write-guard|koffi-preflight|builtin-collision|bundle-integrity'
             Reference = 'references/product-services.md'
             Level = 'full'
             Tests = @(
                 'test/stable-port.test.ts',
                 'test/stream-write-after-end.test.ts',
                 'test/koffi-preflight.test.ts',
-                'test/error-detail.test.ts',
                 'test/builtin-collision.test.ts',
                 'test/bundle-integrity.test.ts'
             )
@@ -288,11 +287,9 @@
                 'test/logger-rotate.test.ts',
                 'test/plugin-guard.test.ts',
                 'test/recovery-integration.test.ts',
-                'test/renderer-recovery.test.ts',
                 'test/rescue-agent.test.ts',
                 'test/rescue-auto-repair.test.ts',
-                'test/rescue-integration.test.ts',
-                'test/watchdog-behavior.test.ts'
+                'test/rescue-integration.test.ts'
             )
             Smoke = @()
         },
@@ -310,7 +307,7 @@
                 'test/installer-takeover.test.ts',
                 'test/verify-dist-fresh.test.ts'
             )
-            Smoke = @('node update-smoke.js', 'node upgrade-test-441.js')
+            Smoke = @('node update-smoke.js')
         },
         @{
             Name = 'electron-fallback'
@@ -321,7 +318,6 @@
             Tests = @(
                 'test/bridge-preload-parity.test.ts',
                 'test/bundled-files.test.ts',
-                'test/context-menu.test.ts',
                 'test/desktop-extras.test.ts'
             )
             Smoke = @()

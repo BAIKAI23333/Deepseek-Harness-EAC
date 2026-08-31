@@ -10,13 +10,14 @@
 // Windows 补丁两处（均为构建工具脚本，不进任何包产物）：
 //   1. scripts/release/pack.ts  —— 裸 spawn('pnpm') 在 Windows 找不到 .cmd，
 //      改走 pnpmInvocation（npm_execpath + node）；
-//   2. scripts/release/tarball.ts —— GNU tar 把 `D:\...` 当远程 tape 主机，
-//      win32 下加 --force-local。
+//   2. scripts/release/tarball.ts —— tar 走相对路径，GNU tar / bsdtar
+//      均不把 `D:\...` 当远程 tape 主机，避免依赖 --force-local。
 //
 // 前置：pnpm 版本必须等于内核 packageManager 钉住的版本（脚本自校验）。
 // 用法：npm run fetch-kernel [-- <tag>]（默认 dsh-v0.1.2-alpha.1）
 
 import fs = require('node:fs');
+import crypto = require('node:crypto');
 import os = require('node:os');
 import path = require('node:path');
 import cp = require('node:child_process');
@@ -25,6 +26,34 @@ const REPO = 'deepseek-ai/deepseek-harness';
 const DEFAULT_TAG = 'dsh-v0.1.2-alpha.1';
 const ROOT = path.resolve(__dirname, '..');
 const WORK = path.join(ROOT, 'vendor', 'kernel', '.build');
+const TMP = path.join(os.tmpdir(), 'dsh-kernel-build');
+
+/** 把 lockfile 里 file:vendor tarball 的 integrity 同步为实际产物 hash。 */
+function syncLockfileIntegrity(dest: string, version: string): void {
+  const lockPath = path.join(ROOT, 'package-lock.json');
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8')) as {
+    packages: Record<string, { resolved?: string; integrity?: string }>;
+  };
+  const prefix = `file:vendor/kernel/${version}/`;
+  let updated = 0;
+  for (const entry of Object.values(lock.packages)) {
+    if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith(prefix)) continue;
+    const file = entry.resolved.slice(prefix.length);
+    const tarball = path.join(dest, file);
+    if (!fs.existsSync(tarball)) {
+      throw new Error(`lockfile 引用的 tarball 不存在: ${tarball}`);
+    }
+    const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(tarball)).digest('base64')}`;
+    if (entry.integrity !== integrity) {
+      entry.integrity = integrity;
+      updated += 1;
+    }
+  }
+  if (updated > 0) {
+    fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  }
+  console.log(`fetch-kernel: 同步 lockfile integrity ${updated} 个（${version}）`);
+}
 
 interface StepEnv {
   npm_execpath?: string;
@@ -48,9 +77,23 @@ function capture(command: string, args: string[]): string {
   return (result.stdout ?? '').trim();
 }
 
+/** 解析 npm 的 JS CLI（避免 Windows 下裸 spawn npm.ps1 导致 ENOENT）。 */
+function resolveNpmCli(): string {
+  if (process.env.npm_execpath) return process.env.npm_execpath;
+  let dir = path.dirname(process.execPath);
+  for (let depth = 0; depth < 4; depth += 1) {
+    for (const sub of ['node_modules/npm/bin/npm-cli.js', 'lib/node_modules/npm/bin/npm-cli.js']) {
+      const candidate = path.join(dir, sub);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    dir = path.dirname(dir);
+  }
+  throw new Error(`找不到 npm CLI（从 ${path.dirname(process.execPath)} 向上查找失败）`);
+}
+
 /** 解析 pnpm 的 JS 入口（npm 全局 root 下的 pnpm/bin/pnpm.cjs）。 */
 function resolvePnpmEntry(): { entry: string; version: string } {
-  const entry = path.join(capture('npm', ['root', '-g']), 'pnpm', 'bin', 'pnpm.cjs');
+  const entry = path.join(capture(process.execPath, [resolveNpmCli(), 'root', '-g']), 'pnpm', 'bin', 'pnpm.cjs');
   if (!fs.existsSync(entry)) {
     throw new Error(`找不到 pnpm 的 JS 入口（${entry}）。请先 npm install -g pnpm@<内核钉住的版本>`);
   }
@@ -66,6 +109,7 @@ function main(): void {
   }
   const dest = path.join(ROOT, 'vendor', 'kernel', version);
   if (fs.existsSync(dest)) {
+    syncLockfileIntegrity(dest, version);
     console.log(`fetch-kernel: 缓存已存在 ${dest}（如需重建请先删除）`);
     return;
   }
@@ -85,9 +129,7 @@ function main(): void {
   run('curl', curlArgs, WORK);
 
   console.log('fetch-kernel: 解包');
-  const tarArgs = ['-xzf', tgzPath];
-  if (process.platform === 'win32') tarArgs.unshift('--force-local');
-  run('tar', tarArgs, WORK);
+  run('tar', ['-xzf', path.basename(tgzPath)], WORK);
   const srcDir = fs.readdirSync(WORK).find((e) => e.startsWith('deepseek-harness-') && fs.statSync(path.join(WORK, e)).isDirectory());
   if (!srcDir) throw new Error('解包后找不到源码目录');
   const src = path.join(WORK, srcDir);
@@ -106,14 +148,28 @@ function main(): void {
   );
   fs.writeFileSync(packTs, pack);
 
-  // 补丁 2：tarball.ts 的 tar 盘符问题（win32 加 --force-local）。
+  // 补丁 2：tarball.ts 的 tar 盘符问题（相对路径，GNU tar / bsdtar 通用）。
   const tarballTs = path.join(src, 'scripts', 'release', 'tarball.ts');
   let tarball = fs.readFileSync(tarballTs, 'utf8');
-  const tarAnchors = ["capture('tar', ['-tzf', tarball])", "capture('tar', ['-xOzf', tarball, 'package/package.json'])"];
-  for (const anchor of tarAnchors) {
+  const tarImport = "import { readFileSync } from 'node:fs'";
+  if (!tarball.includes(tarImport)) throw new Error('tarball.ts 锚点未命中: import');
+  tarball = tarball.replace(
+    tarImport,
+    "import { readFileSync } from 'node:fs'\nimport { relative } from 'node:path'",
+  ).replace(
+    "import { capture } from './process.ts'",
+    "import { capture } from './process.ts'\n\nfunction tarCmd(tarball: string, ...rest: string[]): string[] {\n  return [...rest, relative(process.cwd(), tarball)]\n}",
+  );
+  const tarAnchorList = [
+    "capture('tar', ['-tzf', tarball])",
+    "capture('tar', ['-xOzf', tarball, 'package/package.json'])",
+  ];
+  for (const anchor of tarAnchorList) {
     if (!tarball.includes(anchor)) throw new Error(`tarball.ts 锚点未命中: ${anchor}`);
-    tarball = tarball.replace(anchor, anchor.replace("capture('tar', [", "capture('tar', [...(process.platform === 'win32' ? ['--force-local'] : []), "));
   }
+  tarball = tarball
+    .replace(tarAnchorList[0]!, "capture('tar', tarCmd(tarball, '-tzf'))")
+    .replace(tarAnchorList[1]!, "capture('tar', tarCmd(tarball, '-xOzf', 'package/package.json'))");
   fs.writeFileSync(tarballTs, tarball);
 
   // git init：lefthook postinstall 等 git 探针在无仓库目录会失败。
@@ -126,11 +182,12 @@ function main(): void {
 
   const baseEnv: StepEnv = {
     npm_execpath: pnpm.entry,
-    TEMP: path.join(WORK, 'tmp'),
-    TMP: path.join(WORK, 'tmp'),
+    TEMP: TMP,
+    TMP,
     DSH_CLIENT_COMMIT_HASH: commitSha.slice(0, 7).toLowerCase(),
   };
-  fs.mkdirSync(path.join(WORK, 'tmp'), { recursive: true });
+  fs.rmSync(TMP, { recursive: true, force: true });
+  fs.mkdirSync(TMP, { recursive: true });
 
   console.log('fetch-kernel: pnpm install（首次较慢）');
   run(process.execPath, [pnpm.entry, 'install'], src, baseEnv);
@@ -146,6 +203,7 @@ function main(): void {
     for (const file of fs.readdirSync(from)) fs.copyFileSync(path.join(from, file), path.join(dest, file));
   }
   const count = fs.readdirSync(dest).filter((f) => f.endsWith('.tgz')).length;
+  syncLockfileIntegrity(dest, version);
   console.log(`fetch-kernel: 完成，${count} 个 tarball → ${path.relative(ROOT, dest)}（${os.EOL}接线：npm run gen-kernel-overrides && npm install）`);
 }
 
