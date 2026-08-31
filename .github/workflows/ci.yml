@@ -75,7 +75,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dsh-desktop/vendor/kernel
-          key: dsh-kernel-tarballs-0.1.2-alpha.1
+          key: dsh-kernel-tarballs-0.1.2-alpha.1-${{ hashFiles('dsh-desktop/scripts/fetch-kernel.ts') }}
 
       - name: 安装 pnpm（内核 packageManager 钉定版本）
         run: |
@@ -155,7 +155,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dsh-desktop/vendor/kernel
-          key: dsh-kernel-tarballs-0.1.2-alpha.1
+          key: dsh-kernel-tarballs-0.1.2-alpha.1-${{ hashFiles('dsh-desktop/scripts/fetch-kernel.ts') }}
 
       - name: 安装 pnpm（内核 packageManager 钉定版本）
         run: |

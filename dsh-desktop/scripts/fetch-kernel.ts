@@ -26,6 +26,7 @@ const REPO = 'deepseek-ai/deepseek-harness';
 const DEFAULT_TAG = 'dsh-v0.1.2-alpha.1';
 const ROOT = path.resolve(__dirname, '..');
 const WORK = path.join(ROOT, 'vendor', 'kernel', '.build');
+const TMP = path.join(os.tmpdir(), 'dsh-kernel-build');
 
 /** 把 lockfile 里 file:vendor tarball 的 integrity 同步为实际产物 hash。 */
 function syncLockfileIntegrity(dest: string, version: string): void {
@@ -181,11 +182,12 @@ function main(): void {
 
   const baseEnv: StepEnv = {
     npm_execpath: pnpm.entry,
-    TEMP: path.join(WORK, 'tmp'),
-    TMP: path.join(WORK, 'tmp'),
+    TEMP: TMP,
+    TMP,
     DSH_CLIENT_COMMIT_HASH: commitSha.slice(0, 7).toLowerCase(),
   };
-  fs.mkdirSync(path.join(WORK, 'tmp'), { recursive: true });
+  fs.rmSync(TMP, { recursive: true, force: true });
+  fs.mkdirSync(TMP, { recursive: true });
 
   console.log('fetch-kernel: pnpm install（首次较慢）');
   run(process.execPath, [pnpm.entry, 'install'], src, baseEnv);
