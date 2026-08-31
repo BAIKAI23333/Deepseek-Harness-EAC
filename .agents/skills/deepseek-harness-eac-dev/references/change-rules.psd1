@@ -262,14 +262,13 @@
         @{
             Name = 'runtime-utilities'
             Domain = 'product-services'
-            Pattern = 'stable-port|stream-write-guard|koffi-preflight|error-detail|builtin-collision|bundle-integrity'
+            Pattern = 'stable-port|stream-write-guard|koffi-preflight|builtin-collision|bundle-integrity'
             Reference = 'references/product-services.md'
             Level = 'full'
             Tests = @(
                 'test/stable-port.test.ts',
                 'test/stream-write-after-end.test.ts',
                 'test/koffi-preflight.test.ts',
-                'test/error-detail.test.ts',
                 'test/builtin-collision.test.ts',
                 'test/bundle-integrity.test.ts'
             )
