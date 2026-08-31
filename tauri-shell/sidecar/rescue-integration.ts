@@ -27,9 +27,16 @@ type RescueFn = (...a: unknown[]) => unknown;
 const ra = (): Record<string, RescueFn> => rescueAgent as Record<string, RescueFn>;
 
 let H!: RescueHost;
+export function resolveDesktopRoot(sidecarDir = __dirname): string {
+  const upTwo = path.resolve(sidecarDir, '..', '..', 'dsh-desktop');
+  if (fs.existsSync(path.join(upTwo, 'package.json'))) return upTwo;
+  const upOne = path.resolve(sidecarDir, '..', 'dsh-desktop');
+  if (fs.existsSync(path.join(upOne, 'package.json'))) return upOne;
+  return upTwo;
+}
 const DSH_DESKTOP_ROOT = process.env.DSH_RESOURCE_ROOT
   ? path.join(process.env.DSH_RESOURCE_ROOT, 'dsh-desktop')
-  : path.resolve(__dirname, '..', '..', 'dsh-desktop');
+  : resolveDesktopRoot();
 const rescueAgent: Record<string, unknown> = require(path.join(DSH_DESKTOP_ROOT, 'rescue-agent.js')) as Record<string, unknown>;
 const atomicJson = require(path.join(DSH_DESKTOP_ROOT, 'lib', 'atomic-json.js')) as {
   writeJsonAtomic(file: string, value: unknown): void;
