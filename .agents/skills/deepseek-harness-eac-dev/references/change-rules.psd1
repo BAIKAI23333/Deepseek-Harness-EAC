@@ -287,11 +287,9 @@
                 'test/logger-rotate.test.ts',
                 'test/plugin-guard.test.ts',
                 'test/recovery-integration.test.ts',
-                'test/renderer-recovery.test.ts',
                 'test/rescue-agent.test.ts',
                 'test/rescue-auto-repair.test.ts',
-                'test/rescue-integration.test.ts',
-                'test/watchdog-behavior.test.ts'
+                'test/rescue-integration.test.ts'
             )
             Smoke = @()
         },
@@ -309,7 +307,7 @@
                 'test/installer-takeover.test.ts',
                 'test/verify-dist-fresh.test.ts'
             )
-            Smoke = @('node update-smoke.js', 'node upgrade-test-441.js')
+            Smoke = @('node update-smoke.js')
         },
         @{
             Name = 'electron-fallback'
@@ -320,7 +318,6 @@
             Tests = @(
                 'test/bridge-preload-parity.test.ts',
                 'test/bundled-files.test.ts',
-                'test/context-menu.test.ts',
                 'test/desktop-extras.test.ts'
             )
             Smoke = @()

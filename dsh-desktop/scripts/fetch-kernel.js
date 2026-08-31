@@ -16,6 +16,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 // 前置：pnpm 版本必须等于内核 packageManager 钉住的版本（脚本自校验）。
 // 用法：npm run fetch-kernel [-- <tag>]（默认 dsh-v0.1.2-alpha.1）
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const cp = require("node:child_process");
@@ -23,6 +24,31 @@ const REPO = 'deepseek-ai/deepseek-harness';
 const DEFAULT_TAG = 'dsh-v0.1.2-alpha.1';
 const ROOT = path.resolve(__dirname, '..');
 const WORK = path.join(ROOT, 'vendor', 'kernel', '.build');
+/** 把 lockfile 里 file:vendor tarball 的 integrity 同步为实际产物 hash。 */
+function syncLockfileIntegrity(dest, version) {
+    const lockPath = path.join(ROOT, 'package-lock.json');
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    const prefix = `file:vendor/kernel/${version}/`;
+    let updated = 0;
+    for (const entry of Object.values(lock.packages)) {
+        if (typeof entry.resolved !== 'string' || !entry.resolved.startsWith(prefix))
+            continue;
+        const file = entry.resolved.slice(prefix.length);
+        const tarball = path.join(dest, file);
+        if (!fs.existsSync(tarball)) {
+            throw new Error(`lockfile 引用的 tarball 不存在: ${tarball}`);
+        }
+        const integrity = `sha512-${crypto.createHash('sha512').update(fs.readFileSync(tarball)).digest('base64')}`;
+        if (entry.integrity !== integrity) {
+            entry.integrity = integrity;
+            updated += 1;
+        }
+    }
+    if (updated > 0) {
+        fs.writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    }
+    console.log(`fetch-kernel: 同步 lockfile integrity ${updated} 个（${version}）`);
+}
 function run(command, args, cwd, env) {
     const result = cp.spawnSync(command, args, { cwd, stdio: 'inherit', env: { ...process.env, ...env } });
     if (result.error !== undefined)
@@ -37,9 +63,15 @@ function capture(command, args) {
     }
     return (result.stdout ?? '').trim();
 }
+/** 解析 npm 的 JS CLI（避免 Windows 下裸 spawn npm.ps1 导致 ENOENT）。 */
+function resolveNpmCli() {
+    if (process.env.npm_execpath)
+        return process.env.npm_execpath;
+    return path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+}
 /** 解析 pnpm 的 JS 入口（npm 全局 root 下的 pnpm/bin/pnpm.cjs）。 */
 function resolvePnpmEntry() {
-    const entry = path.join(capture('npm', ['root', '-g']), 'pnpm', 'bin', 'pnpm.cjs');
+    const entry = path.join(capture(process.execPath, [resolveNpmCli(), 'root', '-g']), 'pnpm', 'bin', 'pnpm.cjs');
     if (!fs.existsSync(entry)) {
         throw new Error(`找不到 pnpm 的 JS 入口（${entry}）。请先 npm install -g pnpm@<内核钉住的版本>`);
     }
@@ -54,6 +86,7 @@ function main() {
     }
     const dest = path.join(ROOT, 'vendor', 'kernel', version);
     if (fs.existsSync(dest)) {
+        syncLockfileIntegrity(dest, version);
         console.log(`fetch-kernel: 缓存已存在 ${dest}（如需重建请先删除）`);
         return;
     }
@@ -125,6 +158,7 @@ function main() {
             fs.copyFileSync(path.join(from, file), path.join(dest, file));
     }
     const count = fs.readdirSync(dest).filter((f) => f.endsWith('.tgz')).length;
+    syncLockfileIntegrity(dest, version);
     console.log(`fetch-kernel: 完成，${count} 个 tarball → ${path.relative(ROOT, dest)}（${os.EOL}接线：npm run gen-kernel-overrides && npm install）`);
 }
 try {
