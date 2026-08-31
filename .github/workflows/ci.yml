@@ -71,6 +71,20 @@ jobs:
       - name: 安装 Rust 工具链（stable）
         uses: dtolnay/rust-toolchain@stable
 
+      - name: 缓存 vendored 内核 tarball（fetch-kernel 生成）
+        uses: actions/cache@v4
+        with:
+          path: dsh-desktop/vendor/kernel
+          key: dsh-kernel-tarballs-0.1.2-alpha.1
+
+      - name: 安装 pnpm（内核 packageManager 钉定版本）
+        run: |
+          corepack disable
+          npm install -g pnpm@11.7.0
+
+      - name: 生成 vendored 内核 tarball
+        run: node scripts/fetch-kernel.js
+
       - name: 缓存 cargo 注册表与原生模块构建产物
         uses: actions/cache@v4
         with:
@@ -136,6 +150,20 @@ jobs:
 
       - name: 安装 Rust 工具链（stable）
         uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 vendored 内核 tarball（fetch-kernel 生成）
+        uses: actions/cache@v4
+        with:
+          path: dsh-desktop/vendor/kernel
+          key: dsh-kernel-tarballs-0.1.2-alpha.1
+
+      - name: 安装 pnpm（内核 packageManager 钉定版本）
+        run: |
+          corepack disable
+          npm install -g pnpm@11.7.0
+
+      - name: 生成 vendored 内核 tarball
+        run: node scripts/fetch-kernel.js
 
       - name: 安装依赖并获取 Linux runtime
         run: npm ci && npm run fetch-runtime
