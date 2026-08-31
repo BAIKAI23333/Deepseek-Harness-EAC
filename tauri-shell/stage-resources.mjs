@@ -14,6 +14,7 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
+import { copyKernelCacheForTarget, sanitizeLinuxClientBuildPaths } from './stage-linux-sanitize.mjs';
 import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -306,7 +307,11 @@ if (existsSync(npmCache)) {
 // npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
 const kernelCache = path.join(dd, 'vendor', 'kernel');
 if (existsSync(kernelCache)) {
-  cpSync(kernelCache, path.join(staged, 'dsh-desktop', 'vendor', 'kernel'), { recursive: true });
+  copyKernelCacheForTarget(
+    kernelCache,
+    path.join(staged, 'dsh-desktop', 'vendor', 'kernel'),
+    targetPlatform,
+  );
   console.log('[stage] vendor/kernel 内核 tarball 缓存已拷贝（package.json file: 依赖解析用）');
 } else {
   throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
@@ -331,6 +336,8 @@ if (targetPlatform === 'linux') {
     path.join(nmDest, '@koromix', 'koffi-linux-x64', 'musl_x64'),
     { recursive: true, force: true },
   );
+  const sanitizedClients = sanitizeLinuxClientBuildPaths(nmDest);
+  console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
 }
 if (targetPlatform === 'darwin') {
   console.log('[stage] 移除 Darwin 不可达的 Windows/Linux payload');
