@@ -116,6 +116,176 @@ function patchSettingsPanelResize(): void {
   console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
 }
 
+// 模型目录图片输入开关：llm-pi-ai 已支持模型级 `input: [text, image]`，
+// 但 settings-models 只渲染 id/name/capacity，用户只能手改 YAML。给直接
+// DeepSeek 与通用 pi-ai 两套模型表格都增加行内 switch。关闭时传 undefined，
+// 复用现有 update/patch 删除字段，保留 catalog/defaultInput 的继承语义。
+const MODEL_IMAGE_INPUT_MARKER = 'dsh-desktop-model-image-input';
+const MODEL_SETTINGS_FILE = path.join(
+  root,
+  'node_modules',
+  '@deepseek-ai',
+  'dsh-client-ui-settings-models',
+  'lib',
+  'client.js',
+);
+const MODEL_IMAGE_HELPER_ANCHOR = [
+  '\t\tfunction modelDrafts(value) {',
+  '\t\t\tif (!Array.isArray(value)) return [];',
+  '\t\t\treturn value.map((entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry) ? entry : {});',
+  '\t\t}',
+].join('\n');
+const MODEL_IMAGE_HELPER = [
+  MODEL_IMAGE_HELPER_ANCHOR,
+  '\t\t/** Whether one model explicitly declares native image input. */',
+  '\t\tfunction modelAcceptsImage(model) {',
+  '\t\t\treturn Array.isArray(model["input"]) && model["input"].includes("image");',
+  '\t\t}',
+  '\t\t/** Render the model-level native image-input declaration switch. */',
+  '\t\tfunction ModelImageInputSwitch(props) {',
+  '\t\t\tconst enabled = modelAcceptsImage(props.model);',
+  '\t\t\tconst label = props.t("modelImageInput");',
+  '\t\t\treturn (0, react_jsx_runtime.jsxs)("button", {',
+  '\t\t\t\ttype: "button",',
+  '\t\t\t\trole: "switch",',
+  '\t\t\t\t"aria-checked": enabled,',
+  '\t\t\t\t"aria-label": `${label} ${String(props.index + 1)}`,',
+  '\t\t\t\ttitle: props.t("modelImageInputHint"),',
+  '\t\t\t\tclassName: `${ModelsSection_module_css_default["modelImageSwitch"]}${enabled ? ` ${ModelsSection_module_css_default["modelImageSwitchOn"]}` : ""}`,',
+  '\t\t\t\tdisabled: props.disabled,',
+  '\t\t\t\tonClick: () => {',
+  '\t\t\t\t\tprops.onChange(enabled ? void 0 : ["text", "image"]);',
+  '\t\t\t\t},',
+  '\t\t\t\tchildren: [(0, react_jsx_runtime.jsx)("span", {',
+  '\t\t\t\t\tclassName: ModelsSection_module_css_default["modelImageLabel"],',
+  '\t\t\t\t\tchildren: label',
+  '\t\t\t\t}), (0, react_jsx_runtime.jsx)("span", {',
+  '\t\t\t\t\tclassName: ModelsSection_module_css_default["modelImageTrack"],',
+  '\t\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("span", { className: ModelsSection_module_css_default["modelImageThumb"] })',
+  '\t\t\t\t})]',
+  '\t\t\t});',
+  '\t\t}',
+].join('\n');
+const MODEL_IMAGE_ROW_CSS_RE =
+  /\.([A-Za-z0-9_-]+)_modelRow\{grid-template-columns:minmax\(0,1\.4fr\) minmax\(0,1fr\) auto auto;align-items:center;gap:6px;display:grid\}/;
+const MODEL_IMAGE_DEEPSEEK_ANCHOR = [
+  '\t\t\t\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("button", {',
+  '\t\t\t\t\t\t\t\t\t\ttype: "button",',
+  '\t\t\t\t\t\t\t\t\t\tclassName: ModelsSection_module_css_default["iconButton"],',
+  '\t\t\t\t\t\t\t\t\t\t"aria-label": `${props.t("modelAdvanced")} ${String(index + 1)}`,',
+].join('\n');
+const MODEL_IMAGE_DEEPSEEK_INSERT = [
+  '\t\t\t\t\t\t\t\t\t(0, react_jsx_runtime.jsx)(ModelImageInputSwitch, {',
+  '\t\t\t\t\t\t\t\t\t\tmodel,',
+  '\t\t\t\t\t\t\t\t\t\tindex,',
+  '\t\t\t\t\t\t\t\t\t\tt: props.t,',
+  '\t\t\t\t\t\t\t\t\t\tdisabled: props.disabled,',
+  '\t\t\t\t\t\t\t\t\t\tonChange: (input) => {',
+  '\t\t\t\t\t\t\t\t\t\t\tupdate(index, "input", input);',
+  '\t\t\t\t\t\t\t\t\t\t}',
+  '\t\t\t\t\t\t\t\t\t}),',
+  MODEL_IMAGE_DEEPSEEK_ANCHOR,
+].join('\n');
+const MODEL_IMAGE_GENERIC_ANCHOR = [
+  '\t\t\t\t\t\t\t\t(0, react_jsx_runtime.jsx)("button", {',
+  '\t\t\t\t\t\t\t\t\ttype: "button",',
+  '\t\t\t\t\t\t\t\t\tclassName: ModelsSection_module_css_default["iconButton"],',
+  '\t\t\t\t\t\t\t\t\t"aria-label": `${t("modelAdvanced")} ${index + 1}`,',
+].join('\n');
+const MODEL_IMAGE_GENERIC_INSERT = [
+  '\t\t\t\t\t\t\t\t(0, react_jsx_runtime.jsx)(ModelImageInputSwitch, {',
+  '\t\t\t\t\t\t\t\t\tmodel,',
+  '\t\t\t\t\t\t\t\t\tindex,',
+  '\t\t\t\t\t\t\t\t\tt,',
+  '\t\t\t\t\t\t\t\t\tdisabled,',
+  '\t\t\t\t\t\t\t\t\tonChange: (input) => {',
+  '\t\t\t\t\t\t\t\t\t\tpatch(index, { input });',
+  '\t\t\t\t\t\t\t\t\t}',
+  '\t\t\t\t\t\t\t\t}),',
+  MODEL_IMAGE_GENERIC_ANCHOR,
+].join('\n');
+
+function patchModelImageInputSource(source: string): string | undefined {
+  if (source.includes(MODEL_IMAGE_INPUT_MARKER)) return source;
+  const cssMatch = MODEL_IMAGE_ROW_CSS_RE.exec(source);
+  if (!cssMatch) return undefined;
+  const prefix = cssMatch[1];
+  if (!prefix) return undefined;
+  const mappingAnchor = `\t\t\t"modelRow": "${prefix}_modelRow",`;
+  const enAnchor = '\t\t\tmodelName: "Display name",';
+  const zhAnchor = '\t\t\tmodelName: "显示名称",';
+  const anchors = [
+    MODEL_IMAGE_HELPER_ANCHOR,
+    mappingAnchor,
+    MODEL_IMAGE_DEEPSEEK_ANCHOR,
+    MODEL_IMAGE_GENERIC_ANCHOR,
+    enAnchor,
+    zhAnchor,
+  ];
+  if (anchors.some((anchor) => !source.includes(anchor))) return undefined;
+
+  const rowCss = cssMatch[0].replace(
+    'auto auto;align-items',
+    'auto auto auto;align-items',
+  );
+  const switchCss = [
+    `.${prefix}_modelImageSwitch{height:28px;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;background:0 0;border:0;border-radius:6px;align-items:center;gap:5px;padding:0 4px;font-size:11px;line-height:18px;display:inline-flex;white-space:nowrap;/*${MODEL_IMAGE_INPUT_MARKER}*/}`,
+    `.${prefix}_modelImageSwitch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}`,
+    `.${prefix}_modelImageSwitch:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}`,
+    `.${prefix}_modelImageSwitch:disabled{cursor:default;opacity:.4}`,
+    `.${prefix}_modelImageSwitchOn{color:var(--dsw-alias-label-primary)}`,
+    `.${prefix}_modelImageLabel{display:inline}`,
+    `.${prefix}_modelImageTrack{background:var(--dsw-alias-border-l3);border-radius:8px;flex:none;width:28px;height:16px;padding:2px;display:block}`,
+    `.${prefix}_modelImageThumb{background:var(--dsw-alias-label-primary-foreground);border-radius:50%;width:12px;height:12px;transition:transform .12s;display:block}`,
+    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageTrack{background:var(--dsw-alias-brand-primary)}`,
+    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageThumb{transform:translate(12px)}`,
+    `@media (max-width:760px){.${prefix}_modelImageLabel{display:none}.${prefix}_modelImageSwitch{padding:0 2px}}`,
+  ].join('');
+  const mappings = [
+    mappingAnchor,
+    `\t\t\t"modelImageLabel": "${prefix}_modelImageLabel",`,
+    `\t\t\t"modelImageSwitch": "${prefix}_modelImageSwitch",`,
+    `\t\t\t"modelImageSwitchOn": "${prefix}_modelImageSwitchOn",`,
+    `\t\t\t"modelImageThumb": "${prefix}_modelImageThumb",`,
+    `\t\t\t"modelImageTrack": "${prefix}_modelImageTrack",`,
+  ].join('\n');
+
+  return source
+    .replace(cssMatch[0], rowCss + switchCss)
+    .replace(mappingAnchor, mappings)
+    .replace(MODEL_IMAGE_HELPER_ANCHOR, MODEL_IMAGE_HELPER)
+    .replace(MODEL_IMAGE_DEEPSEEK_ANCHOR, MODEL_IMAGE_DEEPSEEK_INSERT)
+    .replace(MODEL_IMAGE_GENERIC_ANCHOR, MODEL_IMAGE_GENERIC_INSERT)
+    .replace(
+      enAnchor,
+      `${enAnchor}\n\t\t\tmodelImageInput: "Image input",\n\t\t\tmodelImageInputHint: "Enable only when both the model and gateway support image input.",`,
+    )
+    .replace(
+      zhAnchor,
+      `${zhAnchor}\n\t\t\tmodelImageInput: "图片输入",\n\t\t\tmodelImageInputHint: "仅在模型及接口均支持图片输入时开启。",`,
+    );
+}
+
+function patchModelImageInputToggle(targetFile = MODEL_SETTINGS_FILE): boolean {
+  if (!fs.existsSync(targetFile)) {
+    console.log('[patch-deps] dsh-client-ui-settings-models 不存在，跳过');
+    return false;
+  }
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchModelImageInputSource(source);
+  if (patched === source) {
+    console.log('[patch-deps] 模型图片输入开关补丁已应用，跳过');
+    return true;
+  }
+  if (patched === undefined) {
+    console.log('[patch-deps] 模型图片输入开关锚点未命中（上游版本可能已更新），跳过');
+    return false;
+  }
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] 已补丁 settings-models：每个模型可独立声明原生图片输入');
+  return true;
+}
+
 // 函数工具桥接兼容补丁：部分外部工具适配器忽略 JSON Schema 的 required 数组，
 // 把所有 properties 错当成必填。全权限默认策略下不存在可升级的更宽模式，仍
 // 暴露 sandbox_permissions/justification 会让适配器强制提交一条必然失败的同级
@@ -436,6 +606,7 @@ function main(): void {
   patchPickerWorker();
   patchSettingsNavScroll();
   patchSettingsPanelResize();
+  patchModelImageInputToggle();
   patchOptionalEscalationFields();
   patchAgentPresetMenu();
   patchMenuSubmenuScroll();
@@ -447,4 +618,10 @@ if (require.main === module) {
   main();
 }
 
-module.exports = { patchAgentPresetMenu, patchMenuSubmenuScroll, patchClientModulesResolve };
+module.exports = {
+  patchAgentPresetMenu,
+  patchMenuSubmenuScroll,
+  patchClientModulesResolve,
+  patchModelImageInputSource,
+  patchModelImageInputToggle,
+};
