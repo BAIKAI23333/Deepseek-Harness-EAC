@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
 		let react_jsx_runtime = require("react/jsx-runtime");
 		/** Fallback prefs used whenever the settings document is unreachable or malformed. */
 		const SIDEBAR_PREFS_DEFAULTS = {
-			openByDefault: true,
+			openByDefault: false,
 			defaultWidthPercent: 30,
 			autoOpenSubagent: true,
 			autoOpenJobs: true,
@@ -694,6 +694,11 @@ window.__ModuleLoader__.load({
 		function defaultWidthFor(viewport, percent) {
 			return Math.min(viewport, Math.max(280, Math.round(viewport * percent / 100)));
 		}
+		const HOST_SIDEBAR_AUTO_COLLAPSE = 1024;
+		/** Keep automatic restores from shrinking the host below its sidebar breakpoint. */
+		function canRestorePanel(viewport, panelWidth) {
+			return viewport - panelWidth >= HOST_SIDEBAR_AUTO_COLLAPSE;
+		}
 		function loadState(sessionId, prefs) {
 			try {
 				const raw = localStorage.getItem(`${STORAGE_PREFIX}:${sessionId}`);
@@ -705,7 +710,9 @@ window.__ModuleLoader__.load({
 				}
 			} catch {}
 			const viewport = typeof window !== "undefined" ? window.innerWidth : void 0;
-			return makeDefaultState(viewport === void 0 ? 400 : defaultWidthFor(viewport, prefs.defaultWidthPercent), prefs.openByDefault && (viewport === void 0 || !isNarrowWidth(viewport)), prefs.tabsEnabled["explorer"] !== false);
+			const width = viewport === void 0 ? 400 : defaultWidthFor(viewport, prefs.defaultWidthPercent);
+			const panelOpen = prefs.openByDefault && (viewport === void 0 || !isNarrowWidth(viewport) && canRestorePanel(viewport, width));
+			return makeDefaultState(width, panelOpen, prefs.tabsEnabled["explorer"] !== false);
 		}
 		/**
 		* Structural validation of one persisted state. A malformed or stale shape
@@ -740,9 +747,11 @@ window.__ModuleLoader__.load({
 				active: null
 			};
 			const maxWidth = typeof window !== "undefined" ? window.innerWidth : Infinity;
+			const width = Math.max(280, Math.min(record.width, maxWidth));
+			const viewport = typeof window !== "undefined" ? window.innerWidth : void 0;
 			return {
-				panelOpen: record.panelOpen,
-				width: Math.max(280, Math.min(record.width, maxWidth)),
+				panelOpen: record.panelOpen && (viewport === void 0 || canRestorePanel(viewport, width)),
+				width,
 				activePane: typeof record.activePane === "string" ? reid.get(record.activePane) ?? record.activePane : null,
 				nextTerminal: record.nextTerminal,
 				nextBrowser,

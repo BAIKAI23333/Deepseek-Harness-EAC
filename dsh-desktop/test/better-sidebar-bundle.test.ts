@@ -84,6 +84,24 @@ test('vendored plugin ships without TypeScript sources (installer size)', () => 
   assert.equal(existsSync(join(PLUGIN, 'src')), false, 'src/ must not ship in the installer');
 });
 
+test('automatic better-sidebar restores do not collapse the host sidebar', () => {
+  const serverSrc = readFileSync(join(PLUGIN, 'lib', 'index.js'), 'utf8');
+  assert.match(serverSrc, /openByDefault:\s*z\.boolean\(\)\.default\(false\)/,
+    'server preference schema must default openByDefault to false');
+
+  for (const entry of ['client.js', 'client-registry.js']) {
+    const src = readFileSync(join(PLUGIN, 'lib', entry), 'utf8');
+    assert.match(src, /const SIDEBAR_PREFS_DEFAULTS = \{\s*openByDefault:\s*false,/,
+      `${entry} fallback preferences must keep the sidebar closed`);
+    assert.match(src, /const HOST_SIDEBAR_AUTO_COLLAPSE = 1024;/,
+      `${entry} must track the host sidebar auto-collapse breakpoint`);
+    assert.match(src, /return viewport - panelWidth >= HOST_SIDEBAR_AUTO_COLLAPSE;/,
+      `${entry} must preserve enough width for the host layout`);
+    assert.match(src, /panelOpen: record\.panelOpen && \(viewport === void 0 \|\| canRestorePanel\(viewport, width\)\)/,
+      `${entry} must guard persisted open states during session switches`);
+  }
+});
+
 test('lazy client chunks fall back to the plugin resolver when the legacy module global is absent', () => {
   for (const entry of ['client.js', 'client-registry.js']) {
     const src = readFileSync(join(PLUGIN, 'lib', entry), 'utf8');
