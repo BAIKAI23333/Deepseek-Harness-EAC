@@ -46,6 +46,13 @@ const { syncBundledPresets, ensureDefaultAgentPreset } = require('../../preset-s
 const { migrateManagedCompactPresets } = require('../../compact-preset-migrate') as {
   migrateManagedCompactPresets(dir: string, log: (m: string) => void): { status: string; file: string }[];
 };
+const { migrateManagedRouterPersonaPresets } = require('../../router-persona-preset-migrate') as {
+  migrateManagedRouterPersonaPresets(
+    assetsDir: string,
+    presetsDir: string,
+    log: (m: string) => void,
+  ): { status: string; file: string }[];
+};
 const { hasEntryId, removePluginFromPatch } = require('../../scripts/plugin-manager-patch') as {
   hasEntryId(patch: string, id: string): boolean;
   removePluginFromPatch(text: string, id: string): string;
@@ -550,14 +557,16 @@ export function syncCompanionPlugins(): void {
     // preset 不进插件树，坏 preset 不会拖垮启动；已存在则跳过（用户手装
     // 或改过的版本优先），见 preset-sync.js。
     if (platform === 'win32') {
+      const bundledPresetsDir = path.join(APP_ROOT, 'assets', 'agent-presets');
+      const installedPresetsDir = path.join(home, '.agent-presets');
       const presetsSynced = syncBundledPresets(
-        path.join(APP_ROOT, 'assets', 'agent-presets'),
-        path.join(home, '.agent-presets'),
+        bundledPresetsDir,
+        installedPresetsDir,
         (m) => ctx.log('boot', m)
       );
       if (presetsSynced.installed.length) ctx.log('boot', '已安装内置 agent preset: ' + presetsSynced.installed.join(', '));
       const compactPresetResults = migrateManagedCompactPresets(
-        path.join(home, '.agent-presets'),
+        installedPresetsDir,
         (m) => ctx.log('boot', m)
       );
       const compactPresetMigrated = compactPresetResults
@@ -565,6 +574,17 @@ export function syncCompanionPlugins(): void {
         .map((result) => path.basename(path.dirname(result.file)));
       if (compactPresetMigrated.length) {
         ctx.log('boot', '已将内置 agent preset 迁移到 dsh-compact: ' + compactPresetMigrated.join(', '));
+      }
+      const routerPersonaResults = migrateManagedRouterPersonaPresets(
+        bundledPresetsDir,
+        installedPresetsDir,
+        (m) => ctx.log('boot', m)
+      );
+      const routerPersonaMigrated = routerPersonaResults
+        .filter((result) => result.status === 'migrated')
+        .map((result) => path.basename(path.dirname(result.file)));
+      if (routerPersonaMigrated.length) {
+        ctx.log('boot', '已修复内置 Router preset 的人设卡组合: ' + routerPersonaMigrated.join(', '));
       }
       // 默认 preset 指到内置的 anchored-standard（用户已在 settings.yaml 写过
       // default 则一律保留）。失败只降级为官方默认 preset，不影响启动。

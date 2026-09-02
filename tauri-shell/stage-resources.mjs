@@ -43,6 +43,7 @@ const ROOT_FILES = [
   'balance.js', 'session-watcher.js', 'profile-module-heal.js',
   'patch-row-heal.js', 'builtin-collision.js', 'plugin-manager-state.js', 'plugin-guard.js',
   'rescue-agent.js', 'preset-sync.js', 'compact-preset-migrate.js',
+  'router-persona-preset-migrate.js',
   'bundle-integrity.js', 'stable-port.js', 'stream-write-guard.js',
   'shortcut-maintenance.js',
   'host-bootstrap.js',

@@ -239,7 +239,9 @@ test('内置 preset 仅携带 Windows shell 配置', () => {
   }
 });
 
-test('stage-resources ROOT_FILES 包含 preset-sync.js（否则新模块不进安装包）', () => {
+test('stage-resources ROOT_FILES 包含 preset 同步与迁移模块', () => {
   const stage = readFileSync(join(root, '..', 'tauri-shell', 'stage-resources.mjs'), 'utf8');
   assert.match(stage, /'preset-sync\.js'/);
+  assert.match(stage, /'compact-preset-migrate\.js'/);
+  assert.match(stage, /'router-persona-preset-migrate\.js'/);
 });
