@@ -87,6 +87,7 @@ build/*
 /plugin-manager-state.js
 /profile-module-heal.js
 /compact-preset-migrate.js
+/router-persona-preset-migrate.js
 /session-watcher.js
 /patch-row-heal.js
 /shortcut-maintenance.js
