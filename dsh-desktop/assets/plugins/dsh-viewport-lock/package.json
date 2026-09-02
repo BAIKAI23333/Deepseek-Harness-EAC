@@ -1,8 +1,8 @@
 {
   "name": "dsh-viewport-lock",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
-  "description": "Viewport containment for the dsh web UI: document-level scroll clamping plus stable-contract hero centering fallback. Pure client-side CSS, applies in the desktop shell, any browser, and phone clients alike.",
+  "description": "Viewport containment for the dsh web UI: document scroll clamping, stable hero centering, and transparent dynamic composer clipping. Applies in the desktop shell, browsers, and phone clients.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
