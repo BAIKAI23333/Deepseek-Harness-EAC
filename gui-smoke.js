@@ -123,7 +123,15 @@ async function listOrphans() {
 
   try {
     // 1) 主窗 target 出现且导航到真实 Web UI（非 /loading）
-    const main = await waitForTarget((t) => t.type === 'page' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(t.url) && !t.url.includes(`:${CDP_PORT}`), 180000);
+    const main = await waitForTarget((t) => {
+      try {
+        const url = new URL(t.url);
+        return t.type === 'page' && url.hostname === '127.0.0.1'
+          && url.pathname === '/' && Number(url.port) !== CDP_PORT;
+      } catch {
+        return false;
+      }
+    }, 45000);
     const c = cdp(main.webSocketDebuggerUrl);
     await c.ready;
     check('主窗导航到真实 Web UI', true, main.url);

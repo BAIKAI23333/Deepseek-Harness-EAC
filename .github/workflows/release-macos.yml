@@ -88,7 +88,7 @@ jobs:
             dsh-cargo-darwin-arm64-
 
       - name: 安装依赖 + 获取 darwin runtime（vendor node）
-        run: npm ci && npm run fetch-runtime
+        run: npm run ci:install && npm run fetch-runtime
 
       - name: 类型检查（tsc --noEmit 零错误）
         run: npm run typecheck

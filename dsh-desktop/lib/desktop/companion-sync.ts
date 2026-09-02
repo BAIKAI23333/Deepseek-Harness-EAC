@@ -453,14 +453,16 @@ export const RETIRED_BUILTIN_PLUGINS = [
 // 内部函数：外部一律走带版本对齐门控的 retireRemovedBuiltinPluginsGated
 // （issue #74 —— 5.3.2 及以前 sidecar preBootSync 直调无门控版，门控被架空）。
 function retireRemovedBuiltinPlugins(profileDirP: string): void {
+  const patchFile = path.join(profileDirP, 'cordis.patch.yml');
   for (const p of RETIRED_BUILTIN_PLUGINS) {
-    const patchFile = path.join(profileDirP, 'cordis.patch.yml');
     try {
-      const text = fs.readFileSync(patchFile, 'utf8');
-      const patched = removePluginFromPatch(text, p.id);
-      if (patched !== text) {
-        writeFileAtomic(patchFile, patched);
-        ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
+      if (fs.existsSync(patchFile)) {
+        const text = fs.readFileSync(patchFile, 'utf8');
+        const patched = removePluginFromPatch(text, p.id);
+        if (patched !== text) {
+          writeFileAtomic(patchFile, patched);
+          ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
+        }
       }
     } catch (err) {
       ctx.log('boot', `清理退役内置插件 ${p.id} 行失败: ${String(((err as Error).message) || err)}`);

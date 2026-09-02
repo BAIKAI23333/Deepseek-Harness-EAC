@@ -43,3 +43,10 @@ test('tool-vision and settings-nav-custom are in the retired list', () => {
     assert.match(slice, new RegExp(`id:\\s*'${id}'`), `${id} 应保持退役登记`);
   }
 });
+
+test('first-run cleanup treats a missing patch file as empty state', () => {
+  assert.match(
+    src,
+    /if \(fs\.existsSync\(patchFile\)\) \{\s*const text = fs\.readFileSync\(patchFile, 'utf8'\)/,
+  );
+});

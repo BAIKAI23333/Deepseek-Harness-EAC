@@ -88,7 +88,7 @@ jobs:
 
       - name: 安装依赖
         working-directory: dsh-desktop
-        run: npm ci
+        run: npm run ci:install
 
       - name: 获取内置运行时（node.exe + npm CLI）
         run: npm run fetch-runtime
@@ -183,7 +183,7 @@ jobs:
 
       - name: 安装依赖并获取 Linux runtime
         run: |
-          npm ci
+          npm run ci:install
           npm run fetch-runtime
 
       - name: 写入发布版本号
