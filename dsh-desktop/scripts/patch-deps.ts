@@ -120,7 +120,8 @@ function patchSettingsPanelResize(): void {
 // 但 settings-models 只渲染 id/name/capacity，用户只能手改 YAML。给直接
 // DeepSeek 与通用 pi-ai 两套模型表格都增加行内 switch。关闭时传 undefined，
 // 复用现有 update/patch 删除字段，保留 catalog/defaultInput 的继承语义。
-const MODEL_IMAGE_INPUT_MARKER = 'dsh-desktop-model-image-input';
+const MODEL_IMAGE_INPUT_MARKER_V1 = 'dsh-desktop-model-image-input';
+const MODEL_IMAGE_INPUT_MARKER = 'dsh-desktop-model-image-input-v2';
 const MODEL_SETTINGS_FILE = path.join(
   root,
   'node_modules',
@@ -135,7 +136,7 @@ const MODEL_IMAGE_HELPER_ANCHOR = [
   '\t\t\treturn value.map((entry) => typeof entry === "object" && entry !== null && !Array.isArray(entry) ? entry : {});',
   '\t\t}',
 ].join('\n');
-const MODEL_IMAGE_HELPER = [
+const MODEL_IMAGE_HELPER_V1 = [
   MODEL_IMAGE_HELPER_ANCHOR,
   '\t\t/** Whether one model explicitly declares native image input. */',
   '\t\tfunction modelAcceptsImage(model) {',
@@ -163,6 +164,34 @@ const MODEL_IMAGE_HELPER = [
   '\t\t\t\t\tclassName: ModelsSection_module_css_default["modelImageTrack"],',
   '\t\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("span", { className: ModelsSection_module_css_default["modelImageThumb"] })',
   '\t\t\t\t})]',
+  '\t\t\t});',
+  '\t\t}',
+].join('\n');
+const MODEL_IMAGE_HELPER = [
+  MODEL_IMAGE_HELPER_ANCHOR,
+  '\t\t/** Whether one model explicitly declares native image input. */',
+  '\t\tfunction modelAcceptsImage(model) {',
+  '\t\t\treturn Array.isArray(model["input"]) && model["input"].includes("image");',
+  '\t\t}',
+  '\t\t/** Render the model-level native image-input declaration switch. */',
+  '\t\tfunction ModelImageInputSwitch(props) {',
+  '\t\t\tconst enabled = modelAcceptsImage(props.model);',
+  '\t\t\tconst label = props.t("modelImageInput");',
+  '\t\t\treturn (0, react_jsx_runtime.jsx)("button", {',
+  '\t\t\t\ttype: "button",',
+  '\t\t\t\trole: "switch",',
+  '\t\t\t\t"aria-checked": enabled,',
+  '\t\t\t\t"aria-label": `${label} ${String(props.index + 1)}`,',
+  '\t\t\t\ttitle: props.t("modelImageInputHint"),',
+  '\t\t\t\tclassName: `${ModelsSection_module_css_default["modelImageSwitch"]}${enabled ? ` ${ModelsSection_module_css_default["modelImageSwitchOn"]}` : ""}`,',
+  '\t\t\t\tdisabled: props.disabled,',
+  '\t\t\t\tonClick: () => {',
+  '\t\t\t\t\tprops.onChange(enabled ? void 0 : ["text", "image"]);',
+  '\t\t\t\t},',
+  '\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("span", {',
+  '\t\t\t\t\tclassName: ModelsSection_module_css_default["modelImageTrack"],',
+  '\t\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("span", { className: ModelsSection_module_css_default["modelImageThumb"] })',
+  '\t\t\t\t})',
   '\t\t\t});',
   '\t\t}',
 ].join('\n');
@@ -205,8 +234,57 @@ const MODEL_IMAGE_GENERIC_INSERT = [
   MODEL_IMAGE_GENERIC_ANCHOR,
 ].join('\n');
 
+function modelImageSwitchCssV1(prefix: string): string {
+  return [
+    `.${prefix}_modelImageSwitch{height:28px;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;background:0 0;border:0;border-radius:6px;align-items:center;gap:5px;padding:0 4px;font-size:11px;line-height:18px;display:inline-flex;white-space:nowrap;/*${MODEL_IMAGE_INPUT_MARKER_V1}*/}`,
+    `.${prefix}_modelImageSwitch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}`,
+    `.${prefix}_modelImageSwitch:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}`,
+    `.${prefix}_modelImageSwitch:disabled{cursor:default;opacity:.4}`,
+    `.${prefix}_modelImageSwitchOn{color:var(--dsw-alias-label-primary)}`,
+    `.${prefix}_modelImageLabel{display:inline}`,
+    `.${prefix}_modelImageTrack{background:var(--dsw-alias-border-l3);border-radius:8px;flex:none;width:28px;height:16px;padding:2px;display:block}`,
+    `.${prefix}_modelImageThumb{background:var(--dsw-alias-label-primary-foreground);border-radius:50%;width:12px;height:12px;transition:transform .12s;display:block}`,
+    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageTrack{background:var(--dsw-alias-brand-primary)}`,
+    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageThumb{transform:translate(12px)}`,
+    `@media (max-width:760px){.${prefix}_modelImageLabel{display:none}.${prefix}_modelImageSwitch{padding:0 2px}}`,
+  ].join('');
+}
+
+function modelImageSwitchCss(prefix: string): string {
+  const active = 'var(--dsw-alias-state-success-primary,var(--dsw-alias-brand-primary))';
+  return [
+    `.${prefix}_modelImageSwitch{box-sizing:border-box;width:34px;height:28px;cursor:pointer;background:transparent;border:0;border-radius:6px;justify-content:center;align-items:center;padding:0 2px;display:inline-flex;/*${MODEL_IMAGE_INPUT_MARKER}*/}`,
+    `.${prefix}_modelImageSwitch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}`,
+    `.${prefix}_modelImageSwitch:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}`,
+    `.${prefix}_modelImageSwitch:disabled{cursor:default;opacity:.4}`,
+    `.${prefix}_modelImageTrack{box-sizing:border-box;background:transparent;border:1px solid var(--dsw-alias-border-l3);border-radius:8px;flex:none;width:30px;height:16px;transition:background-color .12s,border-color .12s;display:block;position:relative}`,
+    `.${prefix}_modelImageThumb{background:var(--dsw-alias-label-tertiary);border-radius:50%;width:10px;height:10px;transition:background-color .12s,transform .12s;display:block;position:absolute;top:2px;left:2px}`,
+    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageTrack{background:${active};border-color:${active}}`,
+    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageThumb{background:var(--dsw-alias-label-primary-foreground,var(--dsw-alias-bg-layer-1));transform:translate(14px)}`,
+    `@media (prefers-reduced-motion:reduce){.${prefix}_modelImageTrack,.${prefix}_modelImageThumb{transition:none}}`,
+  ].join('');
+}
+
+function upgradeModelImageInputSource(source: string): string | undefined {
+  const prefixMatch = new RegExp(
+    `\\.([A-Za-z0-9_-]+)_modelImageSwitch\\{[^}]*\\/\\*${MODEL_IMAGE_INPUT_MARKER_V1}\\*\\/\\}`,
+  ).exec(source);
+  const prefix = prefixMatch?.[1];
+  if (!prefix) return undefined;
+  const oldCss = modelImageSwitchCssV1(prefix);
+  const oldLabelMapping = `\n\t\t\t"modelImageLabel": "${prefix}_modelImageLabel",`;
+  if (!source.includes(oldCss) || !source.includes(MODEL_IMAGE_HELPER_V1)) return undefined;
+  return source
+    .replace(oldCss, modelImageSwitchCss(prefix))
+    .replace(oldLabelMapping, '')
+    .replace(MODEL_IMAGE_HELPER_V1, MODEL_IMAGE_HELPER);
+}
+
 function patchModelImageInputSource(source: string): string | undefined {
   if (source.includes(MODEL_IMAGE_INPUT_MARKER)) return source;
+  if (source.includes(`/*${MODEL_IMAGE_INPUT_MARKER_V1}*/`)) {
+    return upgradeModelImageInputSource(source);
+  }
   const cssMatch = MODEL_IMAGE_ROW_CSS_RE.exec(source);
   if (!cssMatch) return undefined;
   const prefix = cssMatch[1];
@@ -228,22 +306,8 @@ function patchModelImageInputSource(source: string): string | undefined {
     'auto auto;align-items',
     'auto auto auto;align-items',
   );
-  const switchCss = [
-    `.${prefix}_modelImageSwitch{height:28px;color:var(--dsw-alias-label-tertiary);font:inherit;cursor:pointer;background:0 0;border:0;border-radius:6px;align-items:center;gap:5px;padding:0 4px;font-size:11px;line-height:18px;display:inline-flex;white-space:nowrap;/*${MODEL_IMAGE_INPUT_MARKER}*/}`,
-    `.${prefix}_modelImageSwitch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}`,
-    `.${prefix}_modelImageSwitch:focus-visible{box-shadow:0 0 0 2px var(--dsw-alias-border-l3);outline:none}`,
-    `.${prefix}_modelImageSwitch:disabled{cursor:default;opacity:.4}`,
-    `.${prefix}_modelImageSwitchOn{color:var(--dsw-alias-label-primary)}`,
-    `.${prefix}_modelImageLabel{display:inline}`,
-    `.${prefix}_modelImageTrack{background:var(--dsw-alias-border-l3);border-radius:8px;flex:none;width:28px;height:16px;padding:2px;display:block}`,
-    `.${prefix}_modelImageThumb{background:var(--dsw-alias-label-primary-foreground);border-radius:50%;width:12px;height:12px;transition:transform .12s;display:block}`,
-    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageTrack{background:var(--dsw-alias-brand-primary)}`,
-    `.${prefix}_modelImageSwitchOn .${prefix}_modelImageThumb{transform:translate(12px)}`,
-    `@media (max-width:760px){.${prefix}_modelImageLabel{display:none}.${prefix}_modelImageSwitch{padding:0 2px}}`,
-  ].join('');
   const mappings = [
     mappingAnchor,
-    `\t\t\t"modelImageLabel": "${prefix}_modelImageLabel",`,
     `\t\t\t"modelImageSwitch": "${prefix}_modelImageSwitch",`,
     `\t\t\t"modelImageSwitchOn": "${prefix}_modelImageSwitchOn",`,
     `\t\t\t"modelImageThumb": "${prefix}_modelImageThumb",`,
@@ -251,7 +315,7 @@ function patchModelImageInputSource(source: string): string | undefined {
   ].join('\n');
 
   return source
-    .replace(cssMatch[0], rowCss + switchCss)
+    .replace(cssMatch[0], rowCss + modelImageSwitchCss(prefix))
     .replace(mappingAnchor, mappings)
     .replace(MODEL_IMAGE_HELPER_ANCHOR, MODEL_IMAGE_HELPER)
     .replace(MODEL_IMAGE_DEEPSEEK_ANCHOR, MODEL_IMAGE_DEEPSEEK_INSERT)
