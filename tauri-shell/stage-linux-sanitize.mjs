@@ -8,11 +8,14 @@ export function copyKernelCacheForTarget(source, destination, targetPlatform) {
   const buildTree = path.resolve(source, '.build');
   cpSync(source, destination, {
     recursive: true,
-    filter: (entry) => targetPlatform !== 'linux' || path.resolve(entry) !== buildTree,
+    // .build is the package-generation workspace, not a runtime cache. Shipping
+    // it adds tens of thousands of pnpm files and can overflow tauri-build while
+    // it recursively emits cargo:rerun-if-changed entries on Windows.
+    filter: (entry) => path.resolve(entry) !== buildTree,
   });
 }
 
-export function sanitizeLinuxClientBuildPaths(nodeModules) {
+export function sanitizeClientBuildPaths(nodeModules) {
   const scope = path.join(nodeModules, '@deepseek-ai');
   if (!existsSync(scope)) return 0;
 

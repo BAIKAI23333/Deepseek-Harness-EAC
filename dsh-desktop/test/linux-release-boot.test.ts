@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   copyKernelCacheForTarget,
-  sanitizeLinuxClientBuildPaths,
+  sanitizeClientBuildPaths,
 } from '../../tauri-shell/stage-linux-sanitize.mjs';
 
 const root = fileURLToPath(new URL('../..', import.meta.url));
@@ -35,7 +35,7 @@ test('Linux releases rebuild the kernel cache from a clean checkout', () => {
   assert.match(linuxRelease, /准备内核依赖缓存[\s\S]*pnpm@11\.7\.0[\s\S]*fetch-kernel\.js/);
 });
 
-test('Linux staging excludes the kernel build tree and removes client build paths', () => {
+test('all staging targets exclude the kernel build tree and remove client build paths', () => {
   const temp = mkdtempSync(join(tmpdir(), 'dsh-linux-stage-'));
   try {
     const kernel = join(temp, 'kernel');
@@ -48,6 +48,11 @@ test('Linux staging excludes the kernel build tree and removes client build path
     assert.equal(existsSync(join(stagedKernel, '.build')), false);
     assert.equal(existsSync(join(stagedKernel, '0.1.2-alpha.1', 'package.tgz')), true);
 
+    const stagedWindowsKernel = join(temp, 'staged-windows-kernel');
+    copyKernelCacheForTarget(kernel, stagedWindowsKernel, 'win32');
+    assert.equal(existsSync(join(stagedWindowsKernel, '.build')), false);
+    assert.equal(existsSync(join(stagedWindowsKernel, '0.1.2-alpha.1', 'package.tgz')), true);
+
     const client = join(temp, 'node_modules', '@deepseek-ai', 'example', 'lib', 'client.js');
     mkdirSync(join(temp, 'node_modules', '@deepseek-ai', 'example', 'lib'), { recursive: true });
     writeFileSync(client, [
@@ -56,13 +61,13 @@ test('Linux staging excludes the kernel build tree and removes client build path
       '//#region \\0dsh-inline-css:/home/runner/work/repo/dsh-desktop/vendor/kernel/.build/deepseek-harness-dsh-v0.1.2-alpha.1/packages/example/src/base.css.mjs',
       'const value = 1;',
     ].join('\n'));
-    assert.equal(sanitizeLinuxClientBuildPaths(join(temp, 'node_modules')), 1);
+    assert.equal(sanitizeClientBuildPaths(join(temp, 'node_modules')), 1);
     const sanitized = readFileSync(client, 'utf8');
     assert.doesNotMatch(sanitized, /\/home\/runner/);
     assert.doesNotMatch(sanitized, /D:\\build/);
     assert.match(sanitized, /\\0dsh-css:deepseek-harness-dsh-v0\.1\.2-alpha\.1\/packages\/example/);
     assert.match(sanitized, /\\0dsh-inline-css:deepseek-harness-dsh-v0\.1\.2-alpha\.1\/packages\/example/);
-    assert.equal(sanitizeLinuxClientBuildPaths(join(temp, 'node_modules')), 0);
+    assert.equal(sanitizeClientBuildPaths(join(temp, 'node_modules')), 0);
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

@@ -24,6 +24,9 @@ allowBuilds 放行；已下载插件更新面板 + 一键全部/逐个更新 + �
 排队消费对 update 类任务遗漏）；本地链接（link:/file:）插件从上游接管更新
 （junction EPERM 处理 + 失败回滚）；24h 发布保护期过滤；市场自身经官方
 内置插件更新自更新）→
+内置 DSH Composer Dynamic Island 2.1.0（says693，MIT）：作为推荐配套插件
+同步到独立 web-desktop profile；补齐 Web client loader 依赖元数据、双语文档
+复制和注册/隐私/打包契约测试；运行时代码保持上游提交原样）→
 内置 VCP 视觉通感插件（dsh-raw-html 0.6.0：消息 HTML 渲染为界面 +
 KaTeX / Mermaid / 内置 7 款 OFL 书法字体，默认开启；渲染引擎前端补丁由
 patch-deps 随构建自动应用；profile bundles 播种让存量用户升级即默认启用）→
@@ -43,6 +46,25 @@ patch-deps 随构建自动应用；profile bundles 播种让存量用户升级�
 next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官方内核兼容范围，
 官方版本升级自动检出并一键迁移/回滚 —— 核心在 L2 功能包引擎 + CLI，
 交互集成进 dsh-unified-market 插件；详见下方「功能包体系（Feature Pack）」批次）
+
+## 5.3.6（内置输入灵动岛与分发契约补强）· 2026-09-03
+
+- 内置 `dsh-composer-dynamic-island` 2.1.0（says693，MIT），作为推荐插件
+  同步到独立 `web-desktop` profile；不修改 DSH 内核与插件运行时代码。
+- 为 EAC Web loader 补齐 React、Settings 与 Slots 的加载依赖元数据。
+- 插件复制清单新增 Community v0.15 manifest、`docs/`、EAC 适配说明与
+  `README.zh-CN.md`，保证审计边界、许可证和双语文档随 profile 分发。
+- 新增注册、推荐状态、loader、隐私边界和 profile 完整复制回归测试。
+- `boot-smoke.js` 与 `gui-smoke.js` 同时隔离 `DSH_HOME`、HOME/USERPROFILE、
+  APPDATA/LOCALAPPDATA 与 XDG 配置目录，并关闭更新和快捷方式副作用；修复测试
+  只隔离 DSH_HOME、仍可能读写真实桌面配置的审计缺口。
+- 依赖审计修复 `glob` GHSA-5j98-mcp5-4vw2（钉到 10.5.0）与 `qs`
+  GHSA-x5fp-wj9c-mxmx / GHSA-4mjr-xmp4-gh2g（钉到 6.16.0）；内核 override
+  生成器改为保留非 `@deepseek-ai/*` 的应用安全钉，避免重建时静默回退；
+  同时过滤 `vendor/kernel/.build` 工作目录，修复成功拉取内核后无参生成器误报
+  “多个版本”并阻断安装的问题。
+- 安装器不再于 PREINSTALL 无确认递归删除 `~/.dsh/models/dsh-stt`；该目录可能
+  被 CLI 或其他产品共享，现仅清理精确的退役插件配置，模型缓存留给用户主动处置。
 
 ## 5.3.5（本版：全库 bug 大扫除 —— 壳韧性/安全围栏/更新器/原子写/插件泄漏 45 项根治 + 复审接续 18 项）· 2026-08-30
 

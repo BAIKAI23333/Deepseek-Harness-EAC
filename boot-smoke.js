@@ -1,19 +1,48 @@
 'use strict';
-// P2 boot.start 冒烟驱动（一次性）：临时 DSH_HOME 下完整走
-// 前置准备 → spawn dsh web → webUrl → HTTP 探活 → 优雅关停。
+// P2 boot.start 冒烟驱动（一次性）：在临时 DSH_HOME、用户主目录与
+// APPDATA/LOCALAPPDATA/XDG 配置边界下完整走前置准备 → spawn dsh web →
+// webUrl → HTTP 探活 → 优雅关停，绝不读取或改写真实用户数据。
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 
 const repo = path.resolve(__dirname);
-const tmpHome = path.join(repo, 'tmp-p2boot', 'dsh-home');
-fs.mkdirSync(tmpHome, { recursive: true });
+const isolatedRoot = path.join(repo, 'tmp-p2boot', 'boot-isolated');
+const tmpHome = path.join(isolatedRoot, 'dsh-home');
+const tmpAppData = path.join(isolatedRoot, 'appdata');
+const tmpLocalAppData = path.join(isolatedRoot, 'localappdata');
+const tmpXdgConfig = path.join(isolatedRoot, 'xdg-config');
+const tmpProfile = path.join(isolatedRoot, 'home');
+const tmpUserData = process.platform === 'win32'
+  ? path.join(tmpAppData, 'Deepseek Harness EAC')
+  : process.platform === 'darwin'
+    ? path.join(tmpProfile, 'Library', 'Application Support', 'deepseek-harness-eac')
+    : path.join(tmpXdgConfig, 'deepseek-harness-eac');
+fs.rmSync(isolatedRoot, { recursive: true, force: true });
+for (const dir of [tmpHome, tmpAppData, tmpLocalAppData, tmpXdgConfig, tmpProfile, tmpUserData]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+fs.writeFileSync(path.join(tmpUserData, 'settings.json'), JSON.stringify({ pluginOnboardingDone: true }, null, 2));
+const isolatedEnv = {
+  ...process.env,
+  DSH_HOME: tmpHome,
+  HOME: tmpProfile,
+  USERPROFILE: tmpProfile,
+  APPDATA: tmpAppData,
+  LOCALAPPDATA: tmpLocalAppData,
+  XDG_CONFIG_HOME: tmpXdgConfig,
+  DSH_DESKTOP_SKIP_AUTO_UPDATE: '1',
+  DSH_DESKTOP_SKIP_CLIENT_UPDATE: '1',
+  DSH_DESKTOP_SKIP_AGENT_UPDATE: '1',
+  DSH_DESKTOP_SKIP_PLUGIN_UPDATE: '1',
+  DSH_DESKTOP_TEST_NO_SHORTCUTS: '1',
+};
 
 const node = process.execPath;
 const sidecar = path.join(repo, 'tauri-shell', 'sidecar', 'server.js');
 const child = spawn(node, [sidecar], {
-  env: { ...process.env, DSH_HOME: tmpHome },
+  env: isolatedEnv,
   stdio: ['pipe', 'pipe', 'inherit'],
 });
 

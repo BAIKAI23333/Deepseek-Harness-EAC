@@ -14,7 +14,8 @@ import { execSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
-import { copyKernelCacheForTarget, sanitizeLinuxClientBuildPaths } from './stage-linux-sanitize.mjs';
+import { copyKernelCacheForTarget, sanitizeClientBuildPaths } from './stage-linux-sanitize.mjs';
+import { absolutizeKernelFileReferences } from './stage-kernel-manifest.mjs';
 import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -321,7 +322,21 @@ if (existsSync(kernelCache)) {
 console.log('[stage] 生产 node_modules（npm ci --omit=dev，首次较慢）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
 if (!keepStagedNm) {
-  execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: path.join(staged, 'dsh-desktop'), stdio: 'inherit' });
+  const stagedDesktop = path.join(staged, 'dsh-desktop');
+  const stagedKernel = path.join(stagedDesktop, 'vendor', 'kernel');
+  const manifests = ['package.json', 'package-lock.json'].map((name) => path.join(stagedDesktop, name));
+  const originals = new Map(manifests.map((manifest) => [manifest, readFileSync(manifest, 'utf8')]));
+  try {
+    // npm 11 会把 overrides 里的相对 file: 依赖基于传递依赖目录解析，继而
+    // 错找 node_modules/<pkg>/vendor/kernel。安装期改为绝对 staging 路径；
+    // finally 恢复相对清单，避免把构建机路径写进最终载荷。
+    for (const [manifest, source] of originals) {
+      writeFileSync(manifest, absolutizeKernelFileReferences(source, stagedKernel));
+    }
+    execSync('npm ci --omit=dev --no-audit --no-fund', { cwd: stagedDesktop, stdio: 'inherit' });
+  } finally {
+    for (const [manifest, source] of originals) writeFileSync(manifest, source);
+  }
 }
 
 if (targetPlatform === 'linux') {
@@ -373,10 +388,8 @@ if (existsSync(vendoredBashFix)) {
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
 }
 
-if (targetPlatform === 'linux') {
-  const sanitizedClients = sanitizeLinuxClientBuildPaths(nmDest);
-  console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
-}
+const sanitizedClients = sanitizeClientBuildPaths(nmDest);
+console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
 
 // 捆绑依赖完整性清单（issue #7）：对**最终载荷**（npm ci + 补丁 + vendored
 // 回填之后）逐包计文件数，落 bundle-manifest.json。启动期 static-preview.
