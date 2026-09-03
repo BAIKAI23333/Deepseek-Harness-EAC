@@ -43,6 +43,13 @@ test('Windows releases rebuild the kernel cache before installing dependencies',
   );
 });
 
+test('Windows releases fetch Tauri crates before staging WebView2Loader.dll', () => {
+  const fetchTauriCrates = windowsRelease.indexOf('cargo fetch --locked --target x86_64-pc-windows-msvc');
+  const stageResources = windowsRelease.indexOf('node ../tauri-shell/stage-resources.mjs');
+  assert.ok(fetchTauriCrates >= 0, 'Windows release must fetch the locked Tauri dependency graph');
+  assert.ok(stageResources > fetchTauriCrates, 'Tauri crates must be available before resources are staged');
+});
+
 test('all staging targets exclude the kernel build tree and remove client build paths', () => {
   const temp = mkdtempSync(join(tmpdir(), 'dsh-linux-stage-'));
   try {
