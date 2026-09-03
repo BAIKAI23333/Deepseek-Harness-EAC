@@ -20,7 +20,11 @@ const PLUGIN = join(ROOT, 'assets', 'plugins', 'dsh-better-sidebar');
 
 test('dsh-better-sidebar plugin package is vendored with prebuilt lib', () => {
   const pkg = JSON.parse(readFileSync(join(PLUGIN, 'package.json'), 'utf8'));
+  const manifest = JSON.parse(readFileSync(join(PLUGIN, 'dsh.plugin.json'), 'utf8'));
   assert.equal(pkg.name, 'dsh-better-sidebar');
+  assert.equal(pkg.version, '0.15.3-eac.1',
+    'EAC must ship the patched 0.15.2-compatible build above the broken upstream version');
+  assert.equal(manifest.version, pkg.version, 'EAC plugin manifest version must match package.json');
   assert.ok(existsSync(join(PLUGIN, 'lib', 'index.js')), 'server entry lib/index.js missing');
   assert.ok(existsSync(join(PLUGIN, 'lib', 'client-registry.js')), 'client entry missing');
   assert.ok(existsSync(join(PLUGIN, 'LICENSE')), 'LICENSE must ship with the plugin');
@@ -102,14 +106,46 @@ test('automatic better-sidebar restores do not collapse the host sidebar', () =>
   }
 });
 
-test('lazy client chunks fall back to the plugin resolver when the legacy module global is absent', () => {
+test('lazy client chunks use the injected module system with a legacy global fallback', () => {
   for (const entry of ['client.js', 'client-registry.js']) {
     const src = readFileSync(join(PLUGIN, 'lib', entry), 'utf8');
-    assert.match(src, /const globalModules = globalThis\.__DSH_MODULES__/,
-      `${entry} must check the legacy module table first`);
-    assert.match(src, /fallbackModuleSystem = \{\s*import: async \(specifier\) => require\(specifier\)/,
-      `${entry} must reuse the plugin entry resolver as a fallback`);
+    assert.match(src, /return injectedModuleSystem \?\? g\[MODULE_SYSTEM_GLOBAL\] \?\? g\.__DSH_MODULES__/,
+      `${entry} must prefer the injected module system and retain the legacy page global`);
+    assert.match(src, /setChunkModuleSystem\(ctx\.modules\)/,
+      `${entry} must inject the current DSH client module system before loading chunks`);
     assert.match(src, /client module system unavailable/,
-      `${entry} must retain an actionable error when neither resolver exists`);
+      `${entry} must retain an actionable error when no module system exists`);
+  }
+});
+
+test('file previews can return to Files and crashed tabs retain recovery actions', () => {
+  for (const entry of ['client.js', 'client-registry.js']) {
+    const src = readFileSync(join(PLUGIN, 'lib', entry), 'utf8');
+    assert.match(src, /backToFiles:\s*"返回文件列表"/,
+      `${entry} must ship the localized back-to-files action`);
+    assert.match(src, /function returnEditorTabToFiles\(ctx,\s*tab,\s*scope\)/,
+      `${entry} must centralize normal and crash recovery behavior`);
+    assert.match(src, /candidate\.id !== tab\.id && candidate\.type === "editor" && \(candidate\.path === void 0 \|\| candidate\.path === ""\)/,
+      `${entry} must reuse an existing Files tab when one is already open`);
+    assert.match(src, /service\.closeTab\(tab\.id,\s*scope\);\s*service\.activateTab\(existing\.id,\s*scope\)/,
+      `${entry} must close the preview and focus the existing Files tab`);
+    assert.match(src, /service\.updateTab\(tab\.id,\s*\{\s*path:\s*"",\s*title:\s*"Files"/,
+      `${entry} must fall back to restoring the current editor tab`);
+    assert.match(src, /onRecover:\s*recoverFileTab/,
+      `${entry} must expose a per-tab recovery action`);
+    assert.match(src, /onClose:\s*\(\)\s*=>\s*ctx\.betterSidebar\?\.closeTab\(tab\.id,\s*scope\)/,
+      `${entry} must let the render boundary close the crashed tab`);
+  }
+});
+
+test('markdown previews pass both rc.8 and alpha.1 label contracts', () => {
+  for (const entry of ['client.js', 'client-registry.js', 'client-editor.js', 'client-mermaid.js']) {
+    const src = readFileSync(join(PLUGIN, 'lib', entry), 'utf8');
+    assert.match(src, /footnotes:\s*"脚注"/,
+      `${entry} must ship a footnote label for the alpha.1 MarkdownText contract`);
+    assert.match(src, /labels:\s*\{\s*code:\s*(?:codeLabels|labels),\s*footnotes:\s*t\("footnotes"\)\s*\}/,
+      `${entry} must pass the alpha.1 MarkdownText labels object`);
+    assert.match(src, /codeLabels:\s*(?:codeLabels|labels)/,
+      `${entry} must retain the rc.8 MarkdownText codeLabels prop`);
   }
 });
