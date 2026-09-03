@@ -79,14 +79,17 @@ export function toggleApproval(approvedSessions, targets) {
 export function apply(ctx, config) {
   // ── register tools ──
   ctx.effect(() => {
-    for (const tool of createComputerTools({ runPs, getConfig, approvedSessions, sessionId: undefined, setMode })) {
+    for (const tool of createComputerTools({ runPs, getConfig, approvedSessions, sessionIds: [], setMode })) {
       ctx.tools.register({
         ...tool,
-        // Wrap execute to inject the current session ID at call time
+        // Wrap execute to inject every session identity visible at call time.
         async execute(args, exec) {
-          const sid = exec?.agent?.session?.header?.sessionId ?? exec?.sessionId ?? '';
-          // Rebuild gate closure with the real session ID
-          const tools = createComputerTools({ runPs, getConfig, approvedSessions, sessionId: sid, setMode });
+          const sessionIds = [...new Set([
+            exec?.agent?.id,
+            exec?.agent?.session?.header?.sessionId,
+            exec?.sessionId,
+          ].filter(Boolean).map(String))];
+          const tools = createComputerTools({ runPs, getConfig, approvedSessions, sessionIds, setMode });
           const realTool = tools.find((t) => t.name === tool.name);
           return realTool.execute(args, exec);
         },
@@ -100,7 +103,7 @@ export function apply(ctx, config) {
       const settingsNs = settingsNamespace(NS);
       const scope = sctx.settings.register(settingsNs, Config, { base: config });
       sourceGetter = () => scope.get();
-      sourceSetter = (key, value) => scope.set(key, value);
+      sourceSetter = (key, value) => scope.update({ [key]: value });
       scope.watch(() => { /* trigger hot reload */ });
     });
   } catch (error) {

@@ -116,6 +116,118 @@ function patchSettingsPanelResize(): void {
   console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
 }
 
+// 设置写入失败传播补丁：上游 SettingsScopeController.mutate() 会把 Remote
+// 拒绝和传输异常恢复后直接 return，导致调用方 Promise resolve 并误报“已保存”。
+// 普通表单写入遇到 settings-conflict 时刷新镜像并重试一次；显式 revision fence
+// 不自动越过。最终失败必须 reject，让设置界面进入自己的错误提示分支。
+const SETTINGS_WRITE_MARKER = 'dsh-desktop-settings-write-retry';
+const SETTINGS_WRITE_TARGET = path.join(
+  root,
+  'node_modules',
+  '@deepseek-ai',
+  'dsh-client-ui-settings',
+  'lib',
+  'client.js',
+);
+const SETTINGS_WRITE_OLD = [
+  '\t\t\tmutate(ops, expectedRevision) {',
+  '\t\t\t\tconst ownedOps = structuredClone(ops);',
+  '\t\t\t\tconst generation = ++this.writeGeneration;',
+  '\t\t\t\treturn this.enqueue(async () => {',
+  '\t\t\t\t\tconst revision = expectedRevision ?? this.pendingRevision ?? this.getSnapshot().revision;',
+  '\t\t\t\t\tlet response;',
+  '\t\t\t\t\ttry {',
+  '\t\t\t\t\t\tresponse = await this.api.settings.mutate(this.spec.namespace, ownedOps, revision);',
+  '\t\t\t\t\t} catch (_settingsWriteFailure) {',
+  '\t\t\t\t\t\tawait this.recover(generation);',
+  '\t\t\t\t\t\treturn;',
+  '\t\t\t\t\t}',
+  '\t\t\t\t\tif (!response.ok) {',
+  '\t\t\t\t\t\tawait this.recover(generation);',
+  '\t\t\t\t\t\treturn;',
+  '\t\t\t\t\t}',
+  '\t\t\t\t\tif (this.disposed) return;',
+  '\t\t\t\t\tif (generation === this.writeGeneration) {',
+  '\t\t\t\t\t\tthis.pendingRevision = void 0;',
+  '\t\t\t\t\t\tthis.mirror.acceptView(response.value);',
+  '\t\t\t\t\t} else this.pendingRevision = response.value.revision;',
+  '\t\t\t\t});',
+  '\t\t\t}',
+].join('\n');
+const SETTINGS_WRITE_NEW = [
+  '\t\t\tmutate(ops, expectedRevision) {',
+  '\t\t\t\tconst ownedOps = structuredClone(ops);',
+  '\t\t\t\tconst generation = ++this.writeGeneration;',
+  '\t\t\t\treturn this.enqueue(async () => {',
+  `\t\t\t\t\t// ${SETTINGS_WRITE_MARKER}`,
+  '\t\t\t\t\tconst toFailure = (error) => {',
+  '\t\t\t\t\t\tconst failure = new Error(error?.message ?? "settings write failed");',
+  '\t\t\t\t\t\tif (error?.code !== void 0) failure.code = error.code;',
+  '\t\t\t\t\t\tif (error?.details !== void 0) failure.details = error.details;',
+  '\t\t\t\t\t\treturn failure;',
+  '\t\t\t\t\t};',
+  '\t\t\t\t\tconst settle = (response) => {',
+  '\t\t\t\t\t\tif (this.disposed) return;',
+  '\t\t\t\t\t\tif (generation === this.writeGeneration) {',
+  '\t\t\t\t\t\t\tthis.pendingRevision = void 0;',
+  '\t\t\t\t\t\t\tthis.mirror.acceptView(response.value);',
+  '\t\t\t\t\t\t} else this.pendingRevision = response.value.revision;',
+  '\t\t\t\t\t};',
+  '\t\t\t\t\tconst call = (revision) => this.api.settings.mutate(this.spec.namespace, ownedOps, revision);',
+  '\t\t\t\t\tlet response;',
+  '\t\t\t\t\ttry {',
+  '\t\t\t\t\t\tresponse = await call(expectedRevision ?? this.pendingRevision ?? this.getSnapshot().revision);',
+  '\t\t\t\t\t} catch (error) {',
+  '\t\t\t\t\t\tawait this.recover(generation);',
+  '\t\t\t\t\t\tthrow error;',
+  '\t\t\t\t\t}',
+  '\t\t\t\t\tif (!response.ok && response.error.code === "settings-conflict" && expectedRevision === void 0) {',
+  '\t\t\t\t\t\tthis.pendingRevision = void 0;',
+  '\t\t\t\t\t\tawait this.mirror.load();',
+  '\t\t\t\t\t\tif (this.disposed) return;',
+  '\t\t\t\t\t\ttry {',
+  '\t\t\t\t\t\t\tresponse = await call(this.getSnapshot().revision);',
+  '\t\t\t\t\t\t} catch (error) {',
+  '\t\t\t\t\t\t\tawait this.recover(generation);',
+  '\t\t\t\t\t\t\tthrow error;',
+  '\t\t\t\t\t\t}',
+  '\t\t\t\t\t}',
+  '\t\t\t\t\tif (!response.ok) {',
+  '\t\t\t\t\t\tconst failure = toFailure(response.error);',
+  '\t\t\t\t\t\tawait this.recover(generation);',
+  '\t\t\t\t\t\tthrow failure;',
+  '\t\t\t\t\t}',
+  '\t\t\t\t\tsettle(response);',
+  '\t\t\t\t});',
+  '\t\t\t}',
+].join('\n');
+
+function patchSettingsWriteFailureSource(source: string): string | undefined {
+  if (source.includes(SETTINGS_WRITE_MARKER)) return source;
+  if (!source.includes(SETTINGS_WRITE_OLD)) return undefined;
+  return source.replace(SETTINGS_WRITE_OLD, SETTINGS_WRITE_NEW);
+}
+
+function patchSettingsWriteFailure(targetFile = SETTINGS_WRITE_TARGET): boolean {
+  if (!fs.existsSync(targetFile)) {
+    console.log('[patch-deps] dsh-client-ui-settings 不存在，跳过');
+    return false;
+  }
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchSettingsWriteFailureSource(source);
+  if (patched === source) {
+    console.log('[patch-deps] 设置写入失败传播补丁已应用，跳过');
+    return true;
+  }
+  if (patched === undefined) {
+    console.log('[patch-deps] 设置写入目标代码未匹配（上游版本可能已修复/更新），跳过');
+    return false;
+  }
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] 已补丁 client-ui-settings：冲突刷新重试，最终失败不再误报成功');
+  return true;
+}
+
 // 模型目录图片输入开关：llm-pi-ai 已支持模型级 `input: [text, image]`，
 // 但 settings-models 只渲染 id/name/capacity，用户只能手改 YAML。给直接
 // DeepSeek 与通用 pi-ai 两套模型表格都增加行内 switch。关闭时传 undefined，
@@ -670,6 +782,7 @@ function main(): void {
   patchPickerWorker();
   patchSettingsNavScroll();
   patchSettingsPanelResize();
+  patchSettingsWriteFailure();
   patchModelImageInputToggle();
   patchOptionalEscalationFields();
   patchAgentPresetMenu();
@@ -688,4 +801,6 @@ module.exports = {
   patchClientModulesResolve,
   patchModelImageInputSource,
   patchModelImageInputToggle,
+  patchSettingsWriteFailureSource,
+  patchSettingsWriteFailure,
 };
