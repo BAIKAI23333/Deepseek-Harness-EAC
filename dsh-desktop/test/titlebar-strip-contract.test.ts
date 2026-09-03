@@ -27,5 +27,9 @@ test('bridge declares its titlebar height on <html> for client plugins', () => {
 test('vendored better-sidebar honors the attribute (compat contract)', () => {
   const client = readFileSync(join(root, 'assets', 'plugins', 'dsh-better-sidebar', 'lib', 'client.js'), 'utf8');
   assert.match(client, /data-dsh-title-bar-height/, 'plugin must read the attribute');
-  assert.match(client, /body\[data-dsh-title-bar-compat\] \.dxPSYW_panel\{padding-top:var\(--dsh-title-bar-strip/, 'plugin must pad its fixed panel when compat is on');
+  assert.match(
+    client,
+    /body\[data-dsh-title-bar-compat\] \.[A-Za-z0-9_-]+_panel\{padding-top:var\(--dsh-title-bar-strip,40px\)\}/,
+    'plugin must pad its fixed panel when compat is on regardless of the generated CSS-module hash',
+  );
 });
