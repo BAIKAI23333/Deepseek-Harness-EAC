@@ -100,6 +100,10 @@ jobs:
           restore-keys: |
             dsh-tauri-win-x64-
 
+      - name: 获取 Tauri Rust 依赖（WebView2Loader.dll）
+        working-directory: tauri-shell
+        run: cargo fetch --locked --target x86_64-pc-windows-msvc
+
       - name: 安装依赖
         working-directory: dsh-desktop
         run: npm run ci:install
