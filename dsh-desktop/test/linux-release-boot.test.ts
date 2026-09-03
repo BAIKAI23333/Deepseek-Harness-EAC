@@ -14,6 +14,7 @@ const shell = readFileSync(join(root, 'tauri-shell', 'src', 'main.rs'), 'utf8');
 const rescue = readFileSync(join(root, 'tauri-shell', 'sidecar', 'rescue-integration.ts'), 'utf8');
 const patchDeps = readFileSync(join(root, 'dsh-desktop', 'scripts', 'patch-deps.ts'), 'utf8');
 const release = readFileSync(join(root, '.github', 'workflows', 'release-tauri.yml'), 'utf8');
+const windowsRelease = release.split('release-tauri-linux:')[0] || '';
 const linuxRelease = release.split('release-tauri-linux:')[1] || '';
 
 test('Tauri setup initializes the packaged resource root before spawning the sidecar', () => {
@@ -33,6 +34,13 @@ test('rescue integration resolves both source and packaged sidecar layouts', () 
 
 test('Linux releases rebuild the kernel cache from a clean checkout', () => {
   assert.match(linuxRelease, /准备内核依赖缓存[\s\S]*pnpm@11\.7\.0[\s\S]*fetch-kernel\.js/);
+});
+
+test('Windows releases rebuild the kernel cache before installing dependencies', () => {
+  assert.match(
+    windowsRelease,
+    /缓存 vendored 内核 tarball[\s\S]*pnpm@11\.7\.0[\s\S]*fetch-kernel\.js[\s\S]*安装依赖[\s\S]*ci:install/,
+  );
 });
 
 test('all staging targets exclude the kernel build tree and remove client build paths', () => {
