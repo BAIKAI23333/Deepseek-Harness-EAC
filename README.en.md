@@ -279,6 +279,7 @@ research/                     # Third-party WeChat / bridge protocol research
 | dsh-change-review | AI change review for automatically rechecking file modifications |
 | @deepseek-ai/dsh-client-file-changes (provider: deepseek-ai) | Files view with session change tracking and one-click restore |
 | dsh-compact (provider: zixin947) | Request-path context compaction and overflow recovery |
+| dsh-composer-dynamic-island (provider: says693) | Collapses selected composer buttons into a configurable compact island that expands upward |
 | @deepseek-ai/dsh-conversation-tweaks (provider: deepseek-ai) | Collapses long output and adds a right-side conversation navigation rail |
 | dsh-dafeiyu (provider: QCYTSN) | Dafeiyu desktop companion |
 | dsh-deep-whale (provider: Small-tailqwq) | Source of the Deep-Sea Maid Workshop `maid-atelier` skin |

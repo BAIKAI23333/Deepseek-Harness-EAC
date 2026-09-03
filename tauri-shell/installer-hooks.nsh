@@ -125,10 +125,9 @@
   !insertmacro DSH_TakeoverOldShell HKLM "Deepseek Harness EAC"
   !insertmacro DSH_TakeoverOldShell HKLM "com.deepseek.dsh.desktop"
   !insertmacro DSH_TakeoverOldShell HKLM "com.deepseek.dsh.desktop.tauri"
-  ; 5.3.0：内置「语音转文字」插件退役（dsh-stt），回收其下载到用户主目录的
-  ; 本地 ASR 模型缓存（sherpa-onnx SenseVoice ~1.1G）。插件本体/profile 行由
-  ; 桌面端启动时的退役清理（RETIRED_BUILTIN_PLUGINS）兜底删除。
-  RMDir /r "$PROFILE\.dsh\models\dsh-stt"
+  ; 不在安装/升级阶段删除 ~/.dsh 下的任何用户数据。退役 dsh-stt 的插件行与
+  ; profile 包副本仍由应用内的精确迁移处理；模型缓存可能是 CLI 或其他产品
+  ; 共用资产，只能由用户明确确认后单独清理。
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

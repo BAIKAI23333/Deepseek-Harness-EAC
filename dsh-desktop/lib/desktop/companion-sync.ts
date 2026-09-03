@@ -203,6 +203,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 依赖感知任务 DAG + 活动面板。5.3.1 起默认启用（EAC 适配版；对话框
   // composer dock 有可见入口，设置「增强功能」分区保留停用开关）。
   { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams' },
+  // 输入灵动岛（says693/dsh-composer-dynamic-island 2.1.0，MIT）：把输入区
+  // 选定按钮收纳为向上展开的紧凑岛，不移动宿主 React 节点；仅在已确认的
+  // composer surface 内发现控件，设置只持久化启用状态与控件标识。
+  { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island', dir: 'dsh-composer-dynamic-island' },
   // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
   // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
@@ -440,8 +444,8 @@ export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'settings-nav-custom', name: 'dsh-settings-nav-custom' },
   // 5.3.0：按用户要求移除内置「语音转文字」插件（本地 sherpa-onnx ASR 模型
   // ~1.1G 占空间，不再随包分发/安装）。老 profile 的 patch 行/包副本由退役
-  // 清理兜底；已下载的 ~/.dsh/models/dsh-stt/ 模型缓存由安装包 PREINSTALL
-  // 与本机清理回收。
+  // 清理兜底；已下载的 ~/.dsh/models/dsh-stt/ 模型缓存属于用户数据，安装器
+  // 不再自动删除，只能由用户明确确认后单独清理。
   { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt' },
 ];
 
@@ -449,14 +453,16 @@ export const RETIRED_BUILTIN_PLUGINS = [
 // 内部函数：外部一律走带版本对齐门控的 retireRemovedBuiltinPluginsGated
 // （issue #74 —— 5.3.2 及以前 sidecar preBootSync 直调无门控版，门控被架空）。
 function retireRemovedBuiltinPlugins(profileDirP: string): void {
+  const patchFile = path.join(profileDirP, 'cordis.patch.yml');
   for (const p of RETIRED_BUILTIN_PLUGINS) {
-    const patchFile = path.join(profileDirP, 'cordis.patch.yml');
     try {
-      const text = fs.readFileSync(patchFile, 'utf8');
-      const patched = removePluginFromPatch(text, p.id);
-      if (patched !== text) {
-        writeFileAtomic(patchFile, patched);
-        ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
+      if (fs.existsSync(patchFile)) {
+        const text = fs.readFileSync(patchFile, 'utf8');
+        const patched = removePluginFromPatch(text, p.id);
+        if (patched !== text) {
+          writeFileAtomic(patchFile, patched);
+          ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
+        }
       }
     } catch (err) {
       ctx.log('boot', `清理退役内置插件 ${p.id} 行失败: ${String(((err as Error).message) || err)}`);

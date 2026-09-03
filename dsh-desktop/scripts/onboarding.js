@@ -35,6 +35,7 @@ const RECOMMENDED_PLUGIN_IDS = new Set([
   'soul-md',
   'mobile-fix',
   'better-sidebar',
+  'composer-dynamic-island',
   'message-rewind',
   'dock-settings',
   'change-review',

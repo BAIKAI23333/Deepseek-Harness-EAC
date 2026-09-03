@@ -795,6 +795,7 @@ function buildInstalledApplyScript(): string[] {
     '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$ProfileDir,',
     '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$CurrentVersion,',
     '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$NewVersion,',
+    '  [Parameter(Mandatory = $true)][AllowEmptyString()][string]$NodeExePath,',
     '  [Parameter(Mandatory = $true)][int]$AppPid,',
     '  [Parameter(Mandatory = $true)][string]$LogPath,',
     '  [int]$WaitTimeoutSeconds = 20',
@@ -833,7 +834,7 @@ function buildInstalledApplyScript(): string[] {
     '  }',
     '  if (Get-AppProcess) { throw "App process did not exit" }',
     '  Write-ApplyLog "running hidden update action"',
-    '  & $ActionScriptPath $SetupPath $OldExePath $UserDataDir $DshHome $InstallDir $ProfileDir $CurrentVersion $NewVersion',
+    '  & $ActionScriptPath $SetupPath $OldExePath $UserDataDir $DshHome $InstallDir $ProfileDir $CurrentVersion $NewVersion $NodeExePath',
     '  $ActionExitCode = [int]$LASTEXITCODE',
     '  Write-ApplyLog ("update action exit code " + $ActionExitCode)',
     '  if ($ActionExitCode -ne 0) { exit $ActionExitCode }',
@@ -868,7 +869,7 @@ interface ApplyScriptOpts {
  * 安装版 CMD 由 PowerShell 在旧主进程退出后调用，不再自行等待或结束进程；
  * 便携版保留原地替换与回滚语义。脚本保持纯 ASCII，路径通过参数传递。
  */
-function buildApplyScript({ portable, nodeExe }: ApplyScriptOpts): string[] {
+function buildApplyScript({ portable }: ApplyScriptOpts): string[] {
   const lines = ['@echo off'];
   if (portable) {
     lines.push(
@@ -928,8 +929,8 @@ function buildApplyScript({ portable, nodeExe }: ApplyScriptOpts): string[] {
     //      新版健康启动后主进程 cleanupClientBackupIfHealthy →
     //      offerBackupCleanupConfirm 询问是否清理备份（保留 24h，超过不自动弹）。
     //   4) 失败路径：从备份目录反向 robocopy /MIR 回 4 目录，再拉起旧版。
-    //   5) manifest.json 的内联 JS 用「应用自带 node」执行（生成时内联，
-    //      打包在 resources\node\node.exe）：目标用户机器普遍没有系统 Node，
+    //   5) manifest.json 的内联 JS 用「应用自带 node」执行（经隐藏 PowerShell
+    //      作为第 9 个参数传入，打包在 resources\node\node.exe）：目标用户机器普遍没有系统 Node，
     //      裸调 PATH 上的 node 会 errorlevel 9009 → BAD=2 → 更新永远中止
     //      回滚（更新死循环，v3.0.1 自举陷阱同类）。nodeExe 缺失/不存在时
     //      降级 SKIP_BACKUP（回到 v4.3 无备份语义），绝不依赖 PATH。
@@ -942,14 +943,10 @@ function buildApplyScript({ portable, nodeExe }: ApplyScriptOpts): string[] {
       'set "PROF=%~6"',
       'set "OLDVER=%~7"',
       'set "NEWVER=%~8"',
-      // nodeExe 不能经命令行传：batch 直接引用只到 %9（`%~10` 被解析成
-      // `%~1` 后跟字面量 `0`，实测 NODEEXE 接成 "<第1参>0" → 备份被静默
-      // 跳过）。曾怀疑 shift 接第 10 参导致脚本静默死亡 —— 2x2 矩阵探针
-      // （shift × 结尾 CRLF，每组 8 轮真实 e2e）证明 shift 无辜，全部
-      // 32/32 通过；当年的「死亡」是探针自身缺陷（临时目录删除后才断言、
-      // 日志读错路径等）。仍选内联：无参数位数限制、零解析层不确定性，
-      // `%` 转义为 `%%` 防止变量展开破坏路径。
-      `set "NODEEXE=${String(nodeExe || '').replace(/%/g, '%%')}"`,
+      // 第 9 个参数仍可用 %~9 直接引用。nodeExe 先由 PowerShell 的 Unicode
+      // 参数链传递，可避免把含非 ASCII 字符的绝对路径写进 OEM 代码页批处理。
+      // 第 10 个参数不能写成 %~10（会被解析成 %~1 后跟字面量 0）。
+      'set "NODEEXE=%~9"',
       'set "LOG=%~dp0apply-update.log"',
       'echo [%date% %time%] installed update action start >> "%LOG%"',
       'echo [%date% %time%] oldVer=%OLDVER% newVer=%NEWVER% >> "%LOG%"',
@@ -1131,6 +1128,7 @@ interface InstalledPowerShellArgsOpts {
   profileDir?: string;
   currentVersion?: string;
   newVersion?: string;
+  nodeExe?: string;
   appPid: number;
   logPath: string;
   waitTimeoutSeconds?: number;
@@ -1146,6 +1144,7 @@ function buildInstalledPowerShellArgs(script: string, {
   profileDir,
   currentVersion,
   newVersion,
+  nodeExe,
   appPid,
   logPath,
   waitTimeoutSeconds = 20,
@@ -1167,6 +1166,7 @@ function buildInstalledPowerShellArgs(script: string, {
     '-ProfileDir', profileDir || '',
     '-CurrentVersion', currentVersion || '',
     '-NewVersion', newVersion || '',
+    '-NodeExePath', nodeExe || '',
     '-AppPid', String(appPid),
     '-LogPath', logPath,
     '-WaitTimeoutSeconds', String(waitTimeoutSeconds),
@@ -1257,6 +1257,7 @@ function applyUpdate(ctx: UpdateCtx, pending: PendingUpdate, opts?: ApplyUpdateO
       profileDir,
       currentVersion,
       newVersion,
+      nodeExe,
       appPid: process.pid,
       logPath,
     });

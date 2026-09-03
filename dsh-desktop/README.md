@@ -145,6 +145,7 @@
 | `dsh-soul-md` | soul.md 人设卡：可视化编辑人设，热重载即时生效；未配置时注册空 section，**完全不影响官方系统提示词** | 设置 → 人设卡 |
 | `dsh-web-mobile-fix` | Web UI 移动端适配修复 | 随包自动启用 |
 | `dsh-settings-scroll-fix` | 设置面板滚轮与溢出滚动修复；使用语义识别和实际尺寸检测，不依赖易变化的 CSS 哈希类名 | 随包自动启用 |
+| `dsh-composer-dynamic-island` | 输入灵动岛：把选定的 composer 按钮收纳为向上展开的紧凑面板，不移动宿主 React 节点 | 设置 → 输入灵动岛（随包推荐启用） |
 | `dsh-easy-setup` | 一键迁移（一键夺舍）：选择目录 → 新建工作区与对话 → AI 全程可视化迁移 skills / MCP / 记忆 | 设置 → 一键迁移 |
 | `dsh-change-review`（v4） | AI 变更审核：监控本会话文件改动，手动/自动让模型复查自己刚做的改动（正确性/安全性/目标一致性），配合「文件」页一键还原 | 设置 → AI 变更审核 |
 | `dsh-undo-savepoint`（v4） | 崩溃急救与撤销：配置/插件代码快照、undo/redo、一键安全模式、密钥脱敏 vault、跨机迁移 ZIP | 对话顶部 undo/redo 按钮 + 快照面板 |

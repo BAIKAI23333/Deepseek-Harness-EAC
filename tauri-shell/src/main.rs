@@ -99,8 +99,10 @@ fn ui_text<'a>(zh: &'a str, en: &'a str) -> &'a str {
 }
 
 #[cfg(test)]
-mod ui_language_tests {
-    use super::locale_tag_is_chinese;
+mod shell_tests {
+    use super::{is_sidecar_recovery_request, locale_tag_is_chinese, verified_resource_root};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn recognizes_chinese_locale_variants_only() {
@@ -110,17 +112,71 @@ mod ui_language_tests {
         assert!(!locale_tag_is_chinese("ja-JP"));
         assert!(!locale_tag_is_chinese(""));
     }
+
+    #[test]
+    fn resource_root_is_canonical_and_complete() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("dsh-resource-root-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(root.join("sidecar")).expect("create sidecar fixture");
+        fs::create_dir_all(root.join("dsh-desktop")).expect("create desktop fixture");
+        fs::write(root.join("sidecar").join("server.js"), "").expect("write sidecar fixture");
+
+        let verified = verified_resource_root(&root).expect("valid resource root");
+        assert!(verified.is_absolute());
+        assert_eq!(verified.file_name(), root.file_name());
+        #[cfg(windows)]
+        assert!(!verified.to_string_lossy().starts_with(r"\\?\"));
+
+        fs::remove_file(root.join("sidecar").join("server.js")).expect("remove sidecar fixture");
+        assert!(verified_resource_root(&root).is_none());
+        fs::remove_dir_all(root).expect("remove resource fixture");
+    }
+
+    #[test]
+    fn only_explicit_recovery_calls_can_respawn_sidecar() {
+        assert!(is_sidecar_recovery_request("boot.start"));
+        assert!(is_sidecar_recovery_request("rescue.safe-mode"));
+        assert!(!is_sidecar_recovery_request("chrome.init"));
+        assert!(!is_sidecar_recovery_request("plugins.list"));
+    }
 }
 
 fn is_resource_root(path: &Path) -> bool {
     path.join("sidecar").join("server.js").is_file() && path.join("dsh-desktop").is_dir()
 }
 
+#[cfg(windows)]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{}", rest));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path
+}
+
+#[cfg(not(windows))]
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    path
+}
+
+fn verified_resource_root(path: &Path) -> Option<PathBuf> {
+    let normalized = strip_verbatim_prefix(path.canonicalize().ok()?);
+    (normalized.is_absolute() && is_resource_root(&normalized)).then_some(normalized)
+}
+
 fn initialize_packaged_resource_root(app: &tauri::App) {
     use tauri::Manager;
     if let Ok(root) = app.path().resource_dir() {
-        if is_resource_root(&root) {
+        if let Some(root) = verified_resource_root(&root) {
             let _ = PACKAGED_RESOURCE_ROOT.set(root);
+        } else {
+            eprintln!("[shell] ignoring invalid resource directory: {}", root.display());
         }
     }
 }
@@ -174,11 +230,17 @@ fn resource_root() -> std::path::PathBuf {
 fn sidecar_script() -> std::path::PathBuf {
     let root = resource_root();
     let packaged = root.join("sidecar").join("server.js");
-    if packaged.exists() {
-        return packaged;
-    }
-    // 开发态（仓库根布局）：sidecar 编译产物位于 tauri-shell/sidecar/。
-    root.join("tauri-shell").join("sidecar").join("server.js")
+    let script = if packaged.exists() {
+        packaged
+    } else {
+        // 开发态（仓库根布局）：sidecar 编译产物位于 tauri-shell/sidecar/。
+        root.join("tauri-shell").join("sidecar").join("server.js")
+    };
+    strip_verbatim_prefix(script.canonicalize().unwrap_or(script))
+}
+
+fn is_sidecar_recovery_request(method: &str) -> bool {
+    matches!(method, "boot.start" | "rescue.safe-mode")
 }
 
 fn dsh_desktop_dir() -> String {
@@ -589,8 +651,10 @@ struct Sidecar {
 impl Sidecar {
     async fn spawn() -> Result<Self, String> {
         let node = resolve_node();
+        let script = sidecar_script();
+        eprintln!("[sidecar] spawning node={} script={}", node, script.display());
         let mut cmd = Command::new(&node);
-        cmd.arg(sidecar_script())
+        cmd.arg(&script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // 开发期诊断直通终端；release 无控制台，显式丢弃（inherit 在
@@ -1679,6 +1743,11 @@ async fn handle_conn(stream: TcpStream, state: BridgeState, app: tauri::AppHandl
                 Some(s) => {
                     let exited = matches!(s.child.lock().await.try_wait(), Ok(Some(_)));
                     if !exited {
+                        Some(s)
+                    } else if !is_sidecar_recovery_request(&method) {
+                        // 页面心跳或初始化轮询不能驱动崩溃重生；否则 sidecar
+                        // 若启动即退，会形成无上限的进程风暴。仅死亡页上的
+                        // 显式重启/安全模式动作拥有重生权限。
                         Some(s)
                     } else {
                         let mut slot = state.sidecar.lock().await;

@@ -83,6 +83,7 @@ function runInstalledHelper({
   profileDir,
   currentVersion = '4.4.0',
   newVersion = '4.4.1',
+  nodeExe = '',
   waitTimeoutSeconds = 20,
   env = process.env,
 }) {
@@ -96,6 +97,7 @@ function runInstalledHelper({
     profileDir,
     currentVersion,
     newVersion,
+    nodeExe,
     appPid,
     logPath: log,
     waitTimeoutSeconds,
@@ -221,6 +223,7 @@ test('installed PowerShell arguments preserve paths and request a hidden non-int
   const oldExe = 'C:\\Program Files\\Deepseek Harness EAC\\Deepseek Harness EAC.exe';
   const actionScript = 'C:\\用户 A\\Deepseek Harness EAC\\updates\\apply-update.cmd';
   const log = 'C:\\用户 A\\Deepseek Harness EAC\\updates\\apply-update.log';
+  const nodeExe = 'C:\\用户 A\\Deepseek Harness EAC\\resources\\node\\node.exe';
   const args = buildInstalledPowerShellArgs(script, {
     actionScript,
     newExe: setup,
@@ -231,6 +234,7 @@ test('installed PowerShell arguments preserve paths and request a hidden non-int
     profileDir: 'C:\\用户 A\\.dsh\\profiles\\web-desktop',
     currentVersion: '4.4.0',
     newVersion: '4.4.1',
+    nodeExe,
     appPid: 4321,
     logPath: log,
   });
@@ -250,6 +254,7 @@ test('installed PowerShell arguments preserve paths and request a hidden non-int
   assert.equal(args[args.indexOf('-OldExePath') + 1], oldExe);
   assert.equal(args[args.indexOf('-CurrentVersion') + 1], '4.4.0');
   assert.equal(args[args.indexOf('-NewVersion') + 1], '4.4.1');
+  assert.equal(args[args.indexOf('-NodeExePath') + 1], nodeExe);
   assert.equal(args[args.indexOf('-AppPid') + 1], '4321');
   assert.equal(args[args.indexOf('-LogPath') + 1], log);
   assert.equal(args[args.indexOf('-WaitTimeoutSeconds') + 1], '20');
@@ -340,7 +345,8 @@ test('portable spawn command line wraps the whole argument row in an outer quote
 // 解析失败 errorlevel 9009 → BAD=2 → 「backup failed, aborting update」
 // → 永远回滚重弹旧版，更新死循环（与 v3.0.1 applyUpdate 自举陷阱同类：
 // 更新通道自身的缺陷无法借更新修复）。修复 = applyUpdate 把应用自带
-// nodeExe 在生成脚本时安全内联，脚本用带引号的 "%NODEEXE%" 调用；
+// nodeExe 经 PowerShell 的 Unicode 参数链传给批处理第 9 参，脚本用带引号
+// 的 "%NODEEXE%" 调用；
 // nodeExe 缺失/不存在时降级 SKIP_BACKUP（回到 v4.3 无备份语义），
 // 绝不裸调 PATH 上的 node。
 // ---------------------------------------------------------------------------
@@ -358,19 +364,15 @@ const FULL_BACKUP_OPTS = {
   nodeExe: 'C:\\Programs\\app\\resources\\node\\node.exe',
 };
 
-test('backup branch must not invoke bare `node` from PATH (inlines %NODEEXE% or skips backup)', () => {
+test('backup branch receives Unicode-safe node path as the ninth argument or skips backup', () => {
   const joined = buildApplyScript(FULL_BACKUP_OPTS).join('\n');
-  // batch 直接引用只到 %9 —— `%~10` 被解析为 `%~1` 后跟字面量 `0`
-  // （v4.4 实测 NODEEXE 接成了 "<第1参>0" → 文件不存在 → 备份被静默
-  // 跳过）。（shift 接第 10 参曾被判定「脚本静默死亡」，2x2 矩阵探针
-  // shift × 结尾 CRLF 共 32 轮已证伪 —— 纯属当年探针自身缺陷；但内联
-  // 设计无需第 10 参，本断言锁定内联方案不变。）nodeExe 由脚本生成器
-  // 直接内联进脚本体（% 转义为 %%），不经命令行参数传递。
+  // batch 直接引用只到 %9；nodeExe 占第 9 参，避开会被解析为 %~1 + "0"
+  // 的 %~10。路径经 PowerShell 参数传入，也不会被批处理文件的 OEM 编码
+  // 破坏中文字符。
   assert.doesNotMatch(joined, /%~10/, 'must never reference %~10 (batch parses it as %~1 + "0")');
-  assert.doesNotMatch(joined, /^\s*shift\s*$/m, 'must not rely on shift (inline design needs no 10th arg; shift itself proven innocent by 2x2 matrix probe)');
-  const escaped = FULL_BACKUP_OPTS.nodeExe.replace(/%/g, '%%');
-  assert.ok(joined.includes(`set "NODEEXE=${escaped}"`),
-    'must inline the node exe path into the script body');
+  assert.doesNotMatch(joined, /^\s*shift\s*$/m, 'must not rely on shift');
+  assert.ok(joined.includes('set "NODEEXE=%~9"'),
+    'must read the node exe from the ninth batch argument');
   assert.ok(joined.includes('"%NODEEXE%" -e'), 'manifest step must invoke the passed node exe');
   // 绝不允许裸 `node -e`（依赖 PATH —— 用户机器没有系统 Node）
   assert.doesNotMatch(joined, /(^|[^"%\w])node\s+-e/, 'must not invoke bare `node` from PATH');
@@ -441,6 +443,7 @@ test('backup flow e2e: 4-dir backup + manifest + /S setup + marker, node strippe
       profileDir: prof,
       currentVersion: '4.3.0',
       newVersion: '4.4.0',
+      nodeExe: process.execPath,
       env: cleanEnv,
     });
     const code = await new Promise((resolve, reject) => {
@@ -538,6 +541,7 @@ test('backup flow e2e: setup failure rolls back the 4 directories from the backu
       profileDir: prof,
       currentVersion: '4.3.0',
       newVersion: '4.4.0',
+      nodeExe: process.execPath,
     });
     const code = await new Promise((resolve, reject) => {
       const killer = setTimeout(() => {

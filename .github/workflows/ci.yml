@@ -98,7 +98,7 @@ jobs:
             dsh-cargo-win-x64-
 
       - name: 安装依赖
-        run: npm ci
+        run: npm run ci:install
 
       - name: 获取内置运行时（node.exe + npm CLI）
         run: npm run fetch-runtime
@@ -166,7 +166,7 @@ jobs:
         run: node scripts/fetch-kernel.js
 
       - name: 安装依赖并获取 Linux runtime
-        run: npm ci && npm run fetch-runtime
+        run: npm run ci:install && npm run fetch-runtime
 
       - name: 类型检查与全量测试
         run: npm run typecheck && npm test

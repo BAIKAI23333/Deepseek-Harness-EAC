@@ -48,7 +48,9 @@ function packageNameOf(filename: string): string | null {
 function main(): void {
   const argVersion = process.argv[2];
   const versions = fs.existsSync(VENDOR_KERNEL)
-    ? fs.readdirSync(VENDOR_KERNEL).filter((e) => fs.statSync(path.join(VENDOR_KERNEL, e)).isDirectory())
+    ? fs.readdirSync(VENDOR_KERNEL).filter((e) =>
+      /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(e)
+      && fs.statSync(path.join(VENDOR_KERNEL, e)).isDirectory())
     : [];
   if (versions.length === 0) {
     console.error('gen-kernel-overrides: vendor/kernel/ 下没有构建缓存；先运行 npm run fetch-kernel');
@@ -111,7 +113,13 @@ function main(): void {
     directCount += 1;
   }
 
-  manifest.overrides = Object.fromEntries([...specByName.entries()].sort(([a], [b]) => a.localeCompare(b)));
+  // 保留非 @deepseek-ai 的安全钉与应用级 override。旧实现整体覆盖 overrides，
+  // 会在每次重建内核缓存时静默抹掉 glob/qs 等漏洞修复钉。
+  const nonKernelOverrides = Object.entries(manifest.overrides ?? {})
+    .filter(([name]) => !name.startsWith('@deepseek-ai/'));
+  manifest.overrides = Object.fromEntries(
+    [...nonKernelOverrides, ...specByName.entries()].sort(([a], [b]) => a.localeCompare(b)),
+  );
 
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`gen-kernel-overrides: 内核 ${version} → 直接依赖 ${directCount} 个改写 + 缺口补 ${gapCount} 个，overrides 共 ${specByName.size} 个包`);

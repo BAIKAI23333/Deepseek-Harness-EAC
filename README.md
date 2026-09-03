@@ -314,6 +314,7 @@ research/                     # 第三方微信/桥接协议调研资料
 | dsh-change-review | AI 变更审核：自动复查文件改动 |
 | @deepseek-ai/dsh-client-file-changes（提供者：deepseek-ai） | 文件视图：会话文件更改追踪与一键还原 |
 | dsh-compact（提供者：zixin947） | 请求路径上下文压缩与溢出恢复 |
+| dsh-composer-dynamic-island（提供者：says693） | 将输入区按钮收纳为可配置、向上展开的紧凑灵动岛 |
 | @deepseek-ai/dsh-conversation-tweaks（提供者：deepseek-ai） | 隐藏长篇输出 + 会话右侧导航滑轨 |
 | dsh-dafeiyu（提供者：QCYTSN） | 大肥鱼桌面伴侣 |
 | dsh-deep-whale（提供者：Small-tailqwq） | 深海女仆工坊 maid-atelier 皮肤来源 |
