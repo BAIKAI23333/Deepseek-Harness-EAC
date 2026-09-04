@@ -241,10 +241,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
   // 可在「设置 → 插件 → 管理」关闭。
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  // 拖入文件/文件夹到对话（EAC 特化版，取代原 dsh-file-drop）：文本/代码
-  // 文件内容自动注入（≤256KB）、二进制/超大文件注入完整路径提示、文件夹
-  // 识别 + 降级提示；去掉对图片的接管（与内置 picturereader 的图片入口无
-  // 冲突，故默认启用而非原插件的 disabled）。纯客户端实现（host 半边 no-op）。
+  // 拖入文件/文件夹到对话（EAC 特化版，取代原 dsh-file-drop）：普通文件
+  // 显示可预览、可移除的卡片，并保存临时副本后只注入紧凑路径引用；图片
+  // 继续走官方缩略图链路，混合拖放拆分处理。纯客户端实现（host 半边 no-op）。
   // 独立发布：https://github.com/jing-hy/dsh-file-drop-eac（issue #141）。
   { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
@@ -448,6 +447,9 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 清理兜底；已下载的 ~/.dsh/models/dsh-stt/ 模型缓存属于用户数据，安装器
   // 不再自动删除，只能由用户明确确认后单独清理。
   { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt' },
+  // 旧 dsh-file-drop 会同时接管普通文件和图片拖放，与 EAC 特化版并存时
+  // 会重复注入内容并让官方图片遮罩停留。由 file-drop-eac 完整取代。
+  { id: 'file-drop', name: 'dsh-file-drop' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。

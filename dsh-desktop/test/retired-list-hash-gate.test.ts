@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { removePluginFromPatch } from '../scripts/plugin-manager-patch.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = readFileSync(join(root, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
@@ -37,11 +38,34 @@ test('recorded hash algorithm matches a fresh computation', () => {
   assert.ok(uses >= 2, `retiredListHash() 至少被读取两次（跳过判断 + 落盘记录），实际 ${uses}`);
 });
 
-test('tool-vision and settings-nav-custom are in the retired list', () => {
+test('replaced built-ins stay in the retired list', () => {
   const slice = retiredSlice();
-  for (const id of ['auto-compact', 'plugin-marketplace', 'third-party-thinking', 'tool-vision', 'settings-nav-custom']) {
+  for (const id of [
+    'auto-compact',
+    'plugin-marketplace',
+    'third-party-thinking',
+    'tool-vision',
+    'settings-nav-custom',
+    'file-drop',
+  ]) {
     assert.match(slice, new RegExp(`id:\\s*'${id}'`), `${id} 应保持退役登记`);
   }
+});
+
+test('file-drop retirement keeps the replacement file-drop-eac row', () => {
+  const patch = [
+    '- insert:',
+    '    - id: file-drop',
+    "      name: 'dsh-file-drop'",
+    '- insert:',
+    '    - id: file-drop-eac',
+    "      name: 'dsh-file-drop-eac'",
+    '',
+  ].join('\n');
+  const migrated = removePluginFromPatch(patch, 'file-drop');
+  assert.doesNotMatch(migrated, /id:\s*file-drop(?:\s|$)/);
+  assert.match(migrated, /id:\s*file-drop-eac/);
+  assert.match(migrated, /name:\s*'dsh-file-drop-eac'/);
 });
 
 test('first-run cleanup treats a missing patch file as empty state', () => {
