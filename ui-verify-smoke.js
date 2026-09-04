@@ -13,6 +13,13 @@ const http = require('node:http');
 const repo = path.resolve(__dirname);
 const tmpHome = path.join(repo, 'tmp-ui-verify-installed', 'ui-home');
 fs.mkdirSync(tmpHome, { recursive: true });
+// 0.1.3 首启「内测声明」模态（WelcomeNotice）：确认状态持久化在 settings.yaml
+// 的 ui-onboarding 命名空间（welcomeNoticeVersion 精确等值 "2026-08-13.1"，
+// 见 dsh-client-ui-settings-models WelcomeNoticeStore.derive；loopback 浏览器
+// 跟随 durable Host section）。预置确认状态让模态根本不渲染——它的延迟弹出
+// +CSS 哈希类随内核版本漂移，DOM 点击关闭不可靠。
+fs.writeFileSync(path.join(tmpHome, 'settings.yaml'),
+  'ui-onboarding:\n  welcomeNoticeVersion: "2026-08-13.1"\n');
 const CDP_PORT = 9334;
 const EXE = process.env.DSH_SMOKE_EXE || process.argv[2] || path.join(repo, 'tauri-shell', 'target', 'release', 'dsh-eac-shell.exe');
 const SHOTS = path.join(repo, 'tmp-ui-verify-installed', 'shots');
@@ -160,18 +167,40 @@ async function waitForAppReady(client, timeoutMs) {
     // ---- C) 模型菜单救援：越界 → 翻转向下可见 ----
     // 首启"内测声明"等全局模态（web-frontend ModalRoot，z 1000 遮罩）会盖住整个
     // 应用；真实用户点过「继续」后不再出现，测试前先点掉它。
+    // 0.1.3：哈希类 _root_15u5s/_mask_* 已换代，且模态可能延迟数秒才弹出 ——
+    // 改为结构化轮询：中心点命中 fixed 遮罩 → 就近找模态根点最后一个按钮 →
+    // 循环直至中心点不再命中遮罩（上限 20 次 ≈ 10s）。
     const modalDismiss = await client.evalJs(`(async () => {
       const wait = (ms) => new Promise((res) => setTimeout(res, ms));
-      const root = Array.from(document.querySelectorAll('[class*="_root_15u5s"]'))
-        .find((el) => { const r = getComputedStyle(el); return r.position === 'fixed' && r.zIndex === '1000'; });
-      if (!root) return 'none';
-      const btns = Array.from(root.querySelectorAll('button'));
-      const target = btns[btns.length - 1] || btns[0];
-      if (!target) return 'no-button';
-      target.click();
-      await wait(600);
-      return Array.from(document.querySelectorAll('[class*="_root_15u5s"]'))
-        .some((el) => { const r = getComputedStyle(el); return r.position === 'fixed' && r.zIndex === '1000'; }) ? 'still-open' : 'dismissed';
+      const centerMask = () => {
+        const hit = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight / 2));
+        if (!hit) return null;
+        const cls = typeof hit.className === 'string' ? hit.className : '';
+        return cls.includes('_mask_') || cls.includes('mask_') ? hit : null;
+      };
+      const modalRootOf = (maskEl) => {
+        // 遮罩的兄弟层是内容根：向上找 fixed 高层容器，再退回遮罩父级。
+        let el = maskEl;
+        for (let i = 0; i < 5 && el; i += 1) {
+          const s = getComputedStyle(el);
+          if (s.position === 'fixed' && Number(s.zIndex) >= 100 && el.querySelector('button')) return el;
+          el = el.parentElement;
+        }
+        return maskEl.parentElement;
+      };
+      let dismissed = 0;
+      for (let i = 0; i < 20; i += 1) {
+        const mask = centerMask();
+        if (!mask) break;
+        const root = modalRootOf(mask);
+        const btns = root ? Array.from(root.querySelectorAll('button')) : [];
+        const target = btns[btns.length - 1] || btns[0];
+        if (!target) { await wait(500); continue; }
+        target.click();
+        dismissed += 1;
+        await wait(500);
+      }
+      return dismissed === 0 ? 'none' : 'dismissed';
     })()`);
     check('C0 关闭首启模态（若有）', modalDismiss === 'none' || modalDismiss === 'dismissed', String(modalDismiss));
     const menu = await client.evalJs(`(async () => {
@@ -211,14 +240,21 @@ async function waitForAppReady(client, timeoutMs) {
         };
       };
       let p = probeInfo();
-      if (p.onMask) {
-        const root = Array.from(document.querySelectorAll('[class*="_root_15u5s"]'))
-          .find((el) => { const s = getComputedStyle(el); return s.position === 'fixed' && s.zIndex === '1000'; });
-        if (root) {
-          const btns = Array.from(root.querySelectorAll('button'));
-          (btns[btns.length - 1] || btns[0])?.click?.();
-          await wait(700);
+      // C3 兜底（0.1.3 模态延迟弹出）：中心点命中遮罩 → 结构化轮询点击模态
+      // 根的最后一个按钮直至遮罩消失（与 C0 同策略；上限 10 次 ≈ 5s）。
+      for (let round = 0; round < 10 && p.onMask; round += 1) {
+        const maskEl = document.elementFromPoint(Math.round(innerWidth / 2), Math.round(innerHeight / 2));
+        if (!maskEl) break;
+        let root = null;
+        for (let el = maskEl, i = 0; i < 5 && el; i += 1) {
+          const s = getComputedStyle(el);
+          if (s.position === 'fixed' && Number(s.zIndex) >= 100 && el.querySelector('button')) { root = el; break; }
+          el = el.parentElement;
         }
+        const btns = (root || maskEl.parentElement)?.querySelectorAll('button') || [];
+        (btns[btns.length - 1] || btns[0])?.click?.();
+        await wait(500);
+        p = probeInfo();
       }
       for (let attempt = 0; attempt < 4 && !p.hitIsMenu && !p.onMask; attempt++) {
         await wait(450);
@@ -232,7 +268,7 @@ async function waitForAppReady(client, timeoutMs) {
     })()`);
     check('C1 越界菜单被翻转向下（dsh-popup-flip）', menu && menu.flipped === true, JSON.stringify(menu && { flipped: menu.flipped, maxH: menu.maxH, rect: menu.rect, trigger: menu.triggerRect, trailing: menu.trailingRect }));
     check('C2 菜单顶部 ≥ 36 不再出视口', menu && menu.rect && menu.rect.top >= 36, JSON.stringify(menu && menu.rect));
-    check('C3 菜单顶角像素命中菜单自身（未被遮挡）', menu && menu.hitIsMenu === true);
+    check('C3 菜单顶角像素命中菜单自身（未被遮挡）', menu && menu.hitIsMenu === true, JSON.stringify(menu && { hitIsMenu: menu.hitIsMenu, onMask: menu.onMask, hitClass: menu.hitClass, seatVis: menu.seatVis }));
     await client.shot('g3-model-menu-flip.png');
 
     // ---- D) 悬停浮层横向溢出（提示词优化按钮 hover / 「/」命令菜单同款病灶） ----

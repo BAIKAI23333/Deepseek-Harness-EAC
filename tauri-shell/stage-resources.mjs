@@ -384,6 +384,20 @@ if (existsSync(vendoredBashFix)) {
   console.log('[stage] 已回填 dsh-tool-bash 的 vendored 修复');
 }
 
+// fs-ext 原生模块回填（内核 0.1.3 新依赖）：session-persistence-jsonl 的会话
+// 锁依赖 fs_ext.node（flock）。staging 用 npm ci --ignore-scripts 安装，fs-ext
+// 的 node-gyp 构建脚本被跳过 → staged 树缺 build/Release/fs_ext.node →
+// session-persistence-jsonl 装载失败 → dsh web 退出码 1（真实环境「DSH 服务
+// 已停止」）。从 dev 树回填已编译产物（同 vendored 回填模式；交叉打包已被
+// 上方 targetPlatform===process.platform 门禁拒绝，这里产物必属本机平台）。
+const fsExtNative = path.join(dd, 'node_modules', 'fs-ext', 'build');
+if (existsSync(path.join(fsExtNative, 'Release', 'fs_ext.node'))) {
+  cpSync(fsExtNative, path.join(nmDest, 'fs-ext', 'build'), { recursive: true });
+  console.log('[stage] 已回填 fs-ext 原生构建（fs_ext.node，内核 0.1.3 会话锁依赖）');
+} else {
+  throw new Error('[stage] dev 树缺少 fs-ext 原生构建（node_modules/fs-ext/build/Release/fs_ext.node）——先在 dev 树 npm install 触发 node-gyp 编译，或换用支持预编译分发的 fs-ext 版本');
+}
+
 const sanitizedClients = sanitizeClientBuildPaths(nmDest);
 console.log(`[stage] 已清理 ${sanitizedClients} 个内核 client bundle 的构建机路径`);
 
