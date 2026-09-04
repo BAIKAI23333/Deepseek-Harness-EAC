@@ -67,15 +67,27 @@ On top of the official foundation, EAC embraces community creations — skins, p
 
 ### Windows
 
-> The current full edition is v4.4.1 (Electron shell); the Lite edition below uses a Tauri (Rust) shell — smaller and faster to start. Download installers directly from Releases.
+> The current release line is 5.x (Tauri/Rust shell). Since 5.2 the desktop builds share a unified Tauri shell; the earlier v4.4.1 Electron edition is retired (archived in Releases only). Download installers directly from Releases.
 
 | File | Description | Size |
 | --- | --- | --- |
-| [Setup exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Setup-v4.4.1-x64.exe) | Installs to the system and creates shortcuts | ~246 MB |
-| [Portable exe](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.1/Deepseek-Harness-EAC-Portable-v4.4.1-x64.exe) | No installation required; a single file you can place anywhere | ~212 MB |
-| [Lite setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.5-lite/Deepseek.Harness.EAC.v4Lite_4.5.0_x64-setup.exe) | **Lite edition** (lighter Tauri shell, independent of the full builds above and safe to run side by side): main executable `Deepseek Harness EAC v4Lite.exe`, data directory `~/.dsh-v4lite`, SHA256 checksum file included with the release | ~73 MB |
+| [Setup (v5.3.6)](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek-Harness-EAC-5.3.6-Setup-x64.exe) | Tauri shell setup build (NSIS): installs to the system and creates shortcuts; SHA256 checksums are published with the [release](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/tag/v5.3.6) | ~191 MB |
+| [Portable zip (v5.3.6)](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek-Harness-EAC-5.3.6-portable.zip) | No installation required: unzip anywhere and run; portable data stays next to the program directory for easy migration | ~228 MB |
 
-See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases) for more versions.
+See the [Releases page](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases) for more versions.
+
+### AIO Edition (Windows x64 · All-in-One)
+
+> **DSHEAC AIO** is an **All-in-One polished personal terminal** maintained on a line separate from the 5.x mainline: a single package bundling the dsh kernel, the plugin marketplace, and the full desktop experience, ready out of the box. It is isolated from the main edition (separate app data and `dsh-home`; it never reads 5.x / v4Lite / legacy EAC or CLI data by default) and can be installed side by side. Current version: **AIO v1.1.0** (source branch `aio-v1`, published together with the [v5.3.6 release](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/tag/v5.3.6)).
+
+| File | Description | Size |
+| --- | --- | --- |
+| [AIO setup (v1.1.0)](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/DSHEAC-AIO-v1-Windows-x64.exe) | NSIS setup build that installs to the system and creates shortcuts; the executable is `DSHEAC AIO.exe`, fully isolated from the main edition's updater | ~332 MB |
+| [AIO portable (v1.1.0)](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/DSHEAC-AIO-v1-Portable-x64.zip) | No installation required: unzip and run; data is written to `.dsh-aio-data` next to the EXE and migrates with it | ~123 MB |
+| [SHA256SUMS-AIO-v1.1.0.txt](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/SHA256SUMS-AIO-v1.1.0.txt) | SHA-256 checksums for the AIO assets | — |
+
+- The AIO installer is not yet Authenticode-signed; SmartScreen may warn about an unknown publisher. Verify the SHA-256 checksum before running.
+- Client self-update is not offered in the AIO edition and plugin auto-update is off by default; keep the installation path under 120 characters.
 
 > 💡 **Upgrading**: just download and run the newest installer above over your existing install.
 > Plugins, skins, sessions and settings are preserved: data lives in
@@ -97,12 +109,12 @@ See the [Releases page](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/rel
 
 ### Linux (x64)
 
-> The Linux desktop build is continuously built and verified by our CI (Ubuntu 22.04) and released on its own version line (latest maintained release: v4.4.0). Windows/macOS share the unified v5.1.0 line; folding Linux into the unified line is planned once the release pipeline is ready.
+> The Linux desktop build is continuously built and verified by our CI (Ubuntu 22.04). Since v5.3.6, the AppImage and .deb assets ship on the unified release line (currently v5.3.6); .rpm/.pacman remain on the separate line (latest maintained release: v4.4.0).
 
 | File | Description |
 | --- | --- |
-| [.deb (Debian/Ubuntu)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | Installs and launches from the app menu |
-| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | No installation: `chmod +x` and run |
+| [.deb (Debian/Ubuntu, v5.3.6)](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek.Harness.EAC_5.3.6_amd64.deb) | Installs and launches from the app menu |
+| [AppImage (v5.3.6)](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek.Harness.EAC_5.3.6_amd64.AppImage) | No installation: `chmod +x` and run |
 | [.rpm (Fedora/openSUSE)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
 | [.pacman (Arch)](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
 

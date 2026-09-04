@@ -71,10 +71,23 @@
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [安装版 Setup](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) | Tauri 壳安装版（NSIS），安装到系统并创建快捷方式；文件名形如 `*-Setup-*-x64.exe` | ~180 MB |
-| [便携版](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/latest) | 免安装单文件（自解压），可放任意目录运行；文件名形如 `*-Portable-*-x64.exe`，SHA256 校验文件随 Release 提供 | ~205 MB |
+| [安装版 Setup（v5.3.6）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek-Harness-EAC-5.3.6-Setup-x64.exe) | Tauri 壳安装版（NSIS），安装到系统并创建快捷方式；SHA256 校验文件随 [Release](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/tag/v5.3.6) 提供 | ~191 MB |
+| [便携版（v5.3.6）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek-Harness-EAC-5.3.6-portable.zip) | 免安装压缩包，解压到任意目录即可运行；数据跟随程序目录，可直接迁移 | ~228 MB |
 
-更多版本见 [Releases 页面](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases)。
+更多版本见 [Releases 页面](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases)。
+
+### AIO 版（Windows x64 · All-in-One）
+
+> **DSHEAC AIO** 是独立于 5.x 主线的 **All-in-One 精致个人终端**：一个安装包备齐 dsh 内核、插件市场与完整桌面体验，开箱即用；与正式版相互隔离（独立 app data 与 `dsh-home`，默认不读取 5.x / v4Lite / 旧 EAC 或 CLI 数据），可并存安装。当前版本 **AIO v1.1.0**（源码分支 `aio-v1`，随 [v5.3.6 Release](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/tag/v5.3.6) 一同发布）。
+
+| 文件 | 说明 | 大小 |
+| --- | --- | --- |
+| [AIO 安装版（v1.1.0）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/DSHEAC-AIO-v1-Windows-x64.exe) | NSIS 安装版，安装到系统并创建快捷方式；EXE 为 `DSHEAC AIO.exe`，与正式版更新器互相隔离 | ~332 MB |
+| [AIO 便携版（v1.1.0）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/DSHEAC-AIO-v1-Portable-x64.zip) | 免安装解压即用，数据写入 EXE 同级 `.dsh-aio-data`，可直接迁移 | ~123 MB |
+| [校验清单 SHA256SUMS-AIO-v1.1.0.txt](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/SHA256SUMS-AIO-v1.1.0.txt) | AIO 资产 SHA-256 校验 | — |
+
+- 安装包尚未 Authenticode 签名，SmartScreen 可能提示未知发布者；运行前请先核对 SHA-256。
+- 客户端自更新不在 AIO 中提供，插件自动更新默认关闭；安装路径建议不超过 120 个字符。
 
 > 💡 **升级说明（老用户必读）**：
 > - 直接下载上方最新安装包覆盖安装即可；
@@ -97,12 +110,12 @@
 
 ### Linux（x64）
 
-> Linux 桌面端由 CI（Ubuntu 22.04）持续构建与验证，以独立版本线发布（最近维护版 v4.4.0）。Windows/macOS 走统一版本线（当前 v5.1.0），Linux 并入统一版本线待发布管线就绪后补发。
+> Linux 桌面端由 CI（Ubuntu 22.04）持续构建与验证；自 v5.3.6 起 AppImage 与 .deb 已并入统一版本线（当前 v5.3.6），.rpm/.pacman 仍由独立版本线提供（最近维护版 v4.4.0）。
 
 | 文件 | 说明 |
 | --- | --- |
-| [.deb（Debian/Ubuntu）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-amd64.deb) | 安装后可从应用菜单启动 |
-| [AppImage](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x86_64.AppImage) | 免安装：`chmod +x` 后直接运行 |
+| [.deb（Debian/Ubuntu，v5.3.6）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek.Harness.EAC_5.3.6_amd64.deb) | 安装后可从应用菜单启动 |
+| [AppImage（v5.3.6）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/Deepseek.Harness.EAC_5.3.6_amd64.AppImage) | 免安装：`chmod +x` 后直接运行 |
 | [.rpm（Fedora/openSUSE）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0.x86_64.rpm) | — |
 | [.pacman（Arch）](https://github.com/zouyuxuan122/Deepseek-Harness-EAC/releases/download/v4.4.0-linux/Deepseek-Harness-EAC-4.4.0-x64.pacman) | — |
 
