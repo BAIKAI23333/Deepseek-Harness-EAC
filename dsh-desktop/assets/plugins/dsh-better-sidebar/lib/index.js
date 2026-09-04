@@ -8,7 +8,9 @@ import { once } from "node:events";
 import { chmodSync, createWriteStream, existsSync, readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { SettingsConflictError, settingsNamespace } from "@deepseek-ai/dsh-settings";
+import { SettingsConflictError } from "@deepseek-ai/dsh-settings";
+// 0.1.3：dsh-settings 移除 settingsNamespace 独立导出 —— 改走共享兼容垫片。
+import { settingsNamespace } from "./settings-compat.js";
 import { homedir, userInfo } from "node:os";
 import { defineTool } from "@deepseek-ai/dsh-tools";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";

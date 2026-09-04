@@ -36,6 +36,7 @@ const KERNEL_DEP_GAPS = [
   '@deepseek-ai/dsh-session-persistence',
   '@deepseek-ai/dsh-session-query',
   '@deepseek-ai/dsh-settings',
+  '@deepseek-ai/dsh-util-time',
   '@deepseek-ai/dsh-util-workspace-path',
 ];
 

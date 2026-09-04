@@ -21,7 +21,7 @@ const os = require("node:os");
 const path = require("node:path");
 const cp = require("node:child_process");
 const REPO = 'deepseek-ai/deepseek-harness';
-const DEFAULT_TAG = 'dsh-v0.1.2-alpha.1';
+const DEFAULT_TAG = 'dsh-v0.1.3-alpha.1';
 const ROOT = path.resolve(__dirname, '..');
 const WORK = path.join(ROOT, 'vendor', 'kernel', '.build');
 const TMP = path.join(os.tmpdir(), 'dsh-kernel-build');
@@ -108,11 +108,20 @@ function main() {
     fs.mkdirSync(WORK, { recursive: true });
     const tgzPath = path.join(WORK, `${tag}.tar.gz`);
     const url = `https://codeload.github.com/${REPO}/tar.gz/refs/tags/${tag}`;
-    const curlArgs = ['-fsSL', '-o', tgzPath, url];
-    if (process.platform === 'win32')
-        curlArgs.splice(1, 0, '--ssl-no-revoke'); // 本机证书库校验坑
-    console.log(`fetch-kernel: 下载 ${url}`);
-    run('curl', curlArgs, WORK);
+    // 本机 DNS 偶发解析失败（codeload.github.com 间歇 NXDOMAIN）；预下载兜底
+    // 存在则直接复用，避免整链重跑。路径由环境变量 DSH_KERNEL_TARBALL 指定。
+    const preTarball = process.env.DSH_KERNEL_TARBALL;
+    if (preTarball && fs.existsSync(preTarball)) {
+        fs.copyFileSync(preTarball, tgzPath);
+        console.log(`fetch-kernel: 使用预下载 tarball ${preTarball}`);
+    }
+    else {
+        const curlArgs = ['-fsSL', '-o', tgzPath, url];
+        if (process.platform === 'win32')
+            curlArgs.splice(1, 0, '--ssl-no-revoke'); // 本机证书库校验坑
+        console.log(`fetch-kernel: 下载 ${url}`);
+        run('curl', curlArgs, WORK);
+    }
     console.log('fetch-kernel: 解包');
     run('tar', ['-xzf', path.basename(tgzPath)], WORK);
     const srcDir = fs.readdirSync(WORK).find((e) => e.startsWith('deepseek-harness-') && fs.statSync(path.join(WORK, e)).isDirectory());

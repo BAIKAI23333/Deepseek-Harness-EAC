@@ -35,7 +35,8 @@ const PLUGIN_VERSION = (() => {
 import { installModelSelection } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+// 0.1.3：dsh-settings 移除两个独立导出 —— 改走共享兼容垫片（行为逐行一致）。
+import { installSettingsSection, settingsNamespace } from "./settings-compat.js";
 import z from "@deepseek-ai/schemastery";
 import { createWechatClient } from "./wechat.js";
 import { OpenAiCompatAdapter, PROVIDER_ID } from "./openai-compat.js";

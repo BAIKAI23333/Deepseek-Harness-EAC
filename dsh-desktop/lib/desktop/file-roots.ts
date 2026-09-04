@@ -15,6 +15,9 @@ const { scanZstdFrames } = require('../../session-watcher') as {
 
 export const DANGEROUS_EXT = /\.(bat|cmd|com|exe|ps1|vbs|lnk|js|jse|msi|scr|pif|reg)$/i;
 
+// 会话日志世代文件名（0.1.3 起含 .vN 段，见 session-watcher 同名正则）。
+const SESSION_LOG_RE = /^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/;
+
 const fileRootsCache: { at: number; roots: string[] } = { at: 0, roots: [] };
 // 5.3.3：按文件 mtime 增量缓存每个会话的 cwd —— 缓存过期后只重读**新增/
 // 变化**的 session.jsonl.zstd（readFileSync + zstd 解压是大头），扫描会话
@@ -29,11 +32,17 @@ function readSessionCwd(p: string, mtimeMs: number): string {
   let cwd = '';
   try {
     const buf = fs.readFileSync(p);
-    const { frames } = scanZstdFrames(buf);
-    if (frames.length > 0) {
-      const text = zlib.zstdDecompressSync(buf.subarray(frames[0]!.start, frames[0]!.end)).toString('utf8');
-      const header = JSON.parse(text.split('\n', 1)[0]!) as SessionHeader;
+    // 未压缩 .jsonl：首行即 header；压缩走 zstd 帧扫描（v2/v0 同构）。
+    if (!p.endsWith('.zstd')) {
+      const header = JSON.parse(buf.toString('utf8').split('\n', 1)[0]!) as SessionHeader;
       if (header && typeof header.cwd === 'string') cwd = header.cwd;
+    } else {
+      const { frames } = scanZstdFrames(buf);
+      if (frames.length > 0) {
+        const text = zlib.zstdDecompressSync(buf.subarray(frames[0]!.start, frames[0]!.end)).toString('utf8');
+        const header = JSON.parse(text.split('\n', 1)[0]!) as SessionHeader;
+        if (header && typeof header.cwd === 'string') cwd = header.cwd;
+      }
     }
   } catch { /* 损坏日志按空 cwd 缓存，mtime 变化才重试 */ }
   cwdByFile.set(p, { mtimeMs, cwd });
@@ -50,7 +59,10 @@ export function fileRoots(): string[] {
     for (const e of entries) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) { walk(p); continue; }
-      if (e.name !== 'session.jsonl.zstd') continue;
+      // 0.1.3 Session format v2：世代文件 session.v<N>.jsonl(.zstd)；v0 会话
+      // 仍是 session.jsonl.zstd。根扫描认所有世代（同会话多代 cwd 相同，
+      // 收进 Set 无副作用）。
+      if (!SESSION_LOG_RE.test(e.name)) continue;
       try {
         const cwd = readSessionCwd(p, fs.statSync(p).mtimeMs);
         if (cwd) roots.push(cwd);

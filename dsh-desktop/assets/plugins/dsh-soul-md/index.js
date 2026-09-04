@@ -21,7 +21,8 @@ import { readFileSync, watch } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { resolveDshHome } from "@deepseek-ai/dsh-home-paths";
-import { installSettingsSection, settingsNamespace } from "@deepseek-ai/dsh-settings";
+// 0.1.3：dsh-settings 移除两个独立导出 —— 改走内嵌兼容垫片（行为逐行一致）。
+import { installSettingsSection, settingsNamespace } from "./vendor/settings-compat.js";
 import { ensureSettingsNamespaceExposed } from "./vendor/dsh-settings-expose.js";
 
 /** Cordis plugin name. */

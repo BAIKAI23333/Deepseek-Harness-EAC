@@ -39,7 +39,9 @@ function companionSlice() {
 // 有 package.json 但明确不随 COMPANION_PLUGINS 分发的目录（退役等）。
 const EXCEPTIONS = new Set([
   'dsh-auto-compact', // 已退役，见 RETIRED_BUILTIN_PLUGINS
-]);test('every vendored plugin dir is registered in COMPANION_PLUGINS', () => {
+  'shared', // EAC 插件共享兼容垫片（0.1.3 内核 API 适配层，非插件，仅被其他插件 import）
+]);
+test('every vendored plugin dir is registered in COMPANION_PLUGINS', () => {
   const pluginsDir = join(root, 'assets', 'plugins');
   const dirs = readdirSync(pluginsDir).sort();
   const withoutManifest = dirs.filter((d) => !existsSync(join(pluginsDir, d, 'package.json')));

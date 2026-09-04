@@ -33,6 +33,7 @@ const KERNEL_DEP_GAPS = [
     '@deepseek-ai/dsh-session-persistence',
     '@deepseek-ai/dsh-session-query',
     '@deepseek-ai/dsh-settings',
+    '@deepseek-ai/dsh-util-time',
     '@deepseek-ai/dsh-util-workspace-path',
 ];
 /** 从 tarball 文件名解析包名：deepseek-ai-<pkg>-<semver>.tgz → @deepseek-ai/<pkg>。 */

@@ -1,6 +1,6 @@
 'use strict';
 
-// Watches dsh session logs (<DSH_HOME>/sessions/**/session.jsonl.zstd) and
+// Watches dsh session logs (<DSH_HOME>/sessions/**/session[.vN].jsonl[.zstd]) and
 // fires onTurnEnd when a TOP-LEVEL session's agent turn finishes.
 //
 // On-disk format (dsh-session-persistence-jsonl): the log is concatenated
@@ -8,6 +8,11 @@
 // frame is the session header; event rows may pack delta runs into
 // 'text-chunks' / 'reasoning-chunks' / 'tool-call-chunks' storage rows.
 // A 'turn/end' event marks the end of the agent's run.
+//
+// 0.1.3 Session format v2: generations land in session.v2.jsonl(.zstd) and
+// Assistant streams aggregate into 'assistant/attempt' events; v0/v1 logs
+// (session.jsonl) remain readable, so the watcher accepts every generation
+// filename and counts both attempt and message rows as turn output.
 //
 // Decoding mirrors the persistence backend's public-API path exactly:
 // structurally scan complete frame ranges, then zstdDecompressSync each
@@ -18,6 +23,11 @@ import path = require('node:path');
 import zlib = require('node:zlib');
 
 const ZSTD_MAGIC = 4247762216; // 28 B5 2F FD little-endian
+
+// 内核 0.1.3 起 Session format v2：世代日志命名 session.v<N>.jsonl(.zstd)
+//（v0 无版本段）。同一会话目录迁移后可能并存多代文件，全部纳入监听：
+// v0/v1 旧文件在迁移前仍是唯一事实源，v2 是当前写入目标。
+const SESSION_LOG_RE = /^session(?:\.v\d+)?\.jsonl(?:\.zstd)?$/;
 
 // Structural zstd frame scanner (ported from dsh-session-persistence-jsonl).
 interface ScanFrame { start: number; end: number }
@@ -127,7 +137,7 @@ class SessionWatcher {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
           const p = path.join(dir, entry.name);
           if (entry.isDirectory()) walk(p);
-          else if (entry.name === 'session.jsonl.zstd') out.push(p);
+          else if (SESSION_LOG_RE.test(entry.name)) out.push(p);
         }
       };
       walk(this.sessionsDir);
@@ -166,27 +176,29 @@ class SessionWatcher {
     let buf;
     try { buf = fs.readFileSync(file); } catch { return false; }
 
+    // 未压缩 .jsonl（内核 compression 可配 plaintext）：整文件即一帧文本。
+    const plain = !file.endsWith('.zstd');
+    const frames = plain
+      ? [{ start: 0, end: buf.length }]
+      : scanZstdFrames(buf).frames;
+
     // Session header from the first frame (first sight only).
-    if (!rec.header) {
-      const { frames } = scanZstdFrames(buf);
-      if (frames.length > 0) {
-        try {
-          const text = decodeFrame(buf.subarray(frames[0]!.start, frames[0]!.end));
-          const firstLine = text.split('\n')[0]!;
-          const h = JSON.parse(firstLine) as Record<string, any>;
-          if (h && h.type === 'session') rec.header = h;
-        } catch { /* keep null; retry next poll */ }
-      }
+    if (!rec.header && frames.length > 0) {
+      try {
+        const text = plain ? buf.toString('utf8') : decodeFrame(buf.subarray(frames[0]!.start, frames[0]!.end));
+        const firstLine = text.split('\n')[0]!;
+        const h = JSON.parse(firstLine) as Record<string, any>;
+        if (h && h.type === 'session') rec.header = h;
+      } catch { /* keep null; retry next poll */ }
     }
 
-    const { frames } = scanZstdFrames(buf);
     let turnEnds = 0;
     let assistantMessages = 0;
     let consumed = rec.consumed;
     for (const { start, end } of frames) {
       if (start < consumed) continue;
       let text;
-      try { text = decodeFrame(buf.subarray(start, end)); } catch { break; }
+      try { text = plain ? buf.toString('utf8') : decodeFrame(buf.subarray(start, end)); } catch { break; }
       for (const line of text.split('\n')) {
         if (!line) continue;
         for (const ev of expandRow(line) as Array<Record<string, any>>) {
@@ -194,7 +206,10 @@ class SessionWatcher {
           if (ev.type === 'session/title' && ev.data && typeof ev.data.title === 'string') rec.title = ev.data.title;
           if (ev.type === 'turn/start' || ev.type === 'turn/end') rec.hasTurnEvents = true;
           if (ev.type === 'turn/end') turnEnds += 1;
-          if (ev.type === 'assistant/message') assistantMessages += 1;
+          // 0.1.3 v2：Assistant 流聚合为 assistant/attempt（settlement 时落
+          // assistant/message）。两者都计为「一轮产出」——v2 会话里
+          // attempt 是唯一稳定信号，v0/v1 会话仍走 assistant/message。
+          if (ev.type === 'assistant/message' || ev.type === 'assistant/attempt') assistantMessages += 1;
         }
       }
       consumed = end;

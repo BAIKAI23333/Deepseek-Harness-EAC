@@ -17,7 +17,8 @@
  * @module computer-user
  */
 
-import { settingsNamespace } from '@deepseek-ai/dsh-settings';
+// 0.1.3：dsh-settings 移除 settingsNamespace 独立导出 —— 改走内嵌兼容垫片。
+import { settingsNamespace } from './settings-compat.js';
 import { NS, Config } from './config.js';
 import { createComputerTools } from './tools.js';
 import { runPs, powerShellScript } from './ps.js';
