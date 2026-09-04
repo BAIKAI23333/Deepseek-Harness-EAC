@@ -272,9 +272,11 @@ research/                     # Third-party WeChat / bridge protocol research
 
 | Plugin | Description |
 | --- | --- |
+| Archify (provider: tt-a1i, EAC recommended catalog) | Generates validated, interactive architecture, workflow, sequence, and data-flow diagrams from repositories or system descriptions, with standalone HTML/SVG/PNG export |
 | computer-user (provider: jing-hy) | Screen reading plus mouse/keyboard automation (Codex-style computer use; pairs with picturereader so text-only models work) |
 | dsh-auto-compact | Automatically sends `/compact` as the context approaches its limit |
 | @deepseek-ai/dsh-balance (provider: deepseek-ai) | Account balance, cost estimates, and pricing settings |
+| @nanmicoder/dsh-agent-teams (provider: nanmicoder) | Multi-agent team collaboration: natural-language-driven captains, members, dependent tasks, and messaging, with a tree monitor in the web GUI |
 | dsh-better-sidebar (provider: omdsh-dev) | VS Code-style right sidebar with Explorer, editor, terminal, Git, and browser views |
 | dsh-change-review | AI change review for automatically rechecking file modifications |
 | @deepseek-ai/dsh-client-file-changes (provider: deepseek-ai) | Files view with session change tracking and one-click restore |
@@ -284,24 +286,30 @@ research/                     # Third-party WeChat / bridge protocol research
 | dsh-dafeiyu (provider: QCYTSN) | Dafeiyu desktop companion |
 | dsh-deep-whale (provider: Small-tailqwq) | Source of the Deep-Sea Maid Workshop `maid-atelier` skin |
 | dsh-dock-settings | Skills and MCP settings management |
+| dsh-eac-core-bridge (EAC companion) | Core bridge that safely routes tool and context contributions from isolated SDK plugins into the dsh agent (trusted component; extension failures never block core turns) |
+| dsh-eac-locale-compat (EAC companion) | English compatibility layer for bundled DSH plugins that do not expose locale dictionaries |
 | @deepseek-ai/dsh-easy-setup (provider: deepseek-ai) | Quick setup for vision models, `soul.md`, and migration |
+| dsh-feature-toggles (EAC companion) | "Enhanced features" section in Settings: one-click toggles for off-by-default bundled plugins (balance whale, AgentTeams, and more) |
 | @deepseek-ai/dsh-file-changes (provider: deepseek-ai) | Session file-change projection |
 | dsh-file-drop-eac (provider: jing-hy) | Drag files or folders into a conversation |
 | @deepseek-ai/dsh-float-window (provider: deepseek-ai) | Opens a conversation in a separate window |
 | dsh-font-custom | Custom fonts plus text and code colors |
 | dsh-image-paste | Paste and send clipboard images |
+| dsh-meow-smooth (provider: Phant0Meow) | Meow-smooth front-end polish: composer auto-collapse on blur plus auto-collapsing sidebar on narrow screens after selecting a session |
 | dsh-message-rewind | Rewrite a message and regenerate from that point |
 | @vlln/dsh-navbar (provider: vlln) | Conversation-node navigation bar for jumping between user messages |
 | dsh-offpeak (provider: christophersmith2737-commits) | DeepSeek peak/off-peak pricing reminder and interception |
 | @deepseek-ai/dsh-openclaw-bridge (provider: deepseek-ai) | WeChat ClawBot / OpenClaw bridge |
 | dsh-pet (provider: PC2005-cloud) | Floating desktop pet for the page |
 | dsh-pet-settings | Desktop pet settings section |
+| dsh-phone (EAC companion) | Phone connection: LAN QR pairing plus a full reverse proxy of the Web UI |
 | dsh-plugin-guard (provider: lxzy-7) | Pre-install snapshots, rollback, and guarded startup |
 | dsh-plugin-healthcheck (provider: chenw2759-wq) | Static plugin health checks and risk inspection |
 | @deepseek-ai/dsh-plugin-manager (provider: deepseek-ai) | Lists and enables or disables bundled plugins |
 | dsh-plugin-shield | Plugin protection with snapshots, rollback, and health checks |
 | dsh-plugin-wizard | Plugin selection wizard |
 | @deepseek-ai/dsh-prompt-custom (provider: deepseek-ai) | Custom core prompts |
+| dsh-raw-html (EAC hosted) | VCP visual synesthesia: sandboxed HTML rendering through the official conversation slot, with typography, aesthetic, and design-spec capabilities |
 | dsh-session-manager (provider: hkkz9522) | Session deletion and archive management |
 | dsh-settings-groups | Collapsible advanced options on the Settings page |
 | dsh-settings-nav-custom | Customization for the Settings sidebar |
@@ -314,10 +322,13 @@ research/                     # Third-party WeChat / bridge protocol research
 | dsh-tool-vision (provider: Scorp1o117) | Image analysis through OpenAI-compatible vision models |
 | dsh-undo-savepoint (provider: lire1131) | Configuration snapshots and undo/rollback |
 | dsh-unified-market (provider: jing-hy) | Unified plugin marketplace aggregating three sources |
+| dsh-viewport-lock (EAC companion) | Viewport containment: scroll clamping, stable hero centering, and transparent dynamic composer clipping across the desktop shell, browsers, and phone clients |
 | dsh-web-mobile-fix (provider: AcidGr) | Mobile layout fixes |
 | dsh-web-plugin-manager (provider: LX2000WASD) | Entry point for guarded plugin installation and health checks |
 | dsh-web-ui (provider: zhu1090093659) | Source of nine built-in Web UI skins |
 | dsh-webui-market (provider: Sanqi-normal) | Community plugin directory with one-click installation and removal |
+| dsh-webui-prompt-optimizer (extracted from statem-li/dsh-webui) | Streaming prompt optimizer for the Web UI |
+| dsh-whale-widget (provider: MeteorNOX) | Balance whale widget: today's usage, peak/off-peak pricing, random quotes, sound effects, and per-turn cost statistics |
 | picturereader (provider: jing-hy) | Unified image-understanding plugin |
 
 Thank you to every plugin provider for contributing to this project and the open-source community. With so many plugins, we may not have identified every plugin and source individually. If you recognize your work here, please let us know so we can add it to the acknowledgements. You are also welcome to join our community groups to exchange ideas and help the ecosystem grow.
