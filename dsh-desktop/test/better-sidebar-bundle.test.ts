@@ -22,7 +22,7 @@ test('dsh-better-sidebar plugin package is vendored with prebuilt lib', () => {
   const pkg = JSON.parse(readFileSync(join(PLUGIN, 'package.json'), 'utf8'));
   const manifest = JSON.parse(readFileSync(join(PLUGIN, 'dsh.plugin.json'), 'utf8'));
   assert.equal(pkg.name, 'dsh-better-sidebar');
-  assert.equal(pkg.version, '0.15.3-eac.1',
+  assert.equal(pkg.version, '0.15.3-eac.2',
     'EAC must ship the patched 0.15.2-compatible build above the broken upstream version');
   assert.equal(manifest.version, pkg.version, 'EAC plugin manifest version must match package.json');
   assert.ok(existsSync(join(PLUGIN, 'lib', 'index.js')), 'server entry lib/index.js missing');
@@ -77,20 +77,36 @@ test('schemastery 在运行时闭包中可解析（声明 + node_modules 实装�
     'schemastery 未实装进 node_modules（stage npm ci 将据此进安装包）');
 });
 
-test('COMPANION_PLUGINS registers dsh-better-sidebar', () => {
+test('COMPANION_PLUGINS registers dsh-better-sidebar with a fresh-install open default', () => {
   // ADR 0002：注册表迁至 lib/desktop/companion-sync.js。
   const mainSrc = readFileSync(join(ROOT, 'lib', 'desktop', 'companion-sync.ts'), 'utf8');
-  assert.ok(/\{[^}]*id:\s*'better-sidebar'[^}]*name:\s*'dsh-better-sidebar'[^}]*\}/.test(mainSrc),
-    'COMPANION_PLUGINS entry missing');
+  assert.match(
+    mainSrc,
+    /\{\s*id:\s*'better-sidebar',\s*name:\s*'dsh-better-sidebar',\s*dir:\s*'dsh-better-sidebar',\s*config:\s*\{\s*openByDefault:\s*true\s*\}\s*\}/,
+    'newly generated profile rows must opt into opening the sidebar',
+  );
+  const existingRowGuard = mainSrc.indexOf('if (hasEntryId(patch, p.id)) continue;');
+  const configWrite = mainSrc.indexOf('block += configLinesFor(p.config)');
+  assert.ok(existingRowGuard >= 0 && configWrite > existingRowGuard,
+    'existing profile rows must be kept before new-row config is serialized');
 });
 
 test('vendored plugin ships without TypeScript sources (installer size)', () => {
   assert.equal(existsSync(join(PLUGIN, 'src')), false, 'src/ must not ship in the installer');
 });
 
-test('automatic better-sidebar restores do not collapse the host sidebar', () => {
+test('fresh-install open default composes below user settings without changing legacy defaults', () => {
   const serverSrc = readFileSync(join(PLUGIN, 'lib', 'index.js'), 'utf8');
-  assert.match(serverSrc, /openByDefault:\s*z\.boolean\(\)\.default\(false\)/,
+  assert.match(serverSrc, /const Config = z\.object\(\{\s*openByDefault:\s*z\.boolean\(\)\.default\(false\)/,
+    'deployment config must default false so existing profile rows keep their behavior');
+  assert.match(serverSrc, /openByDefault:\s*config\?\.openByDefault\s*\?\?\s*false/,
+    'direct callers without the new profile config must keep the legacy default');
+  assert.match(
+    serverSrc,
+    /sctx\.settings\.register\(ns,\s*PrefsSchema,\s*\{\s*base:\s*\{\s*openByDefault:\s*resolved\.openByDefault\s*\}\s*\}\)/,
+    'fresh-install config must be a settings base that explicit user values can override',
+  );
+  assert.match(serverSrc, /const PrefsSchema = z\.object\(\{\s*openByDefault:\s*z\.boolean\(\)\.default\(false\)/,
     'server preference schema must default openByDefault to false');
 
   for (const entry of ['client.js', 'client-registry.js']) {

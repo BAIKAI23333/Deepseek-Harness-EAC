@@ -33,6 +33,7 @@ const SIDEBAR_PREFS_NS = "dsh-better-sidebar";
 */
 /** Schemastery schema for the plugin configuration. */
 const Config = z.object({
+	openByDefault: z.boolean().default(false),
 	readLimit: z.number().step(1).min(1).default(524288),
 	mediaLimit: z.number().step(1).min(1).default(20971520),
 	uploadLimit: z.number().step(1).min(1).default(134217728),
@@ -50,6 +51,7 @@ const Config = z.object({
 */
 function resolveSidebarConfig(config) {
 	return {
+		openByDefault: config?.openByDefault ?? false,
 		readLimit: config?.readLimit ?? 524288,
 		mediaLimit: config?.mediaLimit ?? 20971520,
 		uploadLimit: config?.uploadLimit ?? 134217728,
@@ -3558,7 +3560,9 @@ function apply(ctx, config) {
 	};
 	ctx.inject(["settings"], (sctx) => {
 		const ns = settingsNamespace(SIDEBAR_PREFS_NS);
-		const scope = sctx.settings.register(ns, PrefsSchema);
+		const scope = sctx.settings.register(ns, PrefsSchema, {
+			base: { openByDefault: resolved.openByDefault }
+		});
 		const viewOf = () => {
 			const descriptor = sctx.settings.describe({ redactSecrets: true }).find((candidate) => candidate.ns === ns);
 			return descriptor === void 0 ? {

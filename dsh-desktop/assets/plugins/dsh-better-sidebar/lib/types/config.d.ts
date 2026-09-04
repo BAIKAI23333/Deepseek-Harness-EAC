@@ -9,6 +9,8 @@ import { type SidebarPrefs } from './prefs-shared.ts';
 export { SIDEBAR_PREFS_DEFAULTS, SIDEBAR_PREFS_NS, TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN, TITLE_BAR_STRIP_DEFAULT, TITLE_BAR_STRIP_MAX, TITLE_BAR_STRIP_MIN, WIDTH_PERCENT_DEFAULT, WIDTH_PERCENT_MAX, WIDTH_PERCENT_MIN, type SidebarPrefs, } from './prefs-shared.ts';
 /** Tunable sidebar host limits (every field optional; defaults fill in). */
 export interface SidebarConfig {
+    /** Deployment base for whether brand-new conversations open the sidebar. */
+    openByDefault?: boolean;
     /** Read cap of one text file (bytes); larger files return truncated. */
     readLimit?: number;
     /** Media route cap (bytes); larger binaries are refused. */
@@ -42,6 +44,7 @@ export interface SidebarConfig {
 export declare const Config: z<SidebarConfig>;
 /** Fully defaulted sidebar host settings. */
 export interface ResolvedSidebarConfig {
+    openByDefault: boolean;
     readLimit: number;
     mediaLimit: number;
     uploadLimit: number;

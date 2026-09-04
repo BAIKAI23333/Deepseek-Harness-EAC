@@ -134,8 +134,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'meow-smooth', name: 'meow-smooth', dir: 'dsh-meow-smooth', config: { enabled: true } },
   // VSCode 风格右侧边栏（文件树 / 编辑器 / 终端 / Git，按会话隔离）。
   // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
-  // schemastery（已加入 app 闭包，见 package.json）。
-  { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar' },
+  // schemastery（已加入 app 闭包，见 package.json）。config 只随缺失的新行写入；
+  // 已有 profile 行会在同步时跳过，保留升级用户的现有默认与自定义设置。
+  { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar', config: { openByDefault: true } },
   // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：消息 HTML 渲染
   // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）。EAC 集成通过
   // conversation.chat.node 的 assistant-step slot 接管，不修改上游压缩 bundle。
