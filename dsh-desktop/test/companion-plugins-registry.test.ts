@@ -79,4 +79,6 @@ test('regression: settings-groups stays registered, retired plugins never return
     'dsh-tool-vision 自 4.5.0 被 picturereader 取代，必须保持退役 —— 残留行会渲染空白「视觉模型」卡');
   assert.match(retiredSlice, /id:\s*'settings-nav-custom'/,
     'nav-custom 必须保持退役 —— 用户裁定移除普通/高级分栏，复活会再次接管侧边栏');
+  assert.match(retiredSlice, /id:\s*'file-drop'[^]*?name:\s*'dsh-file-drop'/,
+    '旧 file-drop 必须保持退役 —— 与 file-drop-eac 并存会重复接管文件和图片拖放');
 });
