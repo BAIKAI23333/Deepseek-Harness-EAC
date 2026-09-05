@@ -103,3 +103,15 @@ package.json 的 `name`/`version` 与台账一致（**改版必须同步台账�
   （10554 路径，未截断）经查不含 balance/easy-setup，报告 0.76 条目按其口径
   仅为"功能相近"。其余 1.00 条目与台账一致；dsh-undo-plugin 为
   dsh-undo-savepoint 改名前旧址（301 重定向）。
+
+### adapter-dsh 兼容性验证（2026-09-06，结论：不兼容，维持现状）
+
+`@dsh-std/adapter-dsh@0.1.1-rc.2` 的 peerDependencies 对全部内核包钉死
+`>=0.1.2-alpha.2 <0.1.3`（dsh-commands/llm/session/tools/api-gateway/
+session-controller/client-modules 等 10 个），**硬性排除我们当前的
+0.1.3-alpha.1**——上游自己的声明即验证结论，无需试装。
+
+产品决策：发布版维持 companion-sync 注册表加载路径不动；随包 manifest 仅作
+身份元数据（x-eac.role=identity-metadata）。切换适配层的前置条件：dsh-std
+上游（Yan-Zero/dsh-std）发布 peer 范围含 0.1.3 的 adapter 版本，并按
+[手册流程]向其发 issue/PR 推进；届时先在隔离 profile 试装协商，再评估迁移。
