@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-05",
+  "updatedAt": "2026-09-06",
   "audit": {
     "source": "DSH_EAC_Plugin_Audit_2026-09-05.xlsx (external full audit, 2026-09-05 Asia/Shanghai)",
     "mainBaseline": "e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
@@ -64,7 +64,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-balance",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-balance",
       "registryStatus": "注册表默认启用",
@@ -75,38 +75,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "GeekRicardo/dsh-balance",
-          "github": "https://github.com/GeekRicardo/dsh-balance"
-        },
-        {
-          "name": "gejiaju/dsh-balance",
-          "github": "https://github.com/gejiaju/dsh-balance"
-        },
-        {
-          "name": "kkbsgg/dsh-balance",
-          "github": "https://github.com/kkbsgg/dsh-balance"
-        },
-        {
-          "name": "kongshan-zhuyu/dsh-balance-quota#dsh-balance",
-          "github": "https://github.com/kongshan-zhuyu/dsh-balance-quota/tree/main/packages/dsh-balance"
-        },
-        {
-          "name": "LemCAE/dsh-balance",
-          "github": "https://github.com/LemCAE/dsh-balance"
-        },
-        {
-          "name": "lkshjd/dsh-balance",
-          "github": "https://github.com/lkshjd/dsh-balance"
-        },
-        {
-          "name": "rayzhu1109/dsh-balance",
-          "github": "https://github.com/rayzhu1109/dsh-balance"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -150,7 +128,7 @@
       "line": "main",
       "name": "dsh-change-review",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-change-review",
       "registryStatus": "注册表默认启用",
@@ -161,18 +139,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "cirelir/dsh-change-review",
-          "github": "https://github.com/cirelir/dsh-change-review"
-        },
-        {
-          "name": "xwh5/dsh-change-review",
-          "github": "https://github.com/xwh5/dsh-change-review"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -180,7 +156,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-client-file-changes",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-client-file-changes",
       "registryStatus": "注册表默认启用",
@@ -190,6 +166,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -197,7 +184,7 @@
       "line": "main",
       "name": "dsh-compact",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "1.0.0",
       "path": "dsh-desktop/assets/plugins/dsh-compact",
       "registryStatus": "注册表默认启用",
@@ -208,7 +195,12 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "postAuditChanges": "5.3.6 内核 0.1.3 升级适配（e01d2e2a..HEAD，settings 垫片/契约接线）"
+      "postAuditChanges": "5.3.6 内核 0.1.3 升级适配（e01d2e2a..HEAD，settings 垫片/契约接线）",
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
+      }
     },
     {
       "id": "C008",
@@ -250,7 +242,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-conversation-tweaks",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-conversation-tweaks",
       "registryStatus": "注册表默认启用",
@@ -260,6 +252,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -291,7 +294,7 @@
       "line": "main",
       "name": "dsh-dock-settings",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-dock-settings",
       "registryStatus": "注册表默认启用",
@@ -301,6 +304,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -342,7 +350,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-easy-setup",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-easy-setup",
       "registryStatus": "注册表默认启用",
@@ -352,6 +360,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -376,7 +389,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-file-changes",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-file-changes",
       "registryStatus": "注册表默认启用",
@@ -386,6 +399,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -410,7 +434,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-float-window",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-float-window",
       "registryStatus": "注册表默认启用",
@@ -420,6 +444,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。 上游已于 2026-08-28 退役（内核移除其依赖包）；EAC 侧仍启用，内核升级时注意同类风险。"
       }
     },
     {
@@ -427,7 +462,7 @@
       "line": "main",
       "name": "dsh-font-custom",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-font-custom",
       "registryStatus": "注册表默认启用",
@@ -437,6 +472,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -444,7 +484,7 @@
       "line": "main",
       "name": "dsh-image-paste",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-image-paste",
       "registryStatus": "注册表默认禁用",
@@ -454,6 +494,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -485,7 +536,7 @@
       "line": "main",
       "name": "dsh-message-rewind",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-message-rewind",
       "registryStatus": "注册表默认启用",
@@ -495,6 +546,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -561,7 +623,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-openclaw-bridge",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.7.0",
       "path": "dsh-desktop/assets/plugins/dsh-openclaw-bridge",
       "registryStatus": "注册表默认启用",
@@ -571,6 +633,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -578,7 +651,7 @@
       "line": "main",
       "name": "dsh-pet-settings",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-pet-settings",
       "registryStatus": "注册表默认启用",
@@ -588,6 +661,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -636,7 +714,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-plugin-manager",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
       "registryStatus": "注册表默认启用",
@@ -647,30 +725,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "2768651338/dsh-plugin-manager",
-          "github": "https://github.com/2768651338/dsh-plugin-manager"
-        },
-        {
-          "name": "kkkkkklze/dsh-plugin-manager",
-          "github": "https://github.com/kkkkkklze/dsh-plugin-manager"
-        },
-        {
-          "name": "liqichen/dsh-plugin-manager",
-          "github": "https://github.com/liqichen/dsh-plugin-manager"
-        },
-        {
-          "name": "nonentity303/dsh-plugin-manager",
-          "github": "https://github.com/nonentity303/dsh-plugin-manager"
-        },
-        {
-          "name": "zhu1090093659/dsh-web#packages/dsh-plugin-manager",
-          "github": "https://github.com/zhu1090093659/dsh-web/tree/main/packages/dsh-plugin-manager"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -678,7 +742,7 @@
       "line": "main",
       "name": "dsh-plugin-shield",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-shield",
       "registryStatus": "注册表默认启用",
@@ -699,6 +763,11 @@
         "changedFiles": "1",
         "mainOnly": "0",
         "aioOnly": "0"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -706,7 +775,7 @@
       "line": "main",
       "name": "dsh-plugin-wizard",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-wizard",
       "registryStatus": "注册表默认启用",
@@ -716,6 +785,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -723,7 +797,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-prompt-custom",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-prompt-custom",
       "registryStatus": "注册表默认启用",
@@ -733,6 +807,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -788,7 +873,7 @@
       "line": "main",
       "name": "dsh-settings-groups",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-settings-groups",
       "registryStatus": "注册表默认启用",
@@ -798,6 +883,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -822,7 +918,7 @@
       "line": "main",
       "name": "@dsh-external/dsh-side-session",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.2.8",
       "path": "dsh-desktop/assets/plugins/dsh-side-session",
       "registryStatus": "注册表默认启用",
@@ -833,14 +929,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "123dbl/dsh-side-session",
-          "github": "https://github.com/123dbl/dsh-side-session"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -848,7 +946,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-skin-switch",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-skin-switch",
       "registryStatus": "注册表默认启用",
@@ -858,6 +956,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -890,7 +993,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-terminal",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-terminal",
       "registryStatus": "注册表默认启用",
@@ -900,6 +1003,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。 注意：与官方内核 npm 包 @deepseek-ai/dsh-terminal（PTY seam）同名不同物，本插件为 dsh_desktop 的 SSE 变体；上游亦已退役。"
       }
     },
     {
@@ -1348,7 +1462,7 @@
       "line": "main",
       "name": "@deepseek-ai/dsh-openclaw-bridge",
       "type": "source-copy",
-      "origin": "unverified",
+      "origin": "upstream",
       "version": "0.6.0",
       "path": "openclaw-dsh-bridge",
       "registryStatus": "注册表默认启用",
@@ -1358,6 +1472,17 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -1675,7 +1800,7 @@
       "line": "aio-v1",
       "name": "dsh-auto-compact",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-auto-compact",
       "registryStatus": "seed默认启用",
@@ -1686,14 +1811,11 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "songoao25/dsh-auto-compact",
-          "github": "https://github.com/songoao25/dsh-auto-compact"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
       },
       "dualVersion": {
         "relation": "仅AIO",
@@ -1703,6 +1825,11 @@
         "changedFiles": "0",
         "mainOnly": "0",
         "aioOnly": "0"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -1710,7 +1837,7 @@
       "line": "aio-v1",
       "name": "@deepseek-ai/dsh-balance",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-balance",
       "registryStatus": "seed默认启用",
@@ -1721,38 +1848,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "GeekRicardo/dsh-balance",
-          "github": "https://github.com/GeekRicardo/dsh-balance"
-        },
-        {
-          "name": "gejiaju/dsh-balance",
-          "github": "https://github.com/gejiaju/dsh-balance"
-        },
-        {
-          "name": "kkbsgg/dsh-balance",
-          "github": "https://github.com/kkbsgg/dsh-balance"
-        },
-        {
-          "name": "kongshan-zhuyu/dsh-balance-quota#dsh-balance",
-          "github": "https://github.com/kongshan-zhuyu/dsh-balance-quota/tree/main/packages/dsh-balance"
-        },
-        {
-          "name": "LemCAE/dsh-balance",
-          "github": "https://github.com/LemCAE/dsh-balance"
-        },
-        {
-          "name": "lkshjd/dsh-balance",
-          "github": "https://github.com/lkshjd/dsh-balance"
-        },
-        {
-          "name": "rayzhu1109/dsh-balance",
-          "github": "https://github.com/rayzhu1109/dsh-balance"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -1898,7 +2003,7 @@
       "line": "aio-v1",
       "name": "@deepseek-ai/dsh-plugin-manager",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-plugin-manager",
       "registryStatus": "seed默认启用",
@@ -1909,30 +2014,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "2768651338/dsh-plugin-manager",
-          "github": "https://github.com/2768651338/dsh-plugin-manager"
-        },
-        {
-          "name": "kkkkkklze/dsh-plugin-manager",
-          "github": "https://github.com/kkkkkklze/dsh-plugin-manager"
-        },
-        {
-          "name": "liqichen/dsh-plugin-manager",
-          "github": "https://github.com/liqichen/dsh-plugin-manager"
-        },
-        {
-          "name": "nonentity303/dsh-plugin-manager",
-          "github": "https://github.com/nonentity303/dsh-plugin-manager"
-        },
-        {
-          "name": "zhu1090093659/dsh-web#packages/dsh-plugin-manager",
-          "github": "https://github.com/zhu1090093659/dsh-web/tree/main/packages/dsh-plugin-manager"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
       }
     },
     {
@@ -1940,7 +2031,7 @@
       "line": "aio-v1",
       "name": "@deepseek-ai/dsh-plugin-marketplace",
       "type": "plugin",
-      "origin": "unresolved",
+      "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-plugin-marketplace",
       "registryStatus": "seed默认禁用",
@@ -1951,14 +2042,16 @@
         "basis": "无独立上游证明",
         "conflict": null
       },
-      "candidates": [
-        {
-          "name": "PetCT/dsh-plugin-marketplace",
-          "github": "https://github.com/PetCT/dsh-plugin-marketplace"
-        }
-      ],
       "upstream": {
-        "repository": null
+        "repository": "https://github.com/myYangyunfan/dsh_desktop",
+        "refType": "version",
+        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
+        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "upstream（dsh_desktop 伴侣套件）",
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。 上游已于 2026-08-15 以 Zat-DSH Engine（MIT）替换；AIO seed 收录的是旧版。"
       }
     },
     {
@@ -1966,7 +2059,7 @@
       "line": "aio-v1",
       "name": "dsh-plugin-shield",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-plugin-shield",
       "registryStatus": "seed默认启用",
@@ -1987,6 +2080,11 @@
         "changedFiles": "1",
         "mainOnly": "0",
         "aioOnly": "0"
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -1994,7 +2092,7 @@
       "line": "aio-v1",
       "name": "@deepseek-ai/dsh-skin-switch",
       "type": "plugin",
-      "origin": "unverified",
+      "origin": "eac-original",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-skin-switch",
       "registryStatus": "seed默认启用",
@@ -2004,6 +2102,11 @@
         "note": "无可靠上游，不能判定修改",
         "basis": "无独立上游证明",
         "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-06",
+        "decision": "eac-original",
+        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {

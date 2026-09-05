@@ -42,16 +42,31 @@ package.json 的 `name`/`version` 与台账一致（**改版必须同步台账�
 
 ## origin 四分类
 
-| 值 | 含义 | 数量（2026-09-05） |
+| 值 | 含义 | 数量（2026-09-06 裁决后） |
 | --- | --- | --- |
-| `upstream` | 来源确认：名录命中，或 package.repository / README 明确署名 | 55 |
-| `eac-original` | EAC 自研（含审计确认的宿主融合改写、预设模块、SDK 样例、@local/* seed） | 27 |
-| `unresolved` | 同名候选存在但无法证明同源，**待维护者裁决** | 10 |
-| `unverified` | 无上游线索，**待维护者裁决**（是否 EAC 原创） | 21 |
+| `upstream` | 来源确认：名录命中、明确署名，或 dsh_desktop 伴侣套件同源 | 74 |
+| `eac-original` | EAC 自研（含宿主融合改写、预设模块、SDK 样例、8 个 host 集成型配套插件） | 37 |
+| `unresolved` | 同名候选存在但无法证明同源，**待维护者裁决** | 2 |
+| `unverified` | 无上游线索，**待维护者裁决** | 0 |
 
-`unresolved` + `unverified` 共 31 项是台账的开放问题清单。裁决动作：
-确认上游 → 改 `upstream` 并补 repository/commit；确认自研 → 改 `eac-original`。
-改完后 `npm run ledger:check` 保持绿。
+### 2026-09-06 来源裁决（31 项开放问题 → 29 项定案）
+
+排查方法：上游 dsh_desktop 全历史按路径查提交（`commits?path=`）、npm registry
+逐一核验、zhu1090093659/dsh-web 仓库树比对、时间线交叉验证。结论已写入各条目的
+`resolution` 字段（含证据），要点：
+
+- **@deepseek-ai/* "DSH Desktop 配套"套件 = 上游 myYangyunfan/dsh_desktop 的
+  伴侣插件体系**（上游 v0.2.0 2026-08-13 起，早于 EAC v1.0 2026-08-15）。
+  19 个组件（含 aio 线）定案 upstream，pin 上游 main `ee052c6b`；上游部分插件
+  版本超前（balance 0.1.1 / plugin-manager 0.1.2），且 float-window / terminal /
+  plugin-marketplace 在上游已退役——同步上游前先逐个核对。此前名录给出的同名
+  候选（GeekRicardo/dsh-balance 等）经查为红鲱鱼，不是实际来源。
+- **8 个 host 集成型插件为 EAC 独有**（compact / dock-settings / easy-setup /
+  font-custom / pet-settings / plugin-shield / plugin-wizard / skin-switch，
+  含 aio 线副本共 10 组件）：上游全历史 0 提交、npm 404、dsh-web 无、名录无，
+  EAC v4.x 提交首次引入 → eac-original。
+- 遗留 unresolved 仅 anchored-standard 预设（C061/C092）：NOTICE 只声明官方
+  preset 祖先，两个社区同名候选无法唯一归因；预设模块维护风险低，维持现状。
 
 ## 维护规则
 
