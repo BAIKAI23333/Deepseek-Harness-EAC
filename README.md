@@ -22,6 +22,14 @@
 
 ---
 
+> ### 🚀 官方配套启动器：DSH EAC Launcher
+>
+> **多实例隔离 · 本地实例导入 · 版本一键升级/回退 · 插件安全体系**（崩溃守卫 crash-guard · 插件快照回滚 · 隔离区 · 健康体检）
+>
+> 为本项目的多实例与插件玩法而生：每个实例独立程序目录与 `DSH_HOME`，从上游 Release 一键安装任意版本，装插件崩了也能一键回滚。
+>
+> 👉 **[zouyuxuan122/DSH-EAC-Launcher](https://github.com/zouyuxuan122/DSH-EAC-Launcher)** ｜ [⬇ 下载最新版 v1.1.0](https://github.com/zouyuxuan122/DSH-EAC-Launcher/releases/latest)
+
 ## 目录
 
 - [为什么选择 EAC](#为什么选择-eac)
@@ -431,3 +439,4 @@ research/                     # 第三方微信/桥接协议调研资料
 MIT。基于 [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT）。内置皮肤版权归原作者所有（见上方皮肤许可表）。
 
 <!-- 咕咕嘎嘎 -->
+
