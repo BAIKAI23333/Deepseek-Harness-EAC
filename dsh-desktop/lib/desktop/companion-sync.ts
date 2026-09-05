@@ -9,6 +9,7 @@ import fs = require('node:fs');
 import os = require('node:os');
 import crypto = require('node:crypto');
 import { updCtx, APP_ROOT } from './runtime-paths';
+import { isLiteDisabled, readInstallProfile } from './install-profile';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
 import { ensureGuard } from './guard-box';
 import { applySessionManageFix } from './runtime-patches';
@@ -550,6 +551,10 @@ export function syncCompanionPlugins(): void {
   const platform = ctx.platform ?? 'win32';
   const inSafeMode = safeModeActive();
   if (inSafeMode) ctx.log('boot', '安全模式激活中：跳过配套插件 patch 行同步（退出安全模式后恢复）');
+  // 安装形态（v5.4 单发行版双形态）：精简版只改「新行」默认启停，
+  // 已有注册行不重写、用户选择优先（见 lib/desktop/install-profile.ts）。
+  const installProfile = readInstallProfile(APP_ROOT);
+  if (installProfile === 'lite') ctx.log('boot', '安装形态 = 精简版：外围配套插件默认停用（设置 → 插件 → 管理 可随时启用）');
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
@@ -682,7 +687,8 @@ export function syncCompanionPlugins(): void {
       copyPluginPackage(profileDirP, src, p.name);
       // p.disabled: true 的配套插件默认以禁用行注册（如 dsh-pet 页面桌宠），
       // 用户可在「设置 → 插件 → 管理」里启用；已有行不重写，用户选择优先。
-      pending.push({ id: p.id, name: p.name, disabled: p.disabled === true, config: p.config });
+      // 精简版：LITE_DEFAULT_DISABLED 命中的配套插件同样默认以禁用行注册。
+      pending.push({ id: p.id, name: p.name, disabled: p.disabled === true || isLiteDisabled(p.id, installProfile), config: p.config });
     }
     if (migratedBuiltins.length) {
       try {

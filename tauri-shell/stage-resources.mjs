@@ -17,6 +17,7 @@ import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-pla
 import { copyKernelCacheForTarget, sanitizeClientBuildPaths } from './stage-linux-sanitize.mjs';
 import { withAbsolutizedKernelManifests } from './stage-kernel-manifest.mjs';
 import { pruneDarwinPayloads, pruneNonDarwinPrebuilds } from './stage-platform-prune.mjs';
+import { genDistributionDescriptor } from './gen-distribution-descriptor.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dd = path.join(root, 'dsh-desktop');
@@ -51,7 +52,7 @@ const ROOT_FILES = [
 ];
 const LIB_DESKTOP = [
   'file-roots.js', 'proc.js', 'platform.js', 'runtime-paths.js', 'profile.js', 'guard-box.js',
-  'runtime-patches.js', 'companion-sync.js', 'plugin-ops.js', 'market.js',
+  'runtime-patches.js', 'companion-sync.js', 'plugin-ops.js', 'market.js', 'install-profile.js',
   'shortcuts.js', 'junction-patrol.js', 'client-update.js', 'static-preview.js',
   'boot-server.js', 'feature-pack.js',
 ];
@@ -279,10 +280,24 @@ copyRequired(path.join(dd, 'package.json'), path.join(staged, 'dsh-desktop', 'pa
 copyRequired(path.join(dd, 'package-lock.json'), path.join(staged, 'dsh-desktop', 'package-lock.json'), 'package-lock.json');
 copyRequired(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc'), '.npmrc');
 
+// 安装形态标记（v5.4 双形态）：随包默认「完整版」；NSIS 安装器按用户选择
+// 覆写为 lite（installer-hooks.nsh POSTINSTALL）。便携包保持缺省完整版。
+writeFileSync(path.join(staged, 'dsh-desktop', 'profile.txt'), 'full\n');
+
 console.log('[stage] assets（114MB：38 插件 + 10 皮肤 + 图标）');
 cpSync(path.join(dd, 'assets'), path.join(staged, 'dsh-desktop', 'assets'), { recursive: true });
 validatePluginTree(path.join(dd, 'assets', 'plugins'), '源');
 validatePluginTree(path.join(staged, 'dsh-desktop', 'assets', 'plugins'), 'staging');
+
+// dsh-distribution 发行版描述符（阶段 3）：组件清单来自插件来源台账
+// （assets/SOURCES.json）+ 内核钉版；协议仍为 Draft，描述符随每次打包重算。
+{
+  const info = genDistributionDescriptor({
+    ddRoot: dd,
+    stagedOut: path.join(staged, 'dsh-desktop'),
+  });
+  console.log(`[stage] distribution-descriptor.json（内核 ${info.kernelVersion}，组件 ${info.components}）`);
+}
 
 console.log('[stage] vendor node/npm 运行时');
 mkdirSync(path.join(staged, 'dsh-desktop', 'vendor'), { recursive: true });
