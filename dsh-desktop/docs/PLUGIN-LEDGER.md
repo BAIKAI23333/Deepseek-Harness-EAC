@@ -78,3 +78,15 @@ package.json 的 `name`/`version` 与台账一致（**改版必须同步台账�
    GitHub hash，无则 npm release）；为组件补 dsh-plugin.json（v0.15 manifest，
    模板见 `assets/plugins/dsh-composer-dynamic-island`）。
 4. 台账是唯一事实源：不要在 README/注册表里另写一份来源信息。
+
+## 阶段 2 进展：dsh-plugin.json（std v0.15 manifest）
+
+- 2026-09-06 首批：32 份 manifest 已随包（scripts/gen-plugin-manifests.mjs
+  一次性生成，覆盖全部 main 线 `origin=upstream` 插件；composer 的手工
+  manifest 优先保留，生成器永不覆盖已存在的 manifest）。
+- manifest 当前是**描述性身份清单**（x-eac.role=identity-metadata）：
+  EAC 仍经 companion-sync 注册表加载，facets 留空 = 尚未参与 std 协商，
+  不编造能力声明；`@dsh-std/adapter-dsh` 与内核 0.1.3 的兼容性验证通过前
+  不切换加载路径。
+- CI 门禁：`plugin-ledger.mjs` 对每份 manifest 校验必填字段、version 一致、
+  `facets.host.entry` 文件存在（32/32）。

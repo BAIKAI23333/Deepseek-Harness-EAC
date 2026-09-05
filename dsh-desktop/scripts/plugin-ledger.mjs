@@ -114,6 +114,37 @@ for (const scope of SCOPES) {
   }
 }
 
+// --- dsh-plugin.json（std v0.15 manifest）门禁 ---
+// 随包 manifest 是描述性身份清单（见 scripts/gen-plugin-manifests.mjs 头注）；
+// 存在即校验：必填字段、name/version 与台账一致、entry 文件存在。
+let manifestChecked = 0;
+for (const c of comps) {
+  if (c.line !== 'main' || !c.path) continue;
+  const mPath = join(repoRoot, c.path, 'dsh-plugin.json');
+  if (!existsSync(mPath)) continue;
+  let m;
+  try {
+    m = JSON.parse(readFileSync(mPath, 'utf8'));
+  } catch (e) {
+    fail(`${c.id}: dsh-plugin.json 解析失败 ${e.message}`);
+    continue;
+  }
+  const tag = `${c.id}/${c.name}`;
+  for (const key of ['manifestVersion', 'id', 'name', 'version', 'facets', 'source']) {
+    if (m[key] === undefined) fail(`${tag}: manifest 缺必填字段 ${key}`);
+  }
+  if (m.manifestVersion !== '0.15') fail(`${tag}: manifestVersion 须为 0.15`);
+  // manifest.name 是展示名（composer 先例），身份一致性由 id/version/entry 承担。
+  if (m.version && c.version && m.version !== c.version) {
+    fail(`${tag}: manifest version ${m.version} ≠ 台账 ${c.version}`);
+  }
+  const entry = m.facets?.host?.entry;
+  if (entry && !existsSync(join(repoRoot, c.path, String(entry).replace(/^\.\//, '')))) {
+    fail(`${tag}: manifest facets.host.entry 不存在: ${entry}`);
+  }
+  manifestChecked++;
+}
+
 // --- 汇总 ---
 const byOrigin = {};
 const byType = {};
@@ -128,7 +159,7 @@ const manifestCount = comps.filter(
 console.log(`[plugin-ledger] 组件 ${comps.length} 条（main ${comps.filter((c) => c.line === 'main').length} / aio-v1 ${comps.filter((c) => c.line === 'aio-v1').length}）`);
 console.log(`[plugin-ledger] origin: ${JSON.stringify(byOrigin)}`);
 console.log(`[plugin-ledger] type:   ${JSON.stringify(byType)}`);
-console.log(`[plugin-ledger] 版本校验 ${versionChecked} 个 package.json；已有 dsh-plugin.json 的组件 ${manifestCount} 个`);
+console.log(`[plugin-ledger] 版本校验 ${versionChecked} 个 package.json；manifest 校验 ${manifestChecked} 份 / 共 ${manifestCount} 份随包`);
 
 if (warnings.length) {
   for (const w of warnings) console.warn(`[plugin-ledger][警告] ${w}`);
