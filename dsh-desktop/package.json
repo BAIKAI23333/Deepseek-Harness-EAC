@@ -8,6 +8,7 @@
   "private": true,
   "scripts": {
     "ci:install": "node scripts/npm-ci-with-kernel.mjs",
+    "ledger:check": "node scripts/plugin-ledger.mjs",
     "fetch-node": "npm run build && node scripts/fetch-node.js",
     "postinstall": "npm run build && node scripts/patch-deps.js || exit 0",
     "fetch-npm": "npm run build && node scripts/fetch-npm.js",
