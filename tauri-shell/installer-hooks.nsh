@@ -123,7 +123,7 @@ Var DshProfileChoice
     【否】精简版 —— 精选插件，界面更简洁（后续可在「设置 → 插件 → 管理」$\n\
     一键启用全部功能，无需重装）$\n$\n\
     升级安装会重新询问，用户数据不受影响。" \
-    IDYES dsh_profile_full IDNO dsh_profile_lite /SD IDYES
+    /SD IDYES IDYES dsh_profile_full IDNO dsh_profile_lite
   dsh_profile_full:
     StrCpy $DshProfileChoice "full"
     Goto dsh_profile_done
