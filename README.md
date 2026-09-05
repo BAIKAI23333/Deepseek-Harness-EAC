@@ -13,6 +13,8 @@
 <a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
 </p>
 
+<p><strong>🚀 全新产品：<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC-IDE">Deepseek Harness EAC IDE</a> —— 内置 EAC 的独立 IDE（VS Code 底座 · 鲸鱼品牌 · 开箱即用），<a href="https://github.com/zouyuxuan122/Deepseek-Harness-EAC-IDE/releases">前往下载 →</a></strong></p>
+
 <p>把官方 <a href="https://github.com/deepseek-ai/deepseek-harness">deepseek-ai/deepseek-harness</a>（<code>@deepseek-ai/dsh</code>，一切皆插件的 agent harness）
 封装为<strong>开箱即用的 Windows 桌面客户端</strong>，并在其上拥抱社区万象：皮肤、插件、工具、记忆——你所能想到的，一键皆可装。</p>
 
