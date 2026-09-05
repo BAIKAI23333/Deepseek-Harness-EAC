@@ -115,7 +115,9 @@ Var DshProfileChoice
 
 !macro DSH_AskInstallProfile
   StrCpy $DshProfileChoice "full"
-  MessageBox MB_YESNO|MB_ICONQUESTION \
+  ; 本文件禁用任何管道符（installer-nsh-pipe 守护测试）：MessageBox 组合标志
+  ; 需要管道符，故只用单一 MB_YESNO，不叠加图标位。
+  MessageBox MB_YESNO \
     "请选择要安装的版本：$\n$\n\
     【是】完整版 —— 全部内置插件（多智能体 / 手机桥 / 桌宠等）$\n\
     【否】精简版 —— 精选插件，界面更简洁（后续可在「设置 → 插件 → 管理」$\n\
