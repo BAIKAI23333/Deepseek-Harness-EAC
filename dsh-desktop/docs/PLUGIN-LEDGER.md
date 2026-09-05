@@ -44,8 +44,8 @@ package.json 的 `name`/`version` 与台账一致（**改版必须同步台账�
 
 | 值 | 含义 | 数量（2026-09-06 裁决后） |
 | --- | --- | --- |
-| `upstream` | 来源确认：名录命中、明确署名，或 dsh_desktop 伴侣套件同源 | 74 |
-| `eac-original` | EAC 自研（含宿主融合改写、预设模块、SDK 样例、8 个 host 集成型配套插件） | 37 |
+| `upstream` | 来源确认：名录命中、明确署名、dsh_desktop 伴侣套件或作者自有仓库 | 75 |
+| `eac-original` | EAC 自研（含宿主融合改写、预设模块、SDK 样例、7 个 host 集成型配套插件） | 36 |
 | `unresolved` | 同名候选存在但无法证明同源，**待维护者裁决** | 2 |
 | `unverified` | 无上游线索，**待维护者裁决** | 0 |
 
@@ -90,3 +90,16 @@ package.json 的 `name`/`version` 与台账一致（**改版必须同步台账�
   不切换加载路径。
 - CI 门禁：`plugin-ledger.mjs` 对每份 manifest 校验必填字段、version 一致、
   `facets.host.entry` 文件存在（32/32）。
+
+### 2026-09-06 增补：外部匹配审计复核（PLUGIN-MATCH-REPORT.md）
+
+- **dsh-compact 改判**：eac-original → upstream `zixin947/dsh-compact`。候选仓库
+  package.json（name/version 1.0.0）与本地逐字一致、结构一致，zixin947 为本仓库
+  贡献者（#145 新增 compact、#294 合并）。此前的排除法（dsh_desktop 全历史 0 提交
+  等）只排除了 monorepo 一条线，未覆盖作者自有仓库——教训已记入 resolution。
+- **dsh-change-review 维持** monorepo 判定：cirelir/dsh-change-review 为同名
+  不同物（0.3.0 做 diff 对比展示），已记入 resolution.rejectedCandidates。
+- **balance / easy-setup 维持**：官方 deepseek-ai/deepseek-harness master 树
+  （10554 路径，未截断）经查不含 balance/easy-setup，报告 0.76 条目按其口径
+  仅为"功能相近"。其余 1.00 条目与台账一致；dsh-undo-plugin 为
+  dsh-undo-savepoint 改名前旧址（301 重定向）。

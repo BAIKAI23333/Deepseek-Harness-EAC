@@ -148,7 +148,14 @@
       "resolution": {
         "date": "2026-09-06",
         "decision": "upstream（dsh_desktop 伴侣套件）",
-        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
+        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。",
+        "rejectedCandidates": [
+          {
+            "name": "cirelir/dsh-change-review",
+            "reason": "同名不同物：候选 0.3.0 做 write/edit 工具调用 diff 对比展示；本地 0.1.0 做 fileChanges 投影+模型复查，与 dsh_desktop monorepo 副本描述逐字一致",
+            "citedBy": "PLUGIN-MATCH-REPORT.md（0.93，名称/主题相似所致）"
+          }
+        ]
       }
     },
     {
@@ -184,7 +191,7 @@
       "line": "main",
       "name": "dsh-compact",
       "type": "plugin",
-      "origin": "eac-original",
+      "origin": "upstream",
       "version": "1.0.0",
       "path": "dsh-desktop/assets/plugins/dsh-compact",
       "registryStatus": "注册表默认启用",
@@ -198,8 +205,13 @@
       "postAuditChanges": "5.3.6 内核 0.1.3 升级适配（e01d2e2a..HEAD，settings 垫片/契约接线）",
       "resolution": {
         "date": "2026-09-06",
-        "decision": "eac-original",
-        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
+        "decision": "upstream（zixin947/dsh-compact）——更正 2026-09-06 上午的 eac-original 误判",
+        "evidence": "PLUGIN-MATCH-REPORT.md 指向 zixin947/dsh-compact（0.99）；核验：候选仓库 package.json name=dsh-compact version=1.0.0 与本地逐字一致、仓库结构（cordis.patch.yml+lib/）一致；zixin947 为本仓库贡献者（#145 新增 dsh-compact、#294 合并）。此前\"上游 dsh_desktop 全历史 0 提交\"的排除法只排除了 monorepo 一条线，未覆盖作者自有仓库。"
+      },
+      "upstream": {
+        "repository": "https://github.com/zixin947/dsh-compact",
+        "refType": "version",
+        "provenance": "匹配审计报告 0.99 + 内容核验（版本 1.0.0 逐字一致、cordis.patch.yml+lib/ 结构一致）"
       }
     },
     {
