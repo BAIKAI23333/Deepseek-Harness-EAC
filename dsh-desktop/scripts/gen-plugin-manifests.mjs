@@ -9,13 +9,15 @@
  * 备好静态清单。
  *
  * eac-original（EAC 原研、私有维护）批次：无外部上游可钉，source.repository
- * 归属 EAC 主仓库，id 以主仓库反推 DNS 后再拼目录名保证唯一；x-eac 带
- * maintenance: 'eac-private' 与 autoUpdate: false（自动更新黑名单的声明面，
- * 强制点在 companion-sync 的 pluginUpdateSources）。
+ * 钉死 EAC 主仓库（不走 upstream/pkg 回退，防台账误填导致自相矛盾），id 以
+ * 主仓库反推 DNS 后再拼目录名保证唯一；x-eac 带 maintenance: 'eac-private'
+ * 与 autoUpdate: false（自动更新黑名单的声明面，强制点在 companion-sync 的
+ * pluginUpdateSources）。
  *
- * 诚实性约束：facets/permissions 留空 = 尚未参与 std 协商，不编造能力声明；
- * 上游为 monorepo 时在 x-eac.sourceNote 注明；eac-original 无上游基线，
- * 不写 patched/patchNote。皮肤不生成（走 skin wiring，host facet 语义不实）。
+ * 诚实性约束：facets 为最小占位（仅 host entry）、permissions 留空 = 尚未
+ * 参与 std 协商，不编造能力声明；上游为 monorepo 时在 x-eac.sourceNote
+ * 注明；eac-original 无上游基线，不写 patched/patchNote。皮肤不生成
+ * （走 skin wiring，host facet 语义不实）。
  *
  * 用法：node scripts/gen-plugin-manifests.mjs [--ids C001,C004] [--dry]
  */
@@ -55,7 +57,9 @@ for (const entry of ledger.components) {
   }
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
   const upstream = entry.upstream || {};
-  const repo = upstream.repository || pkg.repository?.url || (isEacOriginal ? EAC_REPO : null);
+  // eac-original 钉死 EAC 主仓库，不走 upstream/pkg 回退——台账若误填 upstream
+  // 字段，source 会指向外部仓库而 id/x-eac 仍自称私有，manifest 自相矛盾。
+  const repo = isEacOriginal ? EAC_REPO : (upstream.repository || pkg.repository?.url || null);
   if (!repo) {
     console.warn(`[manifest] ${entry.id} ${entry.name}: 无 repository，跳过`);
     continue;
@@ -72,6 +76,15 @@ for (const entry of ledger.components) {
   const id = isEacOriginal
     ? `${manifestId(EAC_REPO)}.${entry.path.split('/').pop()}`.toLowerCase()
     : (manifestId(repo) || entry.name);
+  // patched 语义：相对上游基线有改动。eac-original 无上游基线，不声明。
+  let patchedFields;
+  if (isEacOriginal) {
+    patchedFields = {};
+  } else if (entry.audit?.compare && entry.audit.compare !== 'byte-identical') {
+    patchedFields = { patched: true, patchNote: entry.audit.compare };
+  } else {
+    patchedFields = { patched: false };
+  }
   const manifest = {
     $schema: SCHEMA_PIN,
     manifestVersion: '0.15',
@@ -89,16 +102,12 @@ for (const entry of ledger.components) {
     'x-eac': {
       role: 'identity-metadata',
       note: isEacOriginal
-        ? 'EAC 原研插件（私有维护，不参与内置插件自动更新）。EAC 经 companion-sync 注册表加载（非 std adapter）；facets 留空 = 尚未参与 std 协商'
-        : 'EAC 经 companion-sync 注册表加载（非 std adapter）；facets 留空 = 尚未参与 std 协商',
+        ? 'EAC 原研插件（私有维护，不参与内置插件自动更新）。EAC 经 companion-sync 注册表加载（非 std adapter）；facets 为最小占位，尚未参与 std 协商'
+        : 'EAC 经 companion-sync 注册表加载（非 std adapter）；facets 为最小占位，尚未参与 std 协商',
       ...(isEacOriginal ? { maintenance: 'eac-private', autoUpdate: false } : {}),
       ledger: `assets/SOURCES.json#${entry.id}`,
       ...(isMonorepo ? { sourceNote: '上游为 monorepo（伴侣插件套件子目录）' } : {}),
-      ...(isEacOriginal
-        ? {}
-        : entry.audit?.compare && entry.audit.compare !== 'byte-identical'
-          ? { patched: true, patchNote: entry.audit.compare }
-          : { patched: false }),
+      ...patchedFields,
     },
   };
   if (DRY) {
