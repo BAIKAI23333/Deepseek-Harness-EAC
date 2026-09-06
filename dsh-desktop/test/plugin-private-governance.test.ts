@@ -42,6 +42,9 @@ test('黑名单 = 台账 main 线 eac-original 插件包名，一个不差', () 
 });
 
 test('强制过滤：私有插件即使被误登记进 PLUGIN_UPDATE_SOURCES 也进不了更新源', () => {
+  // 注意：本用例直接突变共享的 PLUGIN_UPDATE_SOURCES 单例并在 finally 还原，
+  // 依赖 node:test 默认串行执行；若本文件将来开启 concurrency，需改为子测试
+  // （test(t, { concurrency: 1 }) 或独立进程）隔离，否则会互相踩。
   const target = COMPANION_PLUGINS.find((p) => p.name === 'dsh-viewport-lock');
   assert.ok(target, 'COMPANION_PLUGINS 里必须存在 dsh-viewport-lock（黑名单过滤按包名匹配）');
   const leaked = pluginUpdateSources().filter((s) => s.id === target.id);

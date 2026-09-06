@@ -282,12 +282,20 @@ export function companionPluginsForPlatform(platform: NodeJS.Platform = 'win32')
 // EAC 适配冲掉，要么更新到无从校验的来源。黑名单在此生成，pluginUpdateSources
 // 是唯一漏斗：即使将来误把私有插件登记进 PLUGIN_UPDATE_SOURCES 也会被强制
 // 过滤（sidecar server.ts 的「检测」与「应用更新」两条路都经过它）。
+//
+// fail-open 取舍：台账不可读时黑名单为空、不过滤（见
+// privateMaintainedPluginNames）——该状态下上述「误登记也无效」的保证暂不
+// 成立。私有插件本就不在 PLUGIN_UPDATE_SOURCES 白名单里，过滤是纵深防御。
 // ---------------------------------------------------------------------------
 
 let privateMaintainedCache: Set<string> | null = null;
 
 /** 台账 origin=eac-original 的 main 线插件包名集合（自动更新黑名单）。
- *  读取失败从宽返回空集：台账缺失/损坏时不拦截任何既有更新源。 */
+ *
+ *  fail-open：台账缺失/损坏时返回空集、不过滤——此时本函数不是强制点，
+ *  「误登记 PLUGIN_UPDATE_SOURCES 也会被强制过滤」的保证暂不成立（私有插件
+ *  本就不在白名单里，过滤为纵深防御）。仅缓存成功读取的结果，失败不落缓存，
+ *  文件恢复后下次调用即生效。 */
 export function privateMaintainedPluginNames(): Set<string> {
   if (privateMaintainedCache) return privateMaintainedCache;
   const names = new Set<string>();
@@ -298,8 +306,10 @@ export function privateMaintainedPluginNames(): Set<string> {
     for (const c of ledger.components || []) {
       if (c.line === 'main' && c.type === 'plugin' && c.origin === 'eac-original' && c.name) names.add(c.name);
     }
-  } catch { /* 从宽处理 */ }
-  privateMaintainedCache = names;
+    privateMaintainedCache = names;
+  } catch (err) {
+    console.warn('[plugin-update] SOURCES.json 读取失败，自动更新黑名单未生效（fail-open）: ' + String((err as Error).message || err));
+  }
   return names;
 }
 
