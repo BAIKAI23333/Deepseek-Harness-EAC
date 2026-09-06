@@ -25,7 +25,7 @@
   "overrides": [],
   "x-eac": {
     "role": "identity-metadata",
-    "note": "EAC 原研插件（私有维护，不参与内置插件自动更新）。EAC 经 companion-sync 注册表加载（非 std adapter）；facets 留空 = 尚未参与 std 协商",
+    "note": "EAC 原研插件（私有维护，不参与内置插件自动更新）。EAC 经 companion-sync 注册表加载（非 std adapter）；facets 为最小占位，尚未参与 std 协商",
     "maintenance": "eac-private",
     "autoUpdate": false,
     "ledger": "assets/SOURCES.json#C028"
