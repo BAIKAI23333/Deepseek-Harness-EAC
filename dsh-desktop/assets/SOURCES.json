@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-06",
+  "updatedAt": "2026-09-07",
   "audit": {
     "source": "DSH_EAC_Plugin_Audit_2026-09-05.xlsx (external full audit, 2026-09-05 Asia/Shanghai)",
     "mainBaseline": "e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
@@ -2989,6 +2989,28 @@
         "changedFiles": "0",
         "mainOnly": "0",
         "aioOnly": "0"
+      }
+    },
+    {
+      "id": "C114",
+      "line": "main",
+      "name": "@deepseek-ai/dsh-stt",
+      "type": "plugin",
+      "origin": "upstream",
+      "version": "0.2.0",
+      "path": "dsh-desktop/assets/plugins/dsh-stt",
+      "registryStatus": "注册表默认禁用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "byte-identical",
+        "note": "5.3.0 曾内置、因本地 ASR 模型体积退役；本次自作者仓库原样拷贝 0.2.0 恢复内置（含 vendored sherpa-onnx-node + sherpa-onnx-win-x64，仅 Windows 原生包），未做任何修改。",
+        "basis": "package.repository明确声明",
+        "conflict": null
+      },
+      "upstream": {
+        "repository": "https://github.com/BAIKAI23333/dsh-stt",
+        "refType": "version",
+        "provenance": "dsh-plugin.json source.repository 明确声明；作者自有仓库（BAIKAI23333 = 本仓库维护者）"
       }
     }
   ]

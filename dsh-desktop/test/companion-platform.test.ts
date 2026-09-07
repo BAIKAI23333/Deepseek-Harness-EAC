@@ -6,6 +6,7 @@ test('Windows companion registry preserves Windows-only plugins', () => {
   const ids = new Set(companionPluginsForPlatform('win32').map((plugin) => plugin.id));
   assert.equal(ids.has('computer-user'), true);
   assert.equal(ids.has('dsh-dafeiyu'), true);
+  assert.equal(ids.has('dsh-stt'), true);
 });
 
 test('Linux companion registry keeps common plugins and excludes unavailable helpers', () => {
@@ -14,4 +15,5 @@ test('Linux companion registry keeps common plugins and excludes unavailable hel
   assert.equal(ids.has('picturereader'), true);
   assert.equal(ids.has('computer-user'), false);
   assert.equal(ids.has('dsh-dafeiyu'), false);
+  assert.equal(ids.has('dsh-stt'), false);
 });

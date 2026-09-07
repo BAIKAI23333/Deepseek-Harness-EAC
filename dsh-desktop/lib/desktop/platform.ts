@@ -26,6 +26,7 @@ export function pluginCapabilityDetails(platform: NodeJS.Platform = process.plat
       'computer-user': { status: 'supported', reason: 'Windows PowerShell and SendInput adapter' },
       picturereader: { status: 'supported', reason: 'Windows OCR and bundled image backends' },
       'dsh-dafeiyu': { status: 'supported', reason: 'Bundled Windows helper' },
+      'dsh-stt': { status: 'supported', reason: 'Bundled sherpa-onnx win-x64 ASR engine' },
     };
   }
   if (platform === 'darwin') {
@@ -33,12 +34,14 @@ export function pluginCapabilityDetails(platform: NodeJS.Platform = process.plat
       'computer-user': { status: 'unavailable', reason: 'macOS v1.5 计划：CGEvent + TCC 授权' },
       picturereader: { status: 'external-dependency', reason: 'OCR 需 Python (paddle/rapid)，v1.5 计划 Vision 后端' },
       'dsh-dafeiyu': { status: 'unavailable', reason: '无 macOS helper 产物' },
+      'dsh-stt': { status: 'unavailable', reason: '无 macOS sherpa-onnx 原生包（仅随包 win-x64）' },
     };
   }
   return {
     'computer-user': { status: 'unavailable', reason: 'Linux/Wayland has no transparent SendInput equivalent' },
     picturereader: { status: 'external-dependency', reason: 'OCR requires a separately installed Linux backend' },
     'dsh-dafeiyu': { status: 'unavailable', reason: 'No Linux helper payload has passed the required smoke test' },
+    'dsh-stt': { status: 'unavailable', reason: 'No bundled Linux sherpa-onnx native payload' },
   };
 }
 
