@@ -49,14 +49,20 @@ next2（功能包体系：.dshpack 打包分发插件+预设+技能，声明官�
 
 ## 5.5.0（恢复内置语音识别 dsh-stt）· 2026-09-07
 
-- 恢复内置「语音转文字」插件 dsh-stt 0.2.0（BAIKAI23333，MIT；5.3.0 曾因本地
+- 恢复内置「语音转文字」插件 dsh-stt 0.3.0（BAIKAI23333，MIT；5.3.0 曾因本地
   ASR 模型体积退役）：sherpa-onnx SenseVoice 本地离线推理 —— 输入区麦克风
   按钮说话、识别文本回填输入框，支持唤醒词激活与「发送」语音指令提交。
 - 默认禁用 —— 在「设置 → 插件 → 管理」启用；启用后首次使用自动下载 SenseVoice
   模型（~230MB）到 `~/.dsh/models/dsh-stt/`，GitHub Release 主源失败自动切换
   hf-mirror 镜像。精简版安装形态默认停用，可随时一键启用。
-- 仅 Windows 可用：vendored sherpa-onnx-node + sherpa-onnx-win-x64 原生引擎随
-  插件分发，macOS / Linux 由平台能力门控标为不可用（不复制、不注册）。
+- **三平台可用**：sherpa-onnx 原生引擎不随仓库分发，构建时按目标平台自动
+  安装（`npm run install:plugin-engines`，Windows / macOS / Linux 的 CI 与
+  打包链路均已接线）；引擎缺失的分发形态下插件优雅降级（`status.binary=`
+  `missing`、转写 503 `engine_missing`、按钮灰化提示），不拖垮宿主插件树。
+- dsh-stt 0.3.0 客户端按上游 review 重构：client 源码拆分（入口组装 /
+  组件聚合 / 会话编排），语音纯逻辑与单测共享 `src/voice-logic.mjs` 单一
+  实现；发送词识别修复句末标点（「…发送。」可命中）；门控状态机收编到
+  voice-logic 的 `nextGate`。
 - 同步移出退役清单（`RETIRED_BUILTIN_PLUGINS`）并恢复注册表条目、来源台账
   （SOURCES.json C114）与插件契约测试；已有 profile 的启停选择保持优先，
   模型缓存仍属用户数据、安装器不做清理。

@@ -2997,13 +2997,13 @@
       "name": "@deepseek-ai/dsh-stt",
       "type": "plugin",
       "origin": "upstream",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "path": "dsh-desktop/assets/plugins/dsh-stt",
       "registryStatus": "注册表默认禁用",
       "audit": {
         "verdict": "catalog-miss",
         "compare": "byte-identical",
-        "note": "5.3.0 曾内置、因本地 ASR 模型体积退役；本次自作者仓库原样拷贝 0.2.0 恢复内置（含 vendored sherpa-onnx-node + sherpa-onnx-win-x64，仅 Windows 原生包），未做任何修改。",
+        "note": "5.3.0 曾内置、因本地 ASR 模型体积退役；0.2.0 自作者仓库原样拷贝恢复内置；0.3.0 起作者按 review 重构（client 拆分 + 移除 vendored sherpa-onnx 引擎，改由 CI 按平台 install:plugin-engines 拉取，三平台发行），EAC 同步上游源码。",
         "basis": "package.repository明确声明",
         "conflict": null
       },

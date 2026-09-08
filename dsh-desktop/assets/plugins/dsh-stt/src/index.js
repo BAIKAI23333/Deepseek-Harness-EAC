@@ -463,6 +463,13 @@ function guarded(req, res, handler) {
   });
 }
 
+// 引擎二进制可用性探测：require.resolve 只查解析不执行加载（原生 .node
+// 损坏仍会在 loadSherpa 时抛错，走转写 500 兜底）。分发不带 vendored
+// node_modules 时（市场/GitHub 整仓安装、构建期安装缺失）返回 false。
+function sherpaAvailable() {
+  try { require.resolve('sherpa-onnx-node'); return true; } catch { return false; }
+}
+
 // ── 路由 handlers ───────────────────────────────────────────
 async function handleStatus(req, res) {
   const models = {};
@@ -471,6 +478,7 @@ async function handleStatus(req, res) {
   }
   sendJson(res, 200, {
     engine: allModelsReady() ? 'ready' : 'pending-download',
+    binary: sherpaAvailable() ? 'ready' : 'missing',
     models,
     download: downloadProgress,
     version: sherpa ? sherpa.version : null,
@@ -479,6 +487,7 @@ async function handleStatus(req, res) {
 
 async function handleTranscribe(req, res) {
   if (req.method !== 'POST') { res.writeHead(405, { allow: 'POST' }); res.end(); return; }
+  if (!sherpaAvailable()) { sendJson(res, 503, { error: 'engine missing', code: 'engine_missing' }); return; }
   const body = await readBody(req);
   const audio = extractMultipartAudio(body, req.headers['content-type']);
   if (!audio || audio.length < 44) { sendJson(res, 400, { error: 'empty audio' }); return; }

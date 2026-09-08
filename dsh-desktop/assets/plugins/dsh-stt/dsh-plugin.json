@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "io.github.baikai23333.dsh-stt",
   "name": "@deepseek-ai/dsh-stt",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "facets": {
     "host": {
       "entry": "src/index.js",

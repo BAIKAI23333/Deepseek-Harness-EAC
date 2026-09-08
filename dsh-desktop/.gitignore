@@ -21,7 +21,6 @@ build/*
 # 涓庘€渢dai-memory 鏃犳硶鍚姩鈥濓紙sqlite-vec / jieba / BM25 璇枡缂哄け锛?
 !assets/plugins/*/vendor/
 !assets/plugins/*/data/
-!assets/plugins/*/node_modules/
 
 # ---- TypeScript 编译产物（源码为同名 .ts，tsc 就地产出，勿手改） ----
 /lib/desktop/guard-box.js

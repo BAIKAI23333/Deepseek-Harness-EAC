@@ -15,5 +15,6 @@ test('Linux companion registry keeps common plugins and excludes unavailable hel
   assert.equal(ids.has('picturereader'), true);
   assert.equal(ids.has('computer-user'), false);
   assert.equal(ids.has('dsh-dafeiyu'), false);
-  assert.equal(ids.has('dsh-stt'), false);
+  // dsh-stt 引擎由 CI 在各平台构建时安装（install:plugin-engines），三平台可用
+  assert.equal(ids.has('dsh-stt'), true);
 });

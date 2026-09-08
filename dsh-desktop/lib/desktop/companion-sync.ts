@@ -267,15 +267,16 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 多轮并行出「均衡/精简/详尽」三候选择优迭代，可包装 /goal。
   // 纯客户端 + host 半边（loopback 路由），peer 依赖全部由 dsh 宿主提供。
   { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer', dir: 'dsh-webui-prompt-optimizer' },
-  // 本地离线语音识别（dsh-stt 0.2.0，BAIKAI23333，MIT）：sherpa-onnx SenseVoice
+  // 本地离线语音识别（dsh-stt 0.3.0，BAIKAI23333，MIT）：sherpa-onnx SenseVoice
   // 本地推理 —— 输入区麦克风按钮说话，识别文本回填输入框，支持唤醒词激活
-  // 与「发送」语音指令提交。host 半边依赖 vendored 的 sherpa-onnx-node +
-  // sherpa-onnx-win-x64 原生引擎，仅 Windows 可用（其余平台由
-  // pluginCapabilityDetails 门控为不可用）。默认禁用 —— 启用后首次使用自动
-  // 下载 SenseVoice 模型（~230MB）到 ~/.dsh/models/dsh-stt/（用户数据，
-  // 安装器不清理），GitHub Release 主源失败自动切 hf-mirror。5.3.0 曾因
-  // 模型体积退役，现按用户要求恢复内置（已同步移出退役清单）；不登记
-  // PLUGIN_UPDATE_SOURCES（manifest x-eac autoUpdate:false，EAC 托管版本）。
+  // 与「发送」语音指令提交。sherpa-onnx 原生引擎不随仓库分发，由 CI 在各
+  // 平台构建时 npm install 拉取对应原生包（install:plugin-engines，三平台
+  // 发行；引擎缺失时插件优雅降级 503 engine_missing，不拖垮插件树）。默认
+  // 禁用 —— 启用后首次使用自动下载 SenseVoice 模型（~230MB）到
+  // ~/.dsh/models/dsh-stt/（用户数据，安装器不清理），GitHub Release 主源
+  // 失败自动切 hf-mirror。5.3.0 曾因模型体积退役，现按用户要求恢复内置
+  // （已同步移出退役清单）；不登记 PLUGIN_UPDATE_SOURCES（manifest x-eac
+  // autoUpdate:false，EAC 托管版本）。
   { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt', disabled: true },
 ];
 
