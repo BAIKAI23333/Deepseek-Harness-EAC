@@ -231,16 +231,16 @@
 
 ## 开发者文档
 
-完整的当前分支开发参考见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)，包括 Tauri 三层架构、L2 模块边界、开发/测试/打包命令、运行时数据目录、桥接契约和排障清单。
-
 ### 从源码构建（Tauri 壳，v5.0 默认）
 
 ```powershell
 cd dsh-desktop
-npm install
+npm install -g pnpm@11.7.0       # 内核构建依赖（版本由上游 packageManager 钉定）
+node scripts/fetch-kernel.js     # 首次必须：自上游源码构建内核 tarball（vendor/ 不入库；网络受限环境需自行配置代理）
+npm install                      # 内核 tarball 就位后依赖才能安装
 npm run fetch-runtime            # 内置 node.exe + npm CLI
-node tauri-shell/stage-resources.mjs   # 装配打包资源（sidecar + dsh-desktop 运行树）
-cd tauri-shell
+node ../tauri-shell/stage-resources.mjs   # 装配打包资源（sidecar + dsh-desktop 运行树）
+cd ../tauri-shell
 npx -y @tauri-apps/cli@2 build   # release 构建 + NSIS 安装包
 node make-portable.mjs           # 便携 zip（可选）→ target/release/portable/
 
@@ -255,6 +255,8 @@ node make-portable.mjs           # 便携 zip（可选）→ target/release/port
 
 ```powershell
 cd dsh-desktop
+npm install -g pnpm@11.7.0
+node scripts/fetch-kernel.js     # 网络受限环境需自行配置代理
 npm install
 npm run fetch-runtime
 # 打包（Tauri 三段链，产出入 tauri-shell/target/release/）
@@ -270,7 +272,7 @@ node make-portable.mjs                      # → portable/*-portable.zip + SHA2
 
 ```powershell
 cd dsh-desktop
-npm test                 # node --test test/*.test.mjs（pretest 含 tsc 全量类型检查）
+npm test                 # node --test test/*.test.ts（pretest 含 tsc 全量类型检查）
 node ../gui-smoke.js     # Tauri 壳 GUI 冒烟（18 项，需先 cargo build）
 node ../update-smoke.js  # 自更新链路冒烟（mock 发布源 + 目录树交换）
 ```
