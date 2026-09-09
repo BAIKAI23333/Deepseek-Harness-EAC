@@ -93,16 +93,18 @@
 
 ### AIO 版（Windows x64 · All-in-One）
 
-> **DSHEAC AIO** 是独立于 5.x 主线的 **All-in-One 精致个人终端**：一个安装包备齐 dsh 内核、插件市场与完整桌面体验，开箱即用；与正式版相互隔离（独立 app data 与 `dsh-home`，默认不读取 5.x / v4Lite / 旧 EAC 或 CLI 数据），可并存安装。当前版本 **AIO v1.1.0**（源码分支 `aio-v1`，随 [v5.3.6 Release](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/tag/v5.3.6) 一同发布）。
+> **DSHEAC AIO** 是独立于 5.x 主线的 **All-in-One 精致个人终端**：一个安装包备齐 dsh 内核、插件市场与完整桌面体验，开箱即用；与正式版相互隔离（独立 app data 与 `dsh-home`，默认不读取 5.x / v4Lite / 旧 EAC 或 CLI 数据），可并存安装。当前版本 **AIO v1.2.0**（源码分支 `aio-v1`，随 [aio-v1.2.0 Release](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/tag/aio-v1.2.0) 一同发布）。
 
 | 文件 | 说明 | 大小 |
 | --- | --- | --- |
-| [AIO 安装版（v1.1.0）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/DSHEAC-AIO-v1-Windows-x64.exe) | NSIS 安装版，安装到系统并创建快捷方式；EXE 为 `DSHEAC AIO.exe`，与正式版更新器互相隔离 | ~332 MB |
-| [AIO 便携版（v1.1.0）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/DSHEAC-AIO-v1-Portable-x64.zip) | 免安装解压即用，数据写入 EXE 同级 `.dsh-aio-data`，可直接迁移 | ~123 MB |
-| [校验清单 SHA256SUMS-AIO-v1.1.0.txt](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/v5.3.6/SHA256SUMS-AIO-v1.1.0.txt) | AIO 资产 SHA-256 校验 | — |
+| [AIO 安装版（v1.2.0）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/aio-v1.2.0/DSHEAC-AIO-v1.2.0-Setup-x64.exe) | NSIS 安装版，安装到系统并创建快捷方式；EXE 为 `DSHEAC AIO.exe`，与正式版更新器互相隔离 | ~313 MB |
+| [AIO 便携版（v1.2.0）](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/aio-v1.2.0/DSHEAC-AIO-v1.2.0-Portable-x64.zip) | 免安装解压即用，数据写入 EXE 同级 `.dsh-aio-data`，可直接迁移 | ~147 MB |
+| [校验清单 SHA256SUMS-AIO-v1.2.0.txt](https://github.com/zouyuxuan122/DSH-Desktop-EAC/releases/download/aio-v1.2.0/SHA256SUMS-AIO-v1.2.0.txt) | AIO 资产 SHA-256 校验 | — |
 
 - 安装包尚未 Authenticode 签名，SmartScreen 可能提示未知发布者；运行前请先核对 SHA-256。
 - 客户端自更新不在 AIO 中提供，插件自动更新默认关闭；安装路径建议不超过 120 个字符。
+- **v1.2.0 要点**：内核对齐官方桌面端 `0.1.3-alpha.2`，插件接口随内核迁移修复，应用图标更换为 WhaleGirl，并移除已确认停用的插件与皮肤。
+- **AIO 升级说明**：从旧版 AIO 覆盖安装时，仅继承旧版的会话与供应商配置，不继承旧版插件（内置插件随安装包更新）。
 
 > 💡 **升级说明（老用户必读）**：
 > - 直接下载上方最新安装包覆盖安装即可；
