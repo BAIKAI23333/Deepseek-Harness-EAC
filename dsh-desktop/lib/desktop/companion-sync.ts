@@ -317,32 +317,6 @@ export function privateMaintainedPluginNames(): Set<string> {
 }
 
 // ---------------------------------------------------------------------------
-// 内置插件上游更新源（V4.3，plugin-updater.js 消费）：
-//
-// 只登记「上游仍在 npm / GitHub 发布」的社区插件 —— 内置分发的副本可以
-// 跟随上游修复而更新。EAC 独占插件（package.json 标记 private，如
-// dsh-balance / dsh-terminal）绝不登记。
-// 运行时 npm 404（未上架/改名）优雅降级为「无上游」，绝不阻塞。
-// ---------------------------------------------------------------------------
-export const PLUGIN_UPDATE_SOURCES: Record<string, { npm?: string; github?: string }> = {
-  'picturereader': { npm: 'picturereader' },
-  'computer-user': { npm: 'computer-user' },
-  'soul-md': { npm: 'dsh-soul-md' },
-  'dsh-pet': { npm: 'dsh-pet' },
-  'better-sidebar': { npm: 'dsh-better-sidebar' },
-  'dsh-navbar': { npm: '@vlln/dsh-navbar' },
-  'mobile-fix': { npm: 'dsh-web-mobile-fix' },
-  'offpeak': { npm: 'dsh-offpeak' },
-  // 统一市场（unified-market）：npm 已发布，正式纳入官方内置插件更新。
-  'unified-market': { npm: 'dsh-unified-market' },
-  'dsh-session-manager': { npm: 'dsh-session-manager' },
-  // GitHub 分发（npm 未发布）：dsh-undo-savepoint。
-  'dsh-undo': { github: 'lire1131/dsh-undo-savepoint' },
-  // dsh-raw-html 是 EAC 托管适配版，不登记上游更新源，避免被原版 bundle
-  // 注入实现覆盖。上游升级必须先移植并通过 EAC slot 集成回归。
-};
-
-// ---------------------------------------------------------------------------
 // 内置插件「移除」跳过清单（settings.removedPlugins）：被 plugin-ops 与
 // syncCompanionPlugins 共用，故置于本模块（打破循环依赖）。
 // ---------------------------------------------------------------------------
