@@ -216,17 +216,20 @@ To report a bug or suggest a feature, visit [https://eac.dtyg123.dpdns.org/](htt
 
 ```powershell
 cd dsh-desktop
-npm install
-npm run fetch-runtime    # bundle node.exe + npm CLI
-npm run dist             # build portable + NSIS installer -> dist/
+npm install -g pnpm@11.7.0       # kernel build toolchain (version pinned by the upstream packageManager field)
+node scripts/fetch-kernel.js     # required on first run: build kernel tarballs from upstream source (vendor/ is not committed; a proxy is needed on restricted networks)
+npm install                      # install dependencies only after the kernel tarballs are in place
+npm run fetch-runtime            # bundle node.exe + npm CLI
+node ../tauri-shell/stage-resources.mjs   # assemble the sidecar + dsh-desktop runtime tree
+cd ../tauri-shell
+npx -y @tauri-apps/cli@2 build   # release build + NSIS installer
+node make-portable.mjs           # portable zip (optional) -> target/release/portable/
 ```
-
-> Behind a firewall? Use the Electron mirror `$env:ELECTRON_MIRROR='https://npmmirror.com/mirrors/electron/'` and the builder toolchain mirror `$env:ELECTRON_BUILDER_BINARIES_MIRROR='https://npmmirror.com/mirrors/electron-builder-binaries/'`.
 
 Run tests:
 
 ```powershell
-npm test                 # node --test test/*.test.mjs
+npm test                 # node --test test/*.test.ts
 ```
 
 ### Architecture
