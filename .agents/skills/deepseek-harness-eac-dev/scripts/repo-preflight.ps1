@@ -50,30 +50,11 @@ function Get-CommandProbe {
     }
 }
 
-$modernRequiredPaths = @(
+$requiredPaths = @(
     'dsh-desktop\package.json',
     'tauri-shell\Cargo.toml',
     'docs\adr\0002-shell-boundary-and-layering.md'
 )
-$aioRequiredPaths = @(
-    'package.json',
-    'tauri-app\Cargo.toml',
-    'docs\adr\0002-shell-boundary-and-layering.md'
-)
-$repositoryLayout = if (
-    (Test-Path -LiteralPath (Join-Path $root 'dsh-desktop\package.json') -PathType Leaf) -and
-    (Test-Path -LiteralPath (Join-Path $root 'tauri-shell\Cargo.toml') -PathType Leaf)
-) {
-    'modern-5x'
-} elseif (
-    (Test-Path -LiteralPath (Join-Path $root 'package.json') -PathType Leaf) -and
-    (Test-Path -LiteralPath (Join-Path $root 'tauri-app\Cargo.toml') -PathType Leaf)
-) {
-    'aio-v1'
-} else {
-    'unknown'
-}
-$requiredPaths = if ($repositoryLayout -eq 'modern-5x') { $modernRequiredPaths } else { $aioRequiredPaths }
 $missingPaths = @($requiredPaths | Where-Object {
     -not (Test-Path -LiteralPath (Join-Path $root $_))
 })
@@ -151,8 +132,7 @@ $result = [ordered]@{
     ready = ($status -ne 'blocked')
     requiredLevel = $RequiredLevel
     repoRoot = $root
-    repositoryLayout = $repositoryLayout
-    repositoryShapeOk = ($repositoryLayout -ne 'unknown' -and $missingPaths.Count -eq 0)
+    repositoryShapeOk = ($missingPaths.Count -eq 0)
     missingPaths = $missingPaths
     tools = $tools
     node = $tools.node.version

@@ -24,14 +24,8 @@
 
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath $RepoPath).Path
-$isAioLayout = (
-    (Test-Path -LiteralPath (Join-Path $root 'package.json') -PathType Leaf) -and
-    (Test-Path -LiteralPath (Join-Path $root 'tauri-app\Cargo.toml') -PathType Leaf) -and
-    -not (Test-Path -LiteralPath (Join-Path $root 'dsh-desktop\package.json') -PathType Leaf)
-)
-$desktop = if ($isAioLayout) { $root } else { Join-Path $root 'dsh-desktop' }
-$tauri = if ($isAioLayout) { Join-Path $root 'tauri-app' } else { Join-Path $root 'tauri-shell' }
-$typescriptBuildArguments = if ($isAioLayout) { @('--prefix', 'tauri-app', 'run', 'sidecar:check') } else { @('run', 'build') }
+$desktop = Join-Path $root 'dsh-desktop'
+$tauri = Join-Path $root 'tauri-shell'
 $skillRoot = Split-Path -Parent $PSScriptRoot
 $pwsh = (Get-Process -Id $PID).Path
 $filesWereExplicit = (
@@ -324,7 +318,7 @@ if ($hasRequestedWork) {
         -Label 'TypeScript build' `
         -WorkingDirectory $desktop `
         -Executable 'npm' `
-        -Arguments $typescriptBuildArguments
+        -Arguments @('run', 'build')
 }
 
 foreach ($test in ($allTests | Sort-Object)) {
