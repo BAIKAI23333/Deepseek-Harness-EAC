@@ -1,0 +1,22 @@
+- insert:
+    - id: balance
+      name: '@deepseek-ai/dsh-balance'
+- insert:
+    - id: better-sidebar
+      name: 'dsh-better-sidebar'
+- insert:
+    - id: composer-dynamic-island
+      name: 'dsh-composer-dynamic-island'
+      config: {}
+- insert:
+    - id: auto-compact
+      name: 'dsh-auto-compact'
+- insert:
+    - id: plugin-shield
+      name: 'dsh-plugin-shield'
+- insert:
+    - id: plugin-manager
+      name: '@deepseek-ai/dsh-plugin-manager'
+- insert:
+    - id: dsh-undo
+      name: 'dsh-undo-savepoint'
