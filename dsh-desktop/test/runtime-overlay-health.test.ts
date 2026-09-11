@@ -4,8 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
+const testDir = path.dirname(fileURLToPath(import.meta.url));
 const runtimePaths = require('../lib/desktop/runtime-paths.js') as {
   init(ctx: {
     log(tag: string, message: string): void;
@@ -15,7 +17,7 @@ const runtimePaths = require('../lib/desktop/runtime-paths.js') as {
     appRoot(): string;
     platform: NodeJS.Platform;
   }): void;
-  ensureHealthyOverlay(timeoutMs?: number): Promise<{ source: 'overlay' | 'bundled'; reason?: string }>;
+  quarantineBrokenOverlay(reason: unknown): { quarantined: boolean; path?: string; error?: string };
   dshBin(): string;
 };
 
@@ -43,33 +45,46 @@ function init(userDataDir: string, logs: string[]): void {
   });
 }
 
-test('健康 overlay 首次探测成功后写入标记并参与启动', async () => {
+test('overlay 无需健康缓存，直接乐观参与真实启动', () => {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overlay-health-ok-'));
   const logs: string[] = [];
   const bin = makeOverlay(userDataDir, '9.9.9', "console.log('9.9.9');\n");
   init(userDataDir, logs);
 
-  assert.notEqual(runtimePaths.dshBin(), bin, '未经探测的 overlay 不得直接参与启动');
-  assert.deepEqual(await runtimePaths.ensureHealthyOverlay(5_000), { source: 'overlay' });
   assert.equal(runtimePaths.dshBin(), bin);
-  const marker = JSON.parse(fs.readFileSync(path.join(userDataDir, 'agent', '.eac-agent-health.json'), 'utf8'));
-  assert.equal(marker.version, '9.9.9');
-  assert.ok(logs.some((line) => line.includes('启动探测通过')));
+  assert.equal(fs.existsSync(path.join(userDataDir, 'agent', '.eac-agent-health.json')), false);
   fs.rmSync(userDataDir, { recursive: true, force: true });
 });
 
-test('缺失运行时依赖的 overlay 被隔离并自动回退内置版本', async () => {
+test('曾经可用的 overlay 损坏后仍可被隔离并回退内置版本', () => {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'overlay-health-bad-'));
   const logs: string[] = [];
-  makeOverlay(userDataDir, '9.9.9', "require('@deepseek-ai/definitely-missing');\n");
+  const bin = makeOverlay(userDataDir, '9.9.9', "console.log('9.9.9');\n");
   init(userDataDir, logs);
 
-  const result = await runtimePaths.ensureHealthyOverlay(5_000);
-  assert.equal(result.source, 'bundled');
-  assert.match(result.reason || '', /definitely-missing|Cannot find module|MODULE_NOT_FOUND/);
+  assert.equal(runtimePaths.dshBin(), bin, '第一次启动应直接选择 overlay');
+  fs.writeFileSync(bin, "require('@deepseek-ai/definitely-missing');\n");
+  const result = runtimePaths.quarantineBrokenOverlay(new Error('ERR_MODULE_NOT_FOUND'));
+  assert.equal(result.quarantined, true);
   assert.equal(fs.existsSync(path.join(userDataDir, 'agent')), false);
   assert.ok(fs.readdirSync(userDataDir).some((name) => name.startsWith('agent-broken-')));
   assert.ok(!runtimePaths.dshBin().includes(userDataDir), '隔离后必须回退随包内核');
-  assert.ok(logs.some((line) => line.includes('启动探测失败')));
+  assert.ok(logs.some((line) => line.includes('真实启动失败')));
   fs.rmSync(userDataDir, { recursive: true, force: true });
+});
+
+test('sidecar 在真实启动失败后停止残留进程、隔离 overlay 并重试内置版本', () => {
+  const server = fs.readFileSync(path.join(testDir, '..', '..', 'tauri-shell', 'sidecar', 'server.ts'), 'utf8');
+  const start = server.indexOf('async function guardedStartAndWait');
+  const end = server.indexOf('recoveryCenter.init', start);
+  const guarded = server.slice(start, end);
+
+  assert.ok(start >= 0 && end > start, '必须能定位 guardedStartAndWait 实现');
+  assert.match(guarded, /const startedWithOverlay = .*isUsingOverlay/);
+  assert.match(guarded, /catch \(overlayError\)[\s\S]*if \(!startedWithOverlay\) throw overlayError/);
+  const stopAt = guarded.indexOf('bootMod.stopServer');
+  const quarantineAt = guarded.indexOf('pathsMod.quarantineBrokenOverlay');
+  const retryAt = guarded.indexOf('bootMod.startAndWait', quarantineAt);
+  assert.ok(stopAt >= 0 && stopAt < quarantineAt && quarantineAt < retryAt, '失败后必须先停进程，再隔离，最后重试');
+  assert.doesNotMatch(server, /ensureHealthyOverlay|\.eac-agent-health\.json/);
 });

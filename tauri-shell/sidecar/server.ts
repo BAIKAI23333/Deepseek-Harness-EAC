@@ -573,14 +573,36 @@ async function guardedStartAndWait(overlays: string[]): Promise<{ webUrl: string
     reportIncident(t: string, d: string): { ok: boolean };
   })();
   const snap = g.snapshot('boot');
+  const startedWithOverlay = (pathsMod.isUsingOverlay as () => boolean)();
   try {
-    const r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+    let r: { webUrl: string; port: number };
+    try {
+      r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+    } catch (overlayError) {
+      if (!startedWithOverlay) throw overlayError;
+
+      // 乐观优先：overlay 不做启动前探测，也不缓存历史健康结论。只有真实
+      // dsh web 启动失败后才停止残留进程、隔离 overlay，并用内置内核重试一次。
+      try { await (bootMod.stopServer as () => Promise<void>)(); }
+      catch (stopError) { log('update', '停止失败 overlay 的残留进程失败: ' + String(((stopError as Error).message) || stopError)); }
+      const quarantine = (pathsMod.quarantineBrokenOverlay as (reason: unknown) => { quarantined: boolean; path?: string; error?: string })(overlayError);
+      log('update', '外部 DSH 启动失败，正在使用内置 DSH 重试' + (quarantine.path ? `（问题副本：${quarantine.path}）` : ''));
+      try {
+        r = await (bootMod.startAndWait as (o: string[]) => Promise<{ webUrl: string; port: number }>)(overlays);
+      } catch (bundledError) {
+        throw new Error(
+          '外部 DSH 启动失败，切换内置 DSH 后仍无法启动。' +
+          `外部错误：${String(((overlayError as Error).message) || overlayError)}；` +
+          `内置错误：${String(((bundledError as Error).message) || bundledError)}`,
+        );
+      }
+    }
     if (snap) g.markGood(snap.id);
     // agent-previous 备份生命周期：更新后的首次健康启动即清理上一版备份
     // （5.3.2 及以前 confirmPreviousAgentHealthy 零调用，数百 MB 备份永滞）。
     // 只有新版 overlay 自己完成健康启动，才可删除它对应的 previous。
     // 坏 overlay 被隔离后由 bundled 兜底成功，不代表 previous 可以丢弃。
-    if (!agentPreviousConfirmed && (pathsMod.isUsingOverlay as () => boolean)()) {
+    if (!agentPreviousConfirmed && startedWithOverlay && (pathsMod.isUsingOverlay as () => boolean)()) {
       agentPreviousConfirmed = true;
       // 两个「确认健康后的清理」都【严禁】在 boot.start 关键路径上同步执行：
       // backups/<ts> 全量镜像与 agent-previous 覆盖层可达数百 MB～数 GB，
@@ -663,9 +685,6 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
   // ---- boot.*（P2：dsh web 服务编排，Rust 壳的启动主链路） ----
   'boot.start': async (p): Promise<RpcResult> => {
     const overlays = Array.isArray(p && p.overlays) ? (p!.overlays as string[]) : [];
-    // 用户目录中的 Agent 会遮蔽随包内核。首次参与启动前必须先做真实 CLI
-    // 加载探测；缺失 peer dependency 等损坏会被隔离并自动回退到内置版本。
-    await (pathsMod.ensureHealthyOverlay as () => Promise<unknown>)();
     // 打包态捆绑依赖完整性校验（issue #7，= Electron startAndShowGuarded 前置）：
     // 空壳包以明确文案提示重装，用户选「仍然启动」才继续。
     await (previewMod.verifyBundledModules as () => Promise<void>)();

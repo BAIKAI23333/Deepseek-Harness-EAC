@@ -6,9 +6,7 @@
 
 import path = require('node:path');
 import fs = require('node:fs');
-import cp = require('node:child_process');
 import { nodeExecutableName } from './platform';
-import { writeJsonAtomic } from '../atomic-json';
 
 // 应用根目录（本模块位于 <root>/lib/desktop/ 下）。
 export const APP_ROOT = path.resolve(__dirname, '..', '..');
@@ -37,6 +35,7 @@ const updater = require('../../updater') as {
   overlayVersion(c: UpdCtx): string | null;
   bundledVersion(): string | null;
   compareVersions(a: string, b: string): number;
+  rollback(c: UpdCtx): string | null;
 };
 
 let ctx!: RuntimePathsCtx;
@@ -93,89 +92,29 @@ export function updCtx(): UpdCtx {
   };
 }
 
-interface OverlayHealthMarker {
-  version: string;
-  validatedAt: string;
-}
-
-function overlayDir(): string { return path.join(ctx.getUserDataDir(), 'agent'); }
-function overlayHealthPath(): string { return path.join(overlayDir(), '.eac-agent-health.json'); }
-
-function hasHealthyOverlayMarker(version: string | null): boolean {
-  if (!version) return false;
-  try {
-    const marker = JSON.parse(fs.readFileSync(overlayHealthPath(), 'utf8')) as OverlayHealthMarker;
-    return marker.version === version && typeof marker.validatedAt === 'string';
-  } catch { return false; }
-}
-
-function writeHealthyOverlayMarker(version: string): void {
-  writeJsonAtomic(overlayHealthPath(), { version, validatedAt: new Date().toISOString() });
-}
-
-function nextBrokenOverlayDir(): string {
-  const base = path.join(ctx.getUserDataDir(), 'agent-broken-' + Date.now());
-  let candidate = base;
-  let suffix = 0;
-  while (fs.existsSync(candidate)) candidate = base + '-' + (++suffix);
-  return candidate;
-}
-
 /**
- * 在 overlay 首次参与启动前用内置 Node 做一次真实 CLI 加载探测。
- * npm 退出码为 0、入口文件存在仍可能留下缺 peer dependency 的运行时；
- * `--version` 会加载 dsh 的实际入口，能在触碰用户 profile 前暴露这类错误。
+ * 真正的 dsh web 启动失败后隔离 overlay，并让本进程后续强制选内置内核。
+ * 不缓存“曾经健康”的结论：overlay 每次都先乐观参与真实启动，失败才回退。
  */
-export async function ensureHealthyOverlay(timeoutMs = 20_000): Promise<{ source: 'overlay' | 'bundled'; reason?: string }> {
-  const c = updCtx();
-  const bin = updater.overlayBinPath(c);
-  const version = updater.overlayVersion(c);
-  const bundled = updater.bundledVersion();
-  if (!bin || !fs.existsSync(bin) || !version) return { source: 'bundled', reason: 'missing' };
-  if (bundled && updater.compareVersions(version, bundled) < 0) return { source: 'bundled', reason: 'older-than-bundled' };
-  if (hasHealthyOverlayMarker(version)) return { source: 'overlay' };
-
-  const smokeHome = path.join(ctx.getUserDataDir(), '.agent-health-check-' + process.pid);
+export function quarantineBrokenOverlay(reason: unknown): { quarantined: boolean; path?: string; error?: string } {
+  const version = updater.overlayVersion(updCtx()) || '未知';
+  overlayRejected = true;
   try {
-    fs.mkdirSync(smokeHome, { recursive: true });
-    await new Promise<void>((resolve, reject) => {
-      cp.execFile(nodeExe(), [bin, '--version'], {
-        cwd: overlayDir(),
-        env: { ...process.env, DSH_HOME: smokeHome },
-        windowsHide: true,
-        timeout: timeoutMs,
-        maxBuffer: 2 * 1024 * 1024,
-      }, (err, stdout, stderr) => {
-        if (!err) return resolve();
-        const lines = String(stderr || stdout || err.message).split(/\r?\n/).filter(Boolean);
-        const diagnostic = lines.find((line) => /Cannot find|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND/.test(line));
-        const summary = [diagnostic, ...lines.slice(-4)].filter(Boolean).join(' | ');
-        reject(new Error(summary || err.message));
-      });
-    });
-    writeHealthyOverlayMarker(version);
-    ctx.log('update', `Agent overlay ${version} 启动探测通过`);
-    return { source: 'overlay' };
+    const broken = updater.rollback(updCtx());
+    if (!broken) return { quarantined: false };
+    ctx.log('update', `Agent overlay ${version} 真实启动失败，已隔离并改用内置版本：${String((reason as Error)?.message || reason)}`);
+    return { quarantined: true, path: broken };
   } catch (err) {
-    overlayRejected = true;
-    const reason = String((err as Error).message || err);
-    try {
-      const broken = nextBrokenOverlayDir();
-      fs.renameSync(overlayDir(), broken);
-      ctx.log('update', `Agent overlay ${version} 启动探测失败，已隔离到 ${broken}，改用内置版本：${reason}`);
-    } catch (moveErr) {
-      ctx.log('update', `Agent overlay ${version} 启动探测失败且无法隔离，本次运行强制改用内置版本：${reason}；隔离错误：${String((moveErr as Error).message || moveErr)}`);
-    }
-    return { source: 'bundled', reason };
-  } finally {
-    try { await fs.promises.rm(smokeHome, { recursive: true, force: true, maxRetries: 3 }); } catch { /* 尽力清理 */ }
+    const message = String((err as Error).message || err);
+    ctx.log('update', `Agent overlay ${version} 启动失败且无法隔离，本次运行强制改用内置版本：${message}`);
+    return { quarantined: false, error: message };
   }
 }
 
 // Updated overlay takes precedence over the bundled copy — 除非 overlay 比
 // 随包内置内核旧（应用升级后，过时的官方更新 overlay 不得遮蔽更新的内置内核；
-// 平局仍取 overlay，保持既有语义）。未经首次 CLI 探测确认的 overlay 不得
-// 参与启动，避免损坏的用户目录副本遮蔽健康的内置内核。
+// 平局仍取 overlay，保持既有语义）。真实启动失败后，本进程拒绝该 overlay，
+// 并由启动编排隔离目录后重试内置内核。
 function effectiveOverlay(): string | null {
   const c = updCtx();
   const ov = updater.overlayBinPath(c);
@@ -183,7 +122,6 @@ function effectiveOverlay(): string | null {
   const ovVer = updater.overlayVersion(c);
   const bundled = updater.bundledVersion();
   if (ovVer && bundled && updater.compareVersions(ovVer, bundled) < 0) return null;
-  if (!hasHealthyOverlayMarker(ovVer)) return null;
   return ov;
 }
 
