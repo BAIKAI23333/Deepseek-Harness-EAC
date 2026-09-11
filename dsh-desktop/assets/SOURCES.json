@@ -3011,6 +3011,7 @@
         "repository": "https://github.com/BAIKAI23333/dsh-stt",
         "refType": "version",
         "provenance": "dsh-plugin.json source.repository 明确声明；作者自有仓库（BAIKAI23333 = 本仓库维护者）"
+      }
     },
     {
       "id":"C115",
