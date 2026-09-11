@@ -30,8 +30,6 @@ import { createImageBatchTool } from './image-batch.js';
 import { createDocumentToImageTool } from './doc-tools.js';
 import { createImageEditTool } from './image-edit.js';
 import { NS } from './config.js';
-// 0.1.3：dsh-settings 移除 settingsNamespace 独立导出 —— 改走内嵌兼容垫片。
-import { settingsNamespace } from './settings-compat.js';
 import z from '@deepseek-ai/schemastery';
 import { ensureSettingsNamespaceExposed } from './settings-expose.js';
 import { setRuntimeSource, getRuntimeConfig } from './runtime.js';
@@ -341,8 +339,10 @@ export function apply(ctx, config) {
   // ── 设置命名空间 + 模型扫描 + 视觉孪生路由（需要 settings 和 llm 服务）──
   ctx.inject(['settings', 'llm'], (sctx) => {
     const llm = sctx.llm;
-    const settingsNs = settingsNamespace(NS);
-    const scope = sctx.settings.register(settingsNs, Config, { base: config });
+    // 内核 0.1.3 起 dsh-settings 不再导出 settingsNamespace 品牌函数
+    // （命名空间校验收进 register() 内部，见内核 parseSettingsNamespace）。
+    // 直接把裸 NS 交给 register 即可，返回的 scope 仍具备 get/watch/update/replace。
+    const scope = sctx.settings.register(NS, Config, { base: config });
     sourceGetter = () => scope.get();
     scope.watch(() => { /* 触发热更 */ });
 
