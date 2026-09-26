@@ -105,8 +105,8 @@ companionSyncMod.init({
   log,
   getDshHome: () => dshHome,
   getUserDataDir: () => userDataDir,
-  // v6：皮肤行写入随皮肤系统剥出（Task 3.2 接回），此处保持空实现。
-  applyLegacySkinChoice: () => { /* Task 3.2 接回 */ },
+  // M2/#415：applyLegacySkinChoice（旧版皮肤选择迁移落位）随旧版皮肤切换
+  // 一并退役；换肤由 ui-skin-loader 公约皮肤包接管。
   showMainWindow: () => say('showMainWindow (host-delegated)'),
   notify: notifyFallback,
   platform: process.platform,

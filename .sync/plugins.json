@@ -1541,42 +1541,6 @@
       "owner": "desktop-plugins"
     },
     {
-      "id": "skin-switch",
-      "kind": "plugin",
-      "path": "dsh-desktop/assets/plugins/dsh-skin-switch",
-      "packageName": "@deepseek-ai/dsh-skin-switch",
-      "class": "internal",
-      "source": {
-        "kind": "internal",
-        "name": "@deepseek-ai/dsh-skin-switch",
-        "reason": "maintained in this repository; no external source is declared"
-      },
-      "request": {
-        "mode": "exact",
-        "version": "0.1.0"
-      },
-      "sync": {
-        "mode": "manual",
-        "patches": [],
-        "preservePaths": []
-      },
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "validation": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "commands": []
-      },
-      "license": {
-        "expected": "MIT",
-        "reviewOnChange": true
-      },
-      "owner": "desktop-plugins"
-    },
-    {
       "id": "soul-md",
       "kind": "plugin",
       "path": "dsh-desktop/assets/plugins/dsh-soul-md",
@@ -1806,96 +1770,132 @@
       },
       "owner": "desktop-plugins",
       "defaultDisabled": true
-    }
-  ],
-  "skins": [
-    {
-      "id": "ui-skin-blue-fantasy",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/blue-fantasy",
-      "packageName": "@linxin666/dsh-client-ui-skin-blue-fantasy",
-      "class": "resource",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
-      },
-      "request": {
-        "mode": "exact",
-        "version": "0.1.11"
-      },
-      "sync": {
-        "mode": "metadata-only",
-        "patches": [],
-        "preservePaths": []
-      },
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "validation": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "commands": []
-      },
-      "license": {
-        "expected": "BSD-3-Clause",
-        "reviewOnChange": true
-      },
-      "owner": "desktop-skins"
     },
     {
-      "id": "ui-skin-dragon-heir",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/dragon-heir",
-      "packageName": "@linxin666/dsh-client-ui-skin-dragon-heir",
-      "class": "resource",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
-      },
-      "request": {
-        "mode": "exact",
-        "version": "0.1.11"
-      },
-      "sync": {
-        "mode": "metadata-only",
-        "patches": [],
-        "preservePaths": []
-      },
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "validation": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "commands": []
-      },
-      "license": {
-        "expected": "BSD-3-Clause",
-        "reviewOnChange": true
-      },
-      "owner": "desktop-skins"
-    },
-    {
-      "id": "ui-skin-maid-atelier",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/maid-atelier",
-      "packageName": "@dsh-external/dsh-client-ui-skin-maid-atelier",
-      "class": "resource",
+      "id": "dsh-ui-skin-loader",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-ui-skin-loader",
+      "packageName": "@dsh-eac/ui-skin-loader",
+      "class": "internal",
       "source": {
         "kind": "internal",
-        "name": "@dsh-external/dsh-client-ui-skin-maid-atelier",
-        "reason": "maintained in this repository; no external source is declared"
+        "name": "@dsh-eac/ui-skin-loader",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.0.1"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
+        "patches": [],
+        "preservePaths": []
+      },
+      "runtimeUpdate": {
+        "allowed": false,
+        "defaultAction": "prompt"
+      },
+      "validation": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "commands": []
+      },
+      "license": {
+        "expected": "MIT",
+        "reviewOnChange": true
+      },
+      "owner": "desktop-plugins"
+    },
+    {
+      "id": "dsh-eac-skin-aurora",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-aurora",
+      "packageName": "@dsh-eac/skin-aurora",
+      "class": "internal",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-aurora",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+      },
+      "request": {
+        "mode": "exact",
+        "version": "1.1.0"
+      },
+      "sync": {
+        "mode": "manual",
+        "patches": [],
+        "preservePaths": []
+      },
+      "runtimeUpdate": {
+        "allowed": false,
+        "defaultAction": "prompt"
+      },
+      "validation": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "commands": []
+      },
+      "license": {
+        "expected": "MIT",
+        "reviewOnChange": true
+      },
+      "owner": "desktop-plugins"
+    },
+    {
+      "id": "dsh-eac-skin-blue-fantasy",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-blue-fantasy",
+      "packageName": "@dsh-eac/skin-blue-fantasy",
+      "class": "internal",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-blue-fantasy",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+      },
+      "request": {
+        "mode": "exact",
+        "version": "1.1.0"
+      },
+      "sync": {
+        "mode": "manual",
+        "patches": [],
+        "preservePaths": []
+      },
+      "runtimeUpdate": {
+        "allowed": false,
+        "defaultAction": "prompt"
+      },
+      "validation": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "commands": []
+      },
+      "license": {
+        "expected": "MIT AND BSD-3-Clause",
+        "reviewOnChange": true
+      },
+      "owner": "desktop-plugins"
+    },
+    {
+      "id": "dsh-eac-skin-deep-whale-day-night",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-deep-whale-day-night",
+      "packageName": "@dsh-eac/skin-deep-whale-day-night",
+      "class": "internal",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-deep-whale-day-night",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+      },
+      "request": {
+        "mode": "exact",
+        "version": "1.1.0"
+      },
+      "sync": {
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -1913,24 +1913,25 @@
         "expected": "CC-BY-NC-SA-4.0",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-miku",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/miku",
-      "packageName": "@linxin666/dsh-client-ui-skin-miku",
-      "class": "resource",
+      "id": "dsh-eac-skin-dragon-heir",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-dragon-heir",
+      "packageName": "@dsh-eac/skin-dragon-heir",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-dragon-heir",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -1945,27 +1946,28 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT AND BSD-3-Clause",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-minecraft",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/minecraft",
-      "packageName": "@linxin666/dsh-client-ui-skin-minecraft",
-      "class": "resource",
+      "id": "dsh-eac-skin-inkwash",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-inkwash",
+      "packageName": "@dsh-eac/skin-inkwash",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-inkwash",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -1980,27 +1982,28 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-qq98",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/qq98",
-      "packageName": "@linxin666/dsh-client-ui-skin-qq98",
-      "class": "resource",
+      "id": "dsh-eac-skin-maid-atelier",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-maid-atelier",
+      "packageName": "@dsh-eac/skin-maid-atelier",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-maid-atelier",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -2015,27 +2018,28 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT AND CC-BY-NC-SA-4.0",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-ths",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/ths",
-      "packageName": "@linxin666/dsh-client-ui-skin-ths",
-      "class": "resource",
+      "id": "dsh-eac-skin-miku",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-miku",
+      "packageName": "@dsh-eac/skin-miku",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-miku",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -2050,27 +2054,28 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT AND BSD-3-Clause",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-trading",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/trading",
-      "packageName": "@linxin666/dsh-client-ui-skin-trading",
-      "class": "resource",
+      "id": "dsh-eac-skin-minecraft",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-minecraft",
+      "packageName": "@dsh-eac/skin-minecraft",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-minecraft",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -2085,27 +2090,28 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT AND BSD-3-Clause",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-whale-song",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/whale-song",
-      "packageName": "@linxin666/dsh-client-ui-skin-whale-song",
-      "class": "resource",
+      "id": "dsh-eac-skin-qq98",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-qq98",
+      "packageName": "@dsh-eac/skin-qq98",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-qq98",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -2120,27 +2126,28 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT AND BSD-3-Clause",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
     },
     {
-      "id": "ui-skin-xp",
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins/xp",
-      "packageName": "@linxin666/dsh-client-ui-skin-xp",
-      "class": "resource",
+      "id": "dsh-eac-skin-ths",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-ths",
+      "packageName": "@dsh-eac/skin-ths",
+      "class": "internal",
       "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git"
+        "kind": "internal",
+        "name": "@dsh-eac/skin-ths",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.11"
+        "version": "1.1.0"
       },
       "sync": {
-        "mode": "metadata-only",
+        "mode": "manual",
         "patches": [],
         "preservePaths": []
       },
@@ -2155,12 +2162,121 @@
         "commands": []
       },
       "license": {
-        "expected": "BSD-3-Clause",
+        "expected": "MIT AND BSD-3-Clause",
         "reviewOnChange": true
       },
-      "owner": "desktop-skins"
+      "owner": "desktop-plugins"
+    },
+    {
+      "id": "dsh-eac-skin-trading",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-trading",
+      "packageName": "@dsh-eac/skin-trading",
+      "class": "internal",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-trading",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+      },
+      "request": {
+        "mode": "exact",
+        "version": "1.1.0"
+      },
+      "sync": {
+        "mode": "manual",
+        "patches": [],
+        "preservePaths": []
+      },
+      "runtimeUpdate": {
+        "allowed": false,
+        "defaultAction": "prompt"
+      },
+      "validation": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "commands": []
+      },
+      "license": {
+        "expected": "MIT AND BSD-3-Clause",
+        "reviewOnChange": true
+      },
+      "owner": "desktop-plugins"
+    },
+    {
+      "id": "dsh-eac-skin-whale-song",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-whale-song",
+      "packageName": "@dsh-eac/skin-whale-song",
+      "class": "internal",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-whale-song",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+      },
+      "request": {
+        "mode": "exact",
+        "version": "1.1.0"
+      },
+      "sync": {
+        "mode": "manual",
+        "patches": [],
+        "preservePaths": []
+      },
+      "runtimeUpdate": {
+        "allowed": false,
+        "defaultAction": "prompt"
+      },
+      "validation": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "commands": []
+      },
+      "license": {
+        "expected": "MIT AND BSD-3-Clause",
+        "reviewOnChange": true
+      },
+      "owner": "desktop-plugins"
+    },
+    {
+      "id": "dsh-eac-skin-xp",
+      "kind": "plugin",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-xp",
+      "packageName": "@dsh-eac/skin-xp",
+      "class": "internal",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-xp",
+        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+      },
+      "request": {
+        "mode": "exact",
+        "version": "1.1.0"
+      },
+      "sync": {
+        "mode": "manual",
+        "patches": [],
+        "preservePaths": []
+      },
+      "runtimeUpdate": {
+        "allowed": false,
+        "defaultAction": "prompt"
+      },
+      "validation": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "commands": []
+      },
+      "license": {
+        "expected": "MIT AND BSD-3-Clause",
+        "reviewOnChange": true
+      },
+      "owner": "desktop-plugins"
     }
   ],
+  "skins": [],
   "sdkPlugins": [
     {
       "id": "sample-sdk-plugin",

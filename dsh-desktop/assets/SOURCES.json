@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-09-07",
+  "updatedAt": "2026-09-27",
   "audit": {
     "source": "DSH_EAC_Plugin_Audit_2026-09-05.xlsx (external full audit, 2026-09-05 Asia/Shanghai)",
     "mainBaseline": "e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
@@ -951,28 +951,6 @@
         "date": "2026-09-06",
         "decision": "upstream（dsh_desktop 伴侣套件）",
         "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
-      }
-    },
-    {
-      "id": "C038",
-      "line": "main",
-      "name": "@deepseek-ai/dsh-skin-switch",
-      "type": "plugin",
-      "origin": "eac-original",
-      "version": "0.1.0",
-      "path": "dsh-desktop/assets/plugins/dsh-skin-switch",
-      "registryStatus": "注册表默认启用",
-      "audit": {
-        "verdict": "catalog-miss",
-        "compare": "no-upstream",
-        "note": "无可靠上游，不能判定修改",
-        "basis": "无独立上游证明",
-        "conflict": null
-      },
-      "resolution": {
-        "date": "2026-09-06",
-        "decision": "eac-original",
-        "evidence": "EAC 独有：上游 dsh_desktop 全历史 0 提交、npm @deepseek-ai/* 404、dsh-web 仓库无、名录候选无；EAC v4.x 提交首次引入（host 集成型配套插件）。"
       }
     },
     {
@@ -3014,8 +2992,8 @@
       }
     },
     {
-      "id":"C115",
-      "line":"main",
+      "id": "C115",
+      "line": "main",
       "name": "dsh-think-zh-expand-eac",
       "type": "plugin",
       "origin": "upstream",
@@ -3033,6 +3011,314 @@
         "repository": "https://github.com/jing-hy/dsh-think-zh-expand-eac",
         "refType": "version",
         "provenance": "Fork of https://github.com/baosfeng/my-dsh-plugins (plugins/dsh-think-zh-expand, MIT, 原作者 @baosfeng)"
+      }
+    },
+    {
+      "id": "C116",
+      "line": "main",
+      "name": "@dsh-eac/ui-skin-loader",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-ui-skin-loader",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C117",
+      "line": "main",
+      "name": "@dsh-eac/skin-aurora",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-aurora",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C118",
+      "line": "main",
+      "name": "@dsh-eac/skin-blue-fantasy",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-blue-fantasy",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C119",
+      "line": "main",
+      "name": "@dsh-eac/skin-deep-whale-day-night",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-deep-whale-day-night",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C120",
+      "line": "main",
+      "name": "@dsh-eac/skin-dragon-heir",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-dragon-heir",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C121",
+      "line": "main",
+      "name": "@dsh-eac/skin-inkwash",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-inkwash",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C122",
+      "line": "main",
+      "name": "@dsh-eac/skin-maid-atelier",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-maid-atelier",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C123",
+      "line": "main",
+      "name": "@dsh-eac/skin-miku",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-miku",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C124",
+      "line": "main",
+      "name": "@dsh-eac/skin-minecraft",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-minecraft",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C125",
+      "line": "main",
+      "name": "@dsh-eac/skin-qq98",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-qq98",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C126",
+      "line": "main",
+      "name": "@dsh-eac/skin-ths",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-ths",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C127",
+      "line": "main",
+      "name": "@dsh-eac/skin-trading",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-trading",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C128",
+      "line": "main",
+      "name": "@dsh-eac/skin-whale-song",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-whale-song",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+      }
+    },
+    {
+      "id": "C129",
+      "line": "main",
+      "name": "@dsh-eac/skin-xp",
+      "type": "plugin",
+      "origin": "eac-original",
+      "version": "1.1.0",
+      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-xp",
+      "registryStatus": "注册表默认启用",
+      "audit": {
+        "verdict": "catalog-miss",
+        "compare": "no-upstream",
+        "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
+        "conflict": null
+      },
+      "resolution": {
+        "date": "2026-09-27",
+        "decision": "eac-original",
+        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
       }
     }
   ]

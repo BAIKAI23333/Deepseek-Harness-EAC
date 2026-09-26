@@ -17,6 +17,16 @@ const { collectPluginRows } = require('../../plugin-manager-state') as {
   collectPluginRows(entries: unknown[], o: Record<string, unknown>): unknown[];
 };
 const onboardingLogic = require('../../scripts/onboarding') as { CORE_PLUGIN_IDS: Set<string> };
+// M3/#416：三层分级（L1 内置 / L2 推荐 / L3 外部）的 canonical 字段是
+// `.sync/plugin-distribution.json` 的 distributionClass；生成注册表把
+// ledger 的 id → 分级映射（PLUGIN_DISTRIBUTION_CLASSES）与推荐包 id 带到
+// 运行时，行/UI 直接消费，不再读 .sync。
+import {
+  DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+  RECOMMENDED_PACK_PLUGIN_IDS,
+  PLUGIN_DISTRIBUTION_CLASSES,
+  RECOMMENDED_PACK_ID,
+} from './plugin-sync-registry';
 const { configLinesFor } = require('../../patch-row-heal') as {
   configLinesFor(config: unknown): string;
 };
@@ -132,6 +142,11 @@ export function pluginManagerCollect(): unknown[] {
     describe: (name: string) => pluginManagerPackageDescription(name),
     bundles,
     privateIds,
+    // M3/#416：canonical 分级映射 + 推荐包 id（行上暴露 distributionClass/tierLabel）。
+    distributionClasses: PLUGIN_DISTRIBUTION_CLASSES,
+    builtinIds: DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+    recommendedIds: RECOMMENDED_PACK_PLUGIN_IDS,
+    recommendedPack: RECOMMENDED_PACK_ID,
   });
 }
 
@@ -280,6 +295,8 @@ export function fileDropSave(dataUrl: string, name: string): { ok: boolean; erro
 // 默认禁用的配套插件（dsh-pet）被用户启用后不会被下次 sync 重新插回
 // disabled 行（sync 的「已有行不重写」规则自然接管）。
 export function pluginManagerSetEnabled(id: string, enabled: boolean): { ok: boolean; error?: string } {
+  // M3/#416 L1：内置（builtin）分级 = onboarding CORE_PLUGIN_IDS（同一生成
+  // 注册表来源），默认启用且不可停用 —— 管理页的行同样锁定为不可切换。
   if (onboardingLogic.CORE_PLUGIN_IDS.has(id)) {
     return { ok: false, error: '核心插件不可停用: ' + String(id) };
   }

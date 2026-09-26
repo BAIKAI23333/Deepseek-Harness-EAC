@@ -278,10 +278,9 @@ dsh-desktop/                  # Electron desktop app
 ├── plugin-guard.js           # Plugin protection engine: snapshots/rollback/checks/repair/guarded startup/reports
 ├── profile-module-heal.js    # Profile module shadowing repair: real directories + pnpm links
 ├── preload.js                # Sandbox preload
-├── assets/                   # Loading/update pages, icons, skins, companion plugins
-│   ├── skins/                # 10 built-in Web UI skins
+├── assets/                   # Loading/update pages, icons, companion plugins
 │   └── plugins/              # Desktop companions: dsh-balance / dsh-file-changes / dsh-terminal
-│                             # / dsh-easy-setup / dsh-skin-switch
+│                             # / dsh-easy-setup
 │                             # Bundled community plugins: dsh-webui-market / dsh-tool-vision
 │                             # / dsh-soul-md / dsh-web-mobile-fix
 │                             # (vendor and self-contained runtime dependencies included in the repository)
@@ -345,7 +344,6 @@ research/                     # Third-party WeChat / bridge protocol research
 | dsh-settings-nav-custom                                         | Customization for the Settings sidebar                                                                                                                                                                                |
 | dsh-settings-scroll-fix (provider: says693)                     | Mouse-wheel and overflow scrolling repair for Settings                                                                                                                                                                |
 | @dsh-external/dsh-side-session (provider: dsh-external)         | Temporary side conversations that do not affect the main conversation                                                                                                                                                 |
-| @deepseek-ai/dsh-skin-switch (provider: deepseek-ai)            | Built-in skin switching                                                                                                                                                                                               |
 | dsh-soul-md (provider: Scorp1o117)                              | `soul.md` persona-card injection                                                                                                                                                                                      |
 | dsh-stt (provider: BAIKAI23333)                                 | Offline local speech-to-text: sherpa-onnx SenseVoice fills the composer from microphone input with wake words and a "send" voice command (off by default; all platforms, engine installed per-platform at build time) |
 | @deepseek-ai/dsh-terminal (provider: deepseek-ai)               | Interactive command line inside a conversation                                                                                                                                                                        |

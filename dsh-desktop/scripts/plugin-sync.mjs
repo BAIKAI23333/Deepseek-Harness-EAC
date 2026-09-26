@@ -948,9 +948,17 @@ export function validateManifest(root = DEFAULT_ROOT, options = {}) {
   };
 }
 
+/**
+ * 运行时分级载荷：`distributionClass` 是唯一 canonical 分级字段
+ * （M3/#416 裁定 —— 不新增 `tier`）。除 id 清单外，把 ledger 的
+ * id → 分级映射整体带给运行时（插件管理行/UI 直接消费，无需再读 .sync）；
+ * `recommendedPackId` 取自 recommended 条目的 `pack`（schema 约束为常量）。
+ */
 function runtimeDistributionPayload(project) {
   const policy = project.policies?.pluginDistribution;
-  if (policy?.enabled === false) return { builtinPluginIds: [], recommendedPluginIds: [] };
+  if (policy?.enabled === false) {
+    return { builtinPluginIds: [], recommendedPluginIds: [], recommendedPackId: null, pluginClasses: {} };
+  }
   const distribution = readJson(
     path.join(project.paths.root, policy?.manifest || '.sync/plugin-distribution.json'),
     'plugin distribution manifest',
@@ -959,16 +967,41 @@ function runtimeDistributionPayload(project) {
     path.join(project.paths.root, policy?.recommendedPack || '.sync/packs/desktop-recommended.pack.json'),
     'recommended pack draft',
   );
+  const entries = Array.isArray(distribution?.plugins) ? distribution.plugins : [];
+  const pluginClasses = {};
+  for (const entry of [...entries].sort((a, b) => byteCompare(String(a?.id || ''), String(b?.id || '')))) {
+    if (!entry || typeof entry.id !== 'string' || typeof entry.distributionClass !== 'string') continue;
+    pluginClasses[entry.id] = entry.distributionClass;
+  }
+  const recommendedPackId = entries.find(
+    (entry) => entry?.distributionClass === 'recommended' && typeof entry.pack === 'string',
+  )?.pack || null;
   return {
-    builtinPluginIds: (distribution.plugins || [])
+    builtinPluginIds: entries
       .filter((entry) => entry?.distributionClass === 'builtin')
       .map((entry) => entry.id)
       .sort(byteCompare),
     recommendedPluginIds: [...(pack?.['x-eac']?.intendedPluginIds || [])].sort(byteCompare),
+    recommendedPackId,
+    pluginClasses,
   };
 }
 
-function registryPayload(manifest, distribution = { builtinPluginIds: [], recommendedPluginIds: [] }) {
+/**
+ * 生成注册表的期望文本（纯计算，不做插件目录树校验）。
+ *
+ * `generateRegistry` 的严格路径（含目录树比对）在精简树里必然失败 ——
+ * v6 Task 3.1 剥离后仓库只随包 13 个内置插件，manifest 仍登记全部来源。
+ * 本函数供「提交的生成产物与 ledger 是否同步」的契约测试使用：产物内容只
+ * 由 manifest + plugin-distribution（canonical 分级）+ 推荐包 draft 决定，
+ * 与目录树无关，因此可以在任何树形下验证零漂移。
+ */
+export function expectedRegistryText(root = DEFAULT_ROOT) {
+  const project = loadProject(root);
+  return generateRegistryText(project.manifest, runtimeDistributionPayload(project));
+}
+
+function registryPayload(manifest, distribution = { builtinPluginIds: [], recommendedPluginIds: [], recommendedPackId: null, pluginClasses: {} }) {
   const entries = {};
   const updates = {};
   for (const entry of allManifestEntries(manifest).sort((a, b) => byteCompare(a.id, b.id))) {
@@ -1009,6 +1042,8 @@ export function generateRegistryText(manifest, distribution) {
     'export const PLUGIN_UPDATE_SOURCES = PLUGIN_SYNC_REGISTRY.updateSources;',
     'export const DISTRIBUTION_BUILTIN_PLUGIN_IDS = PLUGIN_SYNC_REGISTRY.distribution.builtinPluginIds;',
     'export const RECOMMENDED_PACK_PLUGIN_IDS = PLUGIN_SYNC_REGISTRY.distribution.recommendedPluginIds;',
+    'export const PLUGIN_DISTRIBUTION_CLASSES = PLUGIN_SYNC_REGISTRY.distribution.pluginClasses;',
+    'export const RECOMMENDED_PACK_ID = PLUGIN_SYNC_REGISTRY.distribution.recommendedPackId;',
     'export default PLUGIN_SYNC_REGISTRY;',
     '',
   ].join('\n');

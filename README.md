@@ -404,7 +404,6 @@ research/                     # 第三方微信/桥接协议调研资料
 | dsh-settings-nav-custom                                      | 设置页左侧边栏自定义                                                                                                               |
 | dsh-settings-scroll-fix（提供者：says693）                   | 设置面板鼠标滚轮与溢出滚动修复                                                                                                     |
 | @dsh-external/dsh-side-session（提供者：dsh-external）       | 临时会话：不污染主会话的独立追问                                                                                                   |
-| @deepseek-ai/dsh-skin-switch（提供者：deepseek-ai）          | 内置皮肤切换                                                                                                                       |
 | dsh-soul-md（提供者：Scorp1o117）                            | soul.md 人设卡注入                                                                                                                 |
 | dsh-stt（提供者：BAIKAI23333）                               | 本地离线语音识别：sherpa-onnx SenseVoice 麦克风说话回填输入框，唤醒词 + 「发送」语音指令（默认禁用，三平台，引擎构建时按平台安装） |
 | @deepseek-ai/dsh-terminal（提供者：deepseek-ai）             | 会话内交互式命令行                                                                                                                 |
