@@ -1,4 +1,4 @@
-// src/index.ts
+// ths/src/index.ts
 function apply() {
 }
 export {

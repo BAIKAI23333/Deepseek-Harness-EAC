@@ -584,7 +584,9 @@ window.__ModuleLoader__.load({
     }
 
     // ── plugin ────────────────────────────────────────────────────────────
-    var inject = ["slots", "locale", "remote", "settingsScope", "sessions", "workspaces"];
+    // 内核 0.1.7-rc.2 移除了 settingsScope 服务；visionScope 仅被下方已写死
+    // 关闭的 easy-vision 死分支引用，随分支一并移除。
+    var inject = ["slots", "locale", "remote", "sessions", "workspaces"];
 
     function apply(ctx, config) {
       var t = ctx.locale.bind(NS);
@@ -611,21 +613,8 @@ window.__ModuleLoader__.load({
         });
       };
 
-      var visionScope = ctx.settingsScope.bind({ namespace: "tool-vision" });
       // 官方"视觉模型（快速配置）"卡与 dsh-tool-vision 原生"视觉模型"卡重复 → 写死不注册。
-      if (false && shown("easy-vision")) {
-        ctx.slots.inject("settings.section", function () {
-          return ctx.slots.register({
-            name: "settings.section",
-            id: "easy-vision",
-            order: 24,
-            label: function () { return t("visionNav"); },
-            locale: NS
-          }, function (props) {
-            return h(VisionQuick, Object.assign({}, props, { scope: visionScope }));
-          });
-        });
-      }
+      // （原 easy-vision 分支连同其 settingsScope 绑定一并移除：内核 0.1.7-rc.2 已无该服务。）
       // 官方"人设卡"（预设+卡片库+编辑）保留；dsh-soul-md 原生"人设卡"已在 soul-md 侧写死关闭避免重复。
       if (shown("easy-persona")) {
         ctx.slots.inject("settings.section", function () {

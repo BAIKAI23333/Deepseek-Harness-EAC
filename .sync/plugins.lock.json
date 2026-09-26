@@ -155,7 +155,7 @@
         "packageName": "dsh-compact",
         "packageVersion": "1.0.0",
         "path": "dsh-desktop/assets/plugins/dsh-compact",
-        "treeSha256": "6f7bca37cbfea44571ba4ac755968912abe3dd019a15b3a94642344a3213b754"
+        "treeSha256": "7a2a304c4c0607a0a1118b47a31a4df567275fbf5562ab38a03e5e9c1dbe3dca"
       },
       "manifestEntrySha256": "2cf65bbbf0a3240bd02fc40d42dc564446219a88f6d972da681a64370bd666c5",
       "patchFiles": [],
@@ -165,7 +165,7 @@
       "runtimeUpdate": "disabled",
       "source": {
         "kind": "unknown",
-        "sha256": "6f7bca37cbfea44571ba4ac755968912abe3dd019a15b3a94642344a3213b754",
+        "sha256": "7a2a304c4c0607a0a1118b47a31a4df567275fbf5562ab38a03e5e9c1dbe3dca",
         "version": "1.0.0"
       },
       "sourceCommit": null
@@ -1076,7 +1076,7 @@
         "packageName": "@deepseek-ai/dsh-easy-setup",
         "packageVersion": "0.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-easy-setup",
-        "treeSha256": "9608b6214c31b748ecbda92016ca86f04eb58dcf6fd1b15153170016c3ad128f"
+        "treeSha256": "063bc8a275e04b8d60040dbe6142c936c5fbe8106455b8d542b03e6089704017"
       },
       "manifestEntrySha256": "aef538c02636206d5325e02e48e0f1946aad38ac29a6246fea181a54a25a2614",
       "patchFiles": [],
@@ -1087,7 +1087,7 @@
       "source": {
         "kind": "internal",
         "name": "@deepseek-ai/dsh-easy-setup",
-        "sha256": "9608b6214c31b748ecbda92016ca86f04eb58dcf6fd1b15153170016c3ad128f",
+        "sha256": "063bc8a275e04b8d60040dbe6142c936c5fbe8106455b8d542b03e6089704017",
         "version": "0.1.0"
       },
       "sourceCommit": null

@@ -1,4 +1,4 @@
-// src/index.ts
+// miku/src/index.ts
 function apply() {
 }
 export {

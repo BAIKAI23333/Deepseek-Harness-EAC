@@ -1,4 +1,4 @@
-// src/index.ts
+// xp/src/index.ts
 function apply() {
 }
 export {

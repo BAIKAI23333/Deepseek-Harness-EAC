@@ -288,7 +288,9 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       ensureCss()
-      const scope = ctx.settingsScope.bind({ namespace: NS })
+      // 内核 0.1.7-rc.2 移除了 settingsScope 服务；configForms.get() 返回的
+      // ConfigFormController 具备同构的 getSnapshot/subscribe/set 面。
+      const scope = ctx.configForms.get(NS)
       const useScope = bindSnapshotSelector(scope)
       ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
         name: 'conversation.composer.dock',
@@ -306,7 +308,7 @@ window.__ModuleLoader__.load({
 
     module.exports = {
       name: 'dsh-compact-client',
-      inject: ['slots', 'settingsScope'],
+      inject: ['slots', 'configForms'],
       apply,
       __internals: { OLD_STORE_KEY },
     }
