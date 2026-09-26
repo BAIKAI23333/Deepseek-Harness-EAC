@@ -8,10 +8,15 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
 
 test('production dependency advisories are pinned to fixed glob and qs releases', () => {
+  // 钉子必须始终在 package.json overrides 中声明：0.1.7 起内核树不再传递依赖
+  // qs，条目不会物化进 lock；但未来任何传递依赖重新引入 qs/glob 时，钉子
+  // 立即生效。因此物化检查是条件式的——只要出现在 lock 里就必须是钉住版本。
   assert.equal(manifest.overrides.glob, '10.5.0');
   assert.equal(manifest.overrides.qs, '6.16.0');
-  assert.equal(lock.packages['node_modules/glob']?.version, '10.5.0');
-  assert.equal(lock.packages['node_modules/qs']?.version, '6.16.0');
+  const globEntry = lock.packages['node_modules/glob'];
+  if (globEntry) assert.equal(globEntry.version, '10.5.0');
+  const qsEntry = lock.packages['node_modules/qs'];
+  if (qsEntry) assert.equal(qsEntry.version, '6.16.0');
 });
 
 test('kernel override regeneration preserves application security overrides', () => {

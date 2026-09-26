@@ -1,5 +1,7 @@
 'use strict';
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.KERNEL_DEP_GAPS = void 0;
+exports.applyKernelSpecs = applyKernelSpecs;
 // 把 vendored 内核 tarball 缓存（vendor/kernel/<version>/）接线进 package.json。
 //
 // Why: @deepseek-ai/dsh 0.1.2-alpha.1 未发布 npm（npmmirror / npmjs 均停在
@@ -20,7 +22,7 @@ const VENDOR_KERNEL = path.join(ROOT, 'vendor', 'kernel');
 // 里声明（只有裸 import / peerDependencies），legacy-peer-deps 下 npm 不会
 // 安装它们。这份清单来自依赖缺口扫描（import 名单 − 已声明名单），按需人工
 // 增补；生成器把它们一并写入直接依赖（file: spec）。
-const KERNEL_DEP_GAPS = [
+exports.KERNEL_DEP_GAPS = [
     '@deepseek-ai/dsh-attachment',
     '@deepseek-ai/dsh-brand',
     '@deepseek-ai/dsh-client-store',
@@ -41,6 +43,66 @@ function packageNameOf(filename) {
     const m = /^deepseek-ai-(.+)-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)\.tgz$/.exec(filename);
     return m ? `@deepseek-ai/${m[1]}` : null;
 }
+/**
+ * 上游已移除的内核包白名单（0.1.7-rc.2 实测）。升版后这些包不再随内核分发，
+ * 生成器把它们从 dependencies/overrides 一并剔除；白名单外的缓存缺失仍然
+ * 硬错误，防止把真实漂移静默吞掉。EAC 自有代码对这些包零 import
+ * （dsh-agent-presets 仅存于注释与 dsh-compact 的陈旧 peer，后者另行清理）。
+ */
+const KERNEL_REMOVED_PACKAGES = [
+    '@deepseek-ai/dsh-code-runtime',
+    '@deepseek-ai/dsh-agent-presets',
+    '@deepseek-ai/dsh-code-runtime-worker-thread',
+    '@deepseek-ai/dsh-e2b',
+    '@deepseek-ai/dsh-experimental-agent-team-web-profile',
+    '@deepseek-ai/dsh-fs-e2b',
+    '@deepseek-ai/dsh-settings-file',
+    '@deepseek-ai/dsh-subprocess-e2b',
+    '@deepseek-ai/dsh-workflow-worker-thread',
+];
+/**
+ * 把内核 spec 应用到 manifest：改写存活的 @deepseek-ai/* 直接依赖、剔除
+ * 白名单内已移除包（dependencies + overrides 同步删）、保留非内核安全钉。
+ * 导出供 test/gen-kernel-overrides.test.ts 契约测试使用。
+ */
+function applyKernelSpecs(manifest, specByName) {
+    manifest.dependencies = manifest.dependencies ?? {};
+    const removed = [];
+    let gaps = 0;
+    for (const gapName of exports.KERNEL_DEP_GAPS) {
+        if (manifest.dependencies[gapName] !== undefined)
+            continue;
+        const spec = specByName.get(gapName);
+        if (!spec)
+            throw new Error(`gen-kernel-overrides: 缺口包 ${gapName} 在内核缓存里没有 tarball`);
+        manifest.dependencies[gapName] = spec;
+        gaps += 1;
+    }
+    let directCount = 0;
+    for (const depName of Object.keys(manifest.dependencies)) {
+        if (!depName.startsWith('@deepseek-ai/'))
+            continue;
+        const spec = specByName.get(depName);
+        if (!spec) {
+            if (applyKernelSpecs.REMOVED_SET?.has(depName)) {
+                delete manifest.dependencies[depName];
+                removed.push(depName);
+                continue;
+            }
+            throw new Error(`gen-kernel-overrides: 直接依赖 ${depName} 在内核缓存里没有对应 tarball（包被移除？）`);
+        }
+        manifest.dependencies[depName] = spec;
+        directCount += 1;
+    }
+    // 保留非 @deepseek-ai 的安全钉与应用级 override。旧实现整体覆盖 overrides，
+    // 会在每次重建内核缓存时静默抹掉 glob/qs 等漏洞修复钉。白名单内已移除包的
+    // override 同步剔除（EOVERRIDE：overrides 指向不存在的依赖会让 npm 拒装）。
+    const nonKernelOverrides = Object.entries(manifest.overrides ?? {})
+        .filter(([name]) => !name.startsWith('@deepseek-ai/'));
+    manifest.overrides = Object.fromEntries([...nonKernelOverrides, ...specByName.entries()].sort(([a], [b]) => a.localeCompare(b)));
+    return { removed, rewritten: directCount, gaps };
+}
+applyKernelSpecs.REMOVED_SET = new Set(KERNEL_REMOVED_PACKAGES);
 function main() {
     const argVersion = process.argv[2];
     const versions = fs.existsSync(VENDOR_KERNEL)
@@ -77,37 +139,13 @@ function main() {
     }
     const manifestPath = path.join(ROOT, 'package.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    manifest.dependencies = manifest.dependencies ?? {};
-    let gapCount = 0;
-    for (const gapName of KERNEL_DEP_GAPS) {
-        if (manifest.dependencies[gapName] !== undefined)
-            continue;
-        const spec = specByName.get(gapName);
-        if (!spec) {
-            console.error(`gen-kernel-overrides: 缺口包 ${gapName} 在内核缓存里没有 tarball`);
-            process.exit(1);
-        }
-        manifest.dependencies[gapName] = spec;
-        gapCount += 1;
+    const result = applyKernelSpecs(manifest, specByName);
+    if (result.removed.length) {
+        console.log(`gen-kernel-overrides: 已剔除上游移除包 ${result.removed.length} 个: ${result.removed.join(', ')}`);
     }
-    let directCount = 0;
-    for (const depName of Object.keys(manifest.dependencies)) {
-        if (!depName.startsWith('@deepseek-ai/'))
-            continue;
-        const spec = specByName.get(depName);
-        if (!spec) {
-            console.error(`gen-kernel-overrides: 直接依赖 ${depName} 在内核缓存里没有对应 tarball（包被移除？）`);
-            process.exit(1);
-        }
-        manifest.dependencies[depName] = spec;
-        directCount += 1;
-    }
-    // 保留非 @deepseek-ai 的安全钉与应用级 override。旧实现整体覆盖 overrides，
-    // 会在每次重建内核缓存时静默抹掉 glob/qs 等漏洞修复钉。
-    const nonKernelOverrides = Object.entries(manifest.overrides ?? {})
-        .filter(([name]) => !name.startsWith('@deepseek-ai/'));
-    manifest.overrides = Object.fromEntries([...nonKernelOverrides, ...specByName.entries()].sort(([a], [b]) => a.localeCompare(b)));
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-    console.log(`gen-kernel-overrides: 内核 ${version} → 直接依赖 ${directCount} 个改写 + 缺口补 ${gapCount} 个，overrides 共 ${specByName.size} 个包`);
+    console.log(`gen-kernel-overrides: 内核 ${version} → 直接依赖 ${result.rewritten} 个改写 + 缺口补 ${result.gaps} 个，overrides 共 ${specByName.size} 个包`);
 }
-main();
+// 仅直接执行时运行；测试经 import 复用 applyKernelSpecs，不得触发 main()。
+if (require.main === module)
+    main();
