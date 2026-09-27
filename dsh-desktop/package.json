@@ -63,7 +63,10 @@
     "@deepseek-ai/dsh-session-query": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-session-query-0.1.7-rc.2.tgz",
     "@deepseek-ai/dsh-settings": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-settings-0.1.7-rc.2.tgz",
     "@deepseek-ai/dsh-util-workspace-path": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-util-workspace-path-0.1.7-rc.2.tgz",
-    "@deepseek-ai/dsh-util-time": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-util-time-0.1.7-rc.2.tgz"
+    "@deepseek-ai/dsh-util-time": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-util-time-0.1.7-rc.2.tgz",
+    "@deepseek-ai/dsh-ptc-runtime": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-ptc-runtime-0.1.7-rc.2.tgz",
+    "@deepseek-ai/dsh-llm-deepseek": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-llm-deepseek-0.1.7-rc.2.tgz",
+    "@deepseek-ai/dsh-deepseek-account": "file:vendor/kernel/0.1.7-rc.2/deepseek-ai-dsh-deepseek-account-0.1.7-rc.2.tgz"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

@@ -152,7 +152,7 @@ window.__ModuleLoader__.load({
     var looseCodec = () => ({
       mode: "strict",
       typeSymbol: "@deepseek-ai/dsh-easy-setup/types#Json",
-      schema: { parse: (value) => value }
+      create: () => ({ parse: (value) => value })
     });
     var descriptor = (method, parameters) => ({
       id: `@deepseek-ai/dsh-easy-setup#easySetup/${method}`,

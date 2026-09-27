@@ -28,7 +28,7 @@ const REMOTE_PACKAGE = "@deepseek-ai/dsh-easy-setup";
 const looseCodec = () => ({
 	mode: "strict",
 	typeSymbol: "@deepseek-ai/dsh-easy-setup/types#Json",
-	schema: { parse: (value) => value }
+	create: () => ({ parse: (value) => value })
 });
 const descriptor = (method, parameters) => ({
 	id: `@deepseek-ai/dsh-easy-setup#easySetup/${method}`,

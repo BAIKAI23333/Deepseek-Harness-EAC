@@ -8,7 +8,7 @@
 
 ## 0. 一句话状态
 
-**M0-M6 + Phase A/C 已完成（此前全部只在本地，本分支已收口）；M5「官方端轨道」真实冒烟卡在最后一环，本会话定位了根因（纠正了两条误诊、发现一个新 P0 缺陷，见 §3）；M8 发布序列待逐项授权。**
+**M0-M6 + Phase A/C 已完成；T4 Windows x64 桌面交付已完成本机隔离验收（V5 `partial`，详见 [T4 完成报告](T4-DELIVERY-2026-09-27.md) 与 [完成报告](../reports/completion/T4-BETA-COMPLETION-2026-09-27.md)）；T2 仍等待 `beta-pack` 修复后的安装器包，M8 发布序列待逐项授权。**
 
 ## 1. 分支地图（接手者在这里开发）
 
@@ -114,12 +114,14 @@ node D:/tmp/pack-smoke/serve.mjs   # :18888，site 在 D:/tmp/pack-smoke/site
 
 ## 5. 建议任务拆分（与分支对应）
 
+T4 本轮执行记录见 [桌面交付验收](T4-DELIVERY-2026-09-27.md)；以该报告的实际结果与未验证项判断本轮交付状态。
+
 | # | 任务 | 分支 | 优先级 | 依赖 |
 | --- | --- | --- | --- | --- |
 | T1 | 修安装器 tgz 缺 `lib/types/types.js`（§3.3）→ 重打包 | `beta-pack`（根目录） | **P0** | 无 |
 | T2 | 官方端轨道全流程冒烟（§4 剧本）→ 截图 + `s10-official-track-smoke-report.md` | `beta-pack` + `beta`（跑本体） | **P0** | T1 |
 | T3 | M8 发布序列（**逐项找项目所有者授权**）：建 `DSH-EAC/dsh-eac-pack-installer` 正式仓推源码+tag → loader v1.1.0 GitHub Release（tgz+SHA256SUMS 已在 beta-skins）→ Mojobox catalog 刷新（重算 5 款皮肤 digest）+ 严格 CLI 复核 | `beta-pack` / `beta-skins` | P1 | T1 建议先落 |
-| T4 | EAC 桌面端本体交付态：`make-portable.mjs` 便携包 + NSIS 安装态冒烟（新机按 5.3.6 套路） | `beta` | P1 | 无 |
+| T4 | EAC 桌面端本体交付态：`make-portable.mjs` 便携包 + NSIS 安装态冒烟（新机按 5.3.6 套路） | `beta` | P1 | **本机完成；V5 partial** | 无 |
 | T5 | 收尾：关 issue #415/#416（附 commit 引用）；free-model 保持所有者个人仓（不迁组织），回推改动由所有者代推或加 collaborator；检查皮肤包在市场路径写行时的同构风险（P2） | — | P2 | — |
 
 ## 6. 团队与权限
