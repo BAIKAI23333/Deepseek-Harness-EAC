@@ -13,15 +13,15 @@
 </div>
 
 > [!IMPORTANT]
->
-> This project is undergoing a major refactor. During the refactor, we will not be accepting external Issues or PRs.
->
+> 
+> This project is undergoing a major refactor. 
+> 
 > The remaining bugs in v5 will no longer be fixed. We will release v6 as soon as possible to fully replace v5's functionality.
->
+> 
 > Please stay tuned.
 
 > [!NOTE]
->
+> 
 > The following is the README for v5.
 
 <div align="center">
