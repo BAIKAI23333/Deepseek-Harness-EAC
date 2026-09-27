@@ -18,9 +18,9 @@
 | --- | --- | --- | --- |
 | **`beta`** | 本体全量：内核 vendored + Tauri 壳 + sidecar + 全部内置插件源码 + 13 款皮肤资产 + 测试 + `.verify` 验证基建 + `handover/` 总览与文档快照 | 主应用开发（T4 交付态、内核兼容垫片、壳面） | 即 `feat/eac-ecosystem-m0-m8` 的收口 |
 | **`beta-skins`** | 皮肤包仓全量：13 款公约皮肤源码 + 构建脚本 + `.verify/pkgs-v1.1.0-final/`（14 tgz + SHA256SUMS 发布产物） | 皮肤包开发/修复/重打包 | = `DSH-EAC/dsh-ui-skin-loader` main@afa9472 + tag v1.1.0 |
-| **`beta-pack`** | 整合包生态：根目录 = 安装器源码（真实历史）+ `mojobox/`（47 插件 catalog + Pack/Lock + dist dshpack）+ `dsh-our-free-model/`（v1.3.0 源码） | 安装器（T1 修 lib/types、T2 冒烟）+ catalog 维护 | 安装器 = 本分支根目录（tag v1.0.0）；mojobox 源仓 main@13e72e1 已同步；free-model 源仓（个人账号）main@13dc267 已同步 |
+| **`beta-pack`** | 整合包生态：根目录 = 安装器源码（真实历史）+ `mojobox/`（47 插件 catalog + Pack/Lock + dist dshpack）+ `dsh-our-free-model/`（v1.3.0 源码） | 安装器（T1 修 lib/types、T2 冒烟）+ catalog 维护 | 安装器 = 本分支根目录（tag v1.0.0）；mojobox 源仓 main@13e72e1 已同步；free-model 源仓（所有者个人仓，**不迁组织**）main@13dc267 已同步 |
 
-**回推约定**：`beta-skins` 的改动可直接 push 回 `DSH-EAC/dsh-ui-skin-loader` main（同历史）；`beta-pack` 根目录（安装器）同历史可直推其正式仓（M8 待建 `DSH-EAC/dsh-eac-pack-installer`）；`mojobox/`、`dsh-our-free-model/` 是**快照目录**，改动需人工搬回各自源仓（zouyuxuan122/dsh-our-free-model 为个人账号仓，协作前建议迁入组织）。
+**回推约定**：`beta-skins` 的改动可直接 push 回 `DSH-EAC/dsh-ui-skin-loader` main（同历史）；`beta-pack` 根目录（安装器）同历史可直推其正式仓（M8 待建 `DSH-EAC/dsh-eac-pack-installer`）；`mojobox/`、`dsh-our-free-model/` 是**快照目录**，改动需人工搬回各自源仓（free-model 为所有者个人仓，不迁组织）。
 
 ## 1.1 资产清单（5 仓库 × 推送状态，2026-09-27 已全部上 GitHub）
 
@@ -28,7 +28,7 @@
 | --- | --- | --- | --- | --- |
 | DSH-Desktop-EAC（主仓） | `D:\DeepSeek Harness\dsh max\dsh_desktop` | DSH-EAC/DSH-Desktop-EAC | `feat/eac-ecosystem-m0-m8` @ c0fdec5→e620992→60a2dab | **整条分支未推过**（内核 0.1.7-rc.2 升级 + M2/M3 收口 + P0 修复）→ 本会话已以 `beta` 分支推送 |
 | dsh-ui-skin-loader | `D:\丰富履历专用文件夹\皮肤管理插件\loader` | DSH-EAC/dsh-ui-skin-loader | main @ 59d67b5+2bc5da2，tag v1.1.0 | 2 提交 + tag |
-| dsh-our-free-model | `D:\our free model\dsh-our-free-model` | **zouyuxuan122 个人账号**（非组织，团队可见性待处理） | main @ 13dc267，tag v1.3.0 | 1 提交 + tag |
+| dsh-our-free-model | `D:\our free model\dsh-our-free-model` | zouyuxuan122 个人仓（**不迁组织**） | main @ 13dc267，tag v1.3.0 | ✅ 已推送（本会话） |
 | dsh-mojobox | `dsh max\dsh-mojobox` | DSH-EAC/dsh-mojobox | main @ 13e72e1 | 1 提交 |
 | dsh-eac-pack-installer | `dsh max\dsh-eac-pack-installer` | **无正式远端**（主仓 `beta-pack` 分支即其全部历史） | main @ 8a5816f+f4685c7，tag v1.0.0 | M8 应建正式仓 `DSH-EAC/dsh-eac-pack-installer` 并从 beta-pack 直推 |
 
@@ -120,13 +120,13 @@ node D:/tmp/pack-smoke/serve.mjs   # :18888，site 在 D:/tmp/pack-smoke/site
 | T2 | 官方端轨道全流程冒烟（§4 剧本）→ 截图 + `s10-official-track-smoke-report.md` | `beta-pack` + `beta`（跑本体） | **P0** | T1 |
 | T3 | M8 发布序列（**逐项找项目所有者授权**）：建 `DSH-EAC/dsh-eac-pack-installer` 正式仓推源码+tag → loader v1.1.0 GitHub Release（tgz+SHA256SUMS 已在 beta-skins）→ Mojobox catalog 刷新（重算 5 款皮肤 digest）+ 严格 CLI 复核 | `beta-pack` / `beta-skins` | P1 | T1 建议先落 |
 | T4 | EAC 桌面端本体交付态：`make-portable.mjs` 便携包 + NSIS 安装态冒烟（新机按 5.3.6 套路） | `beta` | P1 | 无 |
-| T5 | 收尾：关 issue #415/#416（附 commit 引用）；free-model 仓库迁入组织或授权成员；检查皮肤包在市场路径写行时的同构风险（P2） | — | P2 | — |
+| T5 | 收尾：关 issue #415/#416（附 commit 引用）；free-model 保持所有者个人仓（不迁组织），回推改动由所有者代推或加 collaborator；检查皮肤包在市场路径写行时的同构风险（P2） | — | P2 | — |
 
 ## 6. 团队与权限
 
 - DSH-EAC 组织成员（9）：zouyuxuan122（所有者）、metaone01（所有者）、BAIKAI23333、lanyun077、look-back-lysj、says693、ViscaOwO、zixin947、T-Auto（bot）。
 - `beta` 分支为接手工作分支；正式改动仍按 v6 流程走 `dev`/PR。
-- free-model 仓库目前在所有者个人账号（zouyuxuan122/dsh-our-free-model），团队协作前建议迁入组织或添加成员权限。
+- free-model（zouyuxuan122/dsh-our-free-model）是所有者个人仓，**不迁组织**：团队源码取自 beta-pack 快照目录，改动回推由所有者代推或由所有者添加 collaborator。
 - v6 流程约定：分支从 `dev` 拉、PR 回 `dev`；ADR 0005–0008 在 dev 分支，动壳面前先读。
 
 ## 7. 换机必读（本机特有陷阱）
