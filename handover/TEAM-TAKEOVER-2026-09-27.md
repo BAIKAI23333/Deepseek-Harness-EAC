@@ -10,7 +10,19 @@
 
 **M0-M6 + Phase A/C 已完成（此前全部只在本地，本分支已收口）；M5「官方端轨道」真实冒烟卡在最后一环，本会话定位了根因（纠正了两条误诊、发现一个新 P0 缺陷，见 §3）；M8 发布序列待逐项授权。**
 
-## 1. 资产清单（5 仓库 × 推送状态）
+## 1. 分支地图（接手者在这里开发）
+
+主仓 `DSH-Desktop-EAC` 现有三条接手分支，**一条分支 = 一个工作流 = 一名接手者**，可并行开发：
+
+| 分支 | 内容 | 对应工作流 | 源仓对应关系 |
+| --- | --- | --- | --- |
+| **`beta`** | 本体全量：内核 vendored + Tauri 壳 + sidecar + 全部内置插件源码 + 13 款皮肤资产 + 测试 + `.verify` 验证基建 + `handover/` 总览与文档快照 | 主应用开发（T4 交付态、内核兼容垫片、壳面） | 即 `feat/eac-ecosystem-m0-m8` 的收口 |
+| **`beta-skins`** | 皮肤包仓全量：13 款公约皮肤源码 + 构建脚本 + `.verify/pkgs-v1.1.0-final/`（14 tgz + SHA256SUMS 发布产物） | 皮肤包开发/修复/重打包 | = `DSH-EAC/dsh-ui-skin-loader` main@afa9472 + tag v1.1.0 |
+| **`beta-pack`** | 整合包生态：根目录 = 安装器源码（真实历史）+ `mojobox/`（47 插件 catalog + Pack/Lock + dist dshpack）+ `dsh-our-free-model/`（v1.3.0 源码） | 安装器（T1 修 lib/types、T2 冒烟）+ catalog 维护 | 安装器 = 本分支根目录（tag v1.0.0）；mojobox 源仓 main@13e72e1 已同步；free-model 源仓（个人账号）main@13dc267 已同步 |
+
+**回推约定**：`beta-skins` 的改动可直接 push 回 `DSH-EAC/dsh-ui-skin-loader` main（同历史）；`beta-pack` 根目录（安装器）同历史可直推其正式仓（M8 待建 `DSH-EAC/dsh-eac-pack-installer`）；`mojobox/`、`dsh-our-free-model/` 是**快照目录**，改动需人工搬回各自源仓（zouyuxuan122/dsh-our-free-model 为个人账号仓，协作前建议迁入组织）。
+
+## 1.1 资产清单（5 仓库 × 推送状态，2026-09-27 已全部上 GitHub）
 
 | 仓库 | 本地路径 | 远端 | 分支/HEAD | 未推送内容 |
 | --- | --- | --- | --- | --- |
@@ -18,7 +30,7 @@
 | dsh-ui-skin-loader | `D:\丰富履历专用文件夹\皮肤管理插件\loader` | DSH-EAC/dsh-ui-skin-loader | main @ 59d67b5+2bc5da2，tag v1.1.0 | 2 提交 + tag |
 | dsh-our-free-model | `D:\our free model\dsh-our-free-model` | **zouyuxuan122 个人账号**（非组织，团队可见性待处理） | main @ 13dc267，tag v1.3.0 | 1 提交 + tag |
 | dsh-mojobox | `dsh max\dsh-mojobox` | DSH-EAC/dsh-mojobox | main @ 13e72e1 | 1 提交 |
-| dsh-eac-pack-installer | `dsh max\dsh-eac-pack-installer` | **无远端** | main @ 8a5816f+f4685c7，tag v1.0.0 | 全部 → 源码快照见 `handover/dsh-eac-pack-installer-src/`（M8 应建正式仓 `DSH-EAC/dsh-eac-pack-installer`） |
+| dsh-eac-pack-installer | `dsh max\dsh-eac-pack-installer` | **无正式远端**（主仓 `beta-pack` 分支即其全部历史） | main @ 8a5816f+f4685c7，tag v1.0.0 | M8 应建正式仓 `DSH-EAC/dsh-eac-pack-installer` 并从 beta-pack 直推 |
 
 **发布就绪产物（在接手者本机不可见，需按 §5 重产或向原机索取）：**- 皮肤包 14 tgz + SHA256SUMS：`loader\.verify\pkgs-v1.1.0-final\`（发布以此目录为准；1.1.0 含 5 款生成器皮肤激活修复）
 - NSIS 安装包：`tauri-shell\target\release\bundle\nsis\Deepseek Harness EAC_6.0.0_x64-setup.exe`（210.79 MiB，本机已构建成功）
@@ -29,10 +41,10 @@
 ```bash
 git clone https://github.com/DSH-EAC/DSH-Desktop-EAC.git
 cd DSH-Desktop-EAC
-git switch beta
+git switch beta        # 或 beta-skins / beta-pack，按你认领的工作流（见 §1 分支地图）
 # 1) 读本文档 §3（必读——两处误诊纠正 + 一个新 P0）
 # 2) 台账与背景：handover/docs-snapshot/（progress 台账、s9 报告、规划 v3、ADR 相关引用）
-# 3) 构建（Windows + Rust 1.9x + Node 24）：
+# 3) 构建（Windows + Rust 1.9x + Node 24；仅 beta 分支需要）：
 cd dsh-desktop && npm install        # 内核 vendored 依赖
 cd ../tauri-shell && npx @tauri-apps/cli build   # TMP/TEMP 重定向到非 C 盘！
 ```
@@ -100,15 +112,15 @@ node D:/tmp/pack-smoke/serve.mjs   # :18888，site 在 D:/tmp/pack-smoke/site
 - `diag/capture2.mjs` — CDP 抓 console + addScriptToEvaluateOnNewDocument 运行前钩子
 - `dsh --profile web --dump-config > dump.yml` — 组合后装载树（判条目/行/自插形态的第一工具）
 
-## 5. 建议任务拆分
+## 5. 建议任务拆分（与分支对应）
 
-| # | 任务 | 优先级 | 依赖 |
-| --- | --- | --- | --- |
-| T1 | 修安装器 tgz 缺 `lib/types/types.js`（§3.3）→ 重打包 | **P0** | 无 |
-| T2 | 官方端轨道全流程冒烟（§4 剧本）→ 截图 + `s10-official-track-smoke-report.md` | **P0** | T1 |
-| T3 | M8 发布序列（**逐项找项目所有者授权**）：push loader/mojobox/free-model（部分本会话已推）→ 建 `DSH-EAC/dsh-eac-pack-installer` 正式仓推源码+tag → loader v1.1.0 GitHub Release（14 tgz+SHA256SUMS）→ Mojobox catalog 刷新（重算 5 款皮肤 digest）+ 严格 CLI 复核 | P1 | T1 建议先落 |
-| T4 | EAC 桌面端本体交付态：`make-portable.mjs` 便携包 + NSIS 安装态冒烟（新机按 5.3.6 套路） | P1 | 无 |
-| T5 | 收尾：关 issue #415/#416（附 commit 引用）；free-model 仓库迁入组织或授权成员；检查皮肤包在市场路径写行时的同构风险（P2） | P2 | — |
+| # | 任务 | 分支 | 优先级 | 依赖 |
+| --- | --- | --- | --- | --- |
+| T1 | 修安装器 tgz 缺 `lib/types/types.js`（§3.3）→ 重打包 | `beta-pack`（根目录） | **P0** | 无 |
+| T2 | 官方端轨道全流程冒烟（§4 剧本）→ 截图 + `s10-official-track-smoke-report.md` | `beta-pack` + `beta`（跑本体） | **P0** | T1 |
+| T3 | M8 发布序列（**逐项找项目所有者授权**）：建 `DSH-EAC/dsh-eac-pack-installer` 正式仓推源码+tag → loader v1.1.0 GitHub Release（tgz+SHA256SUMS 已在 beta-skins）→ Mojobox catalog 刷新（重算 5 款皮肤 digest）+ 严格 CLI 复核 | `beta-pack` / `beta-skins` | P1 | T1 建议先落 |
+| T4 | EAC 桌面端本体交付态：`make-portable.mjs` 便携包 + NSIS 安装态冒烟（新机按 5.3.6 套路） | `beta` | P1 | 无 |
+| T5 | 收尾：关 issue #415/#416（附 commit 引用）；free-model 仓库迁入组织或授权成员；检查皮肤包在市场路径写行时的同构风险（P2） | — | P2 | — |
 
 ## 6. 团队与权限
 
