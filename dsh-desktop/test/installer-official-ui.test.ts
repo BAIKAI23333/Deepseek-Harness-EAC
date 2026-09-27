@@ -140,6 +140,22 @@ test('安装位置校验规则逐条移植官方 path.nsh / InstallerPreflight',
   assert.equal(define('DSH_FILE_ATTRIBUTE_REPARSE_POINT'), '0x400');
   assert.equal(define('DSH_FILE_ATTRIBUTE_DIRECTORY'), '0x10');
   assert.match(nsh, /GetFileAttributesW/, '须检测重解析点/目录属性');
+  // 非法字符清单：官方 InstallerValidatePath 同一组（: * ? " < > | / 与控制字符）。
+  // 管道符不能写字面量 —— installer-nsh-pipe 守护断言整份 nsh 零管道符（nsExec 直连
+  // taskkill 的前提），故用 ASCII 124 经 IntFmt "%c" 构造（NSIS 文档同款用法
+  // IntFmt $1 "%c" 0x41），再进同一张逐字符清单。
+  const validateFn = nsh.match(/Function\s+DshValidateInstallLocation[\s\S]*?\nFunctionEnd/);
+  assert.ok(validateFn, '缺少 DshValidateInstallLocation');
+  const charScan = validateFn![0].match(/GetDriveTypeW[\s\S]*?; 逐级上溯父目录/);
+  assert.ok(charScan, '缺少安装路径逐字符扫描段');
+  assert.ok(!nsh.includes('|'), '本文件不得出现管道符字面量（installer-nsh-pipe 契约）');
+  const pipeDecl = charScan![0].match(/IntFmt\s+\$(\d)\s+"%c"\s+124\b/);
+  assert.ok(pipeDecl, '逐字符扫描段须含管道符（IntFmt "%c" 124 构造）——官方清单里有 |');
+  assert.match(charScan![0], new RegExp(`\\$\\{OrIf\\}\\s+\\$2\\s*==\\s*\\$${pipeDecl![1]}\\b`),
+    '管道符须与其余非法字符同列拒绝');
+  for (const ch of [':', '*', '?', '"', '<', '>', '/']) {
+    assert.ok(charScan![0].includes(`$2 == '${ch}'`), `非法字符清单缺少 ${ch}`);
+  }
   // 保留设备名（含扩展名形态）。
   assert.match(nsh, /CON[\s\S]{0,80}PRN[\s\S]{0,80}AUX[\s\S]{0,80}NUL/, '须拒绝保留设备名 CON/PRN/AUX/NUL');
   assert.match(nsh, /COM[\s\S]{0,120}LPT/, '须拒绝 COM1-9 / LPT1-9');
@@ -153,11 +169,52 @@ test('安装位置校验规则逐条移植官方 path.nsh / InstallerPreflight',
   assert.match(nsh, /GetTempFileNameW/, '须做可写探针');
   assert.match(nsh, /GetDiskFreeSpaceExW/, '须查磁盘余量');
   assert.match(nsh, /\$\{ESTIMATEDSIZE\}/, '磁盘余量须对比 Tauri 模板的安装体积估算');
-  // 归属校验：已存在的非空目录必须是已注册安装目录（Tauri 写入的 InstallLocation 带引号）。
-  assert.match(nsh, /ReadRegStr\s+\$?\w+\s+SHCTX\s+"\$\{UNINSTKEY\}"\s+"InstallLocation"/,
-    '须读 Tauri 卸载键的 InstallLocation');
-  assert.match(nsh, /StrCpy\s+\$\w+\s+\$\w+\s+1\s*[\s\S]{0,200}StrCpy\s+\$\w+\s+\$\w+\s+""\s+1/,
-    'InstallLocation 须剥引号后比较（Tauri 模板写入 $\"$INSTDIR$\"）');
+  // 归属校验见下方「归属判定」专测：已注册判定的键集必须与 PREINSTALL 接管键集一致
+  // （只认 SHCTX 一处会把 HKLM 残留 / identifier 键注册的旧装目录判成外部目录），
+  // 且 InstallLocation 带引号（Tauri 模板写入 $\"$INSTDIR$\"）须剥引号后比较。
+});
+
+// 归属判定（官方 InstallerPreflight 的 EAC 裁定版）：
+//   放行 = 空目录（新装）｜接管键集注册的安装目录｜含本产品主程序的旧壳目录；
+//   其余非空目录一律拒绝（$(DSH_STR_PATH_OWNERSHIP)「请选择空文件夹，或原来的安装目录」）。
+// 「接管键集」与 installer-takeover.test.ts 钉住的 DSH_TakeoverOldShell 同源：
+// PREINSTALL 会静默卸载这些键注册的旧壳，故它们注册的目录就是本产品的合法落点。
+// 漏掉任一键（尤其 HKLM / identifier 键）＝ 把「本来就是本产品装在那里的目录」
+// 误判成外部目录而 fail-closed 挡死升级；只认 HKCU 一处正是官方原版形态
+// （${OrIfNot}），照抄会破坏 EAC 接管语义（issue #224 perMachine 残留）。
+test('归属判定：非空目录须为本产品目录（接管键集注册或含主程序），外部非空目录拒绝', () => {
+  const preflight = nsh.match(/!macro\s+DSH_InstallPreflight[\s\S]*?!macroend/);
+  assert.ok(preflight, '缺少 DSH_InstallPreflight');
+  const body = preflight![0];
+  // 键集比对：!insertmacro <MACRO> <HIVE> "<KEY>" 逐项对齐（SHCTX 在 currentUser
+  // 安装模式下即 HKCU；${UNINSTKEY} 是 Tauri 模板的 ...\Uninstall\${PRODUCTNAME}）。
+  const pairs = (text: string, macro: string): string[] =>
+    [...text.matchAll(new RegExp(`!insertmacro\\s+${macro}\\s+(\\w+)\\s+"([^"]+)"`, 'g'))]
+      .map((m) => `${m[1]}|${m[2]}`);
+  const normalize = (pair: string): string => {
+    const [hive, keyPath] = pair.split('|') as [string, string];
+    const leaf = keyPath === '${UNINSTKEY}' ? conf.productName : keyPath.split('\\').pop()!;
+    return `${hive === 'SHCTX' ? 'HKCU' : hive}|${leaf}`;
+  };
+  const takeover = pairs(nsh, 'DSH_TakeoverOldShell').map(normalize);
+  assert.equal(takeover.length, 6, `接管键集应为 2 hive × 3 键名 = 6，实际 ${takeover.length}`);
+  const ownership = pairs(body, 'DSH_OwnershipProbe').map(normalize);
+  assert.deepEqual([...ownership].sort(), [...takeover].sort(),
+    '归属探针键集须与接管键集逐项一致（漏 HKLM 残留 / identifier 键会误挡已注册目录）');
+  // 探针须剥 InstallLocation 引号（Tauri 模板 WriteRegStr ... "$\"$INSTDIR$\""）。
+  const probeMacro = nsh.match(/!macro\s+DSH_OwnershipProbe[\s\S]*?!macroend/);
+  assert.ok(probeMacro, '缺少 DSH_OwnershipProbe 归属探针宏');
+  assert.match(probeMacro![0], /StrCpy\s+\$6\s+\$5\s+1[\s\S]{0,200}StrCpy\s+\$5\s+\$5\s+""\s+1/,
+    '探针须剥 InstallLocation 引号后比较');
+  // 旧壳兜底：注册键被清理 / 卸载器缺失（接管宏按「脏键也接管」处理）时，含本产品
+  // 主程序的目录仍可原地接管 —— 与已注册判定是 OR 关系（保留 AND 语义见下）。
+  assert.match(body, /\$\{AndIfNot\}\s+\$\{FileExists\}\s+"\$INSTDIR\\\$\{MAINBINARYNAME\}\.exe"/,
+    '须保留「含本产品主程序」的旧壳目录兜底（AND 语义：已注册目录 或 本产品目录）');
+  // 拒绝：两个信号都不成立且目录非空 → 归属错误（绝不静默覆盖外部目录）。
+  assert.match(body, /\$\{If\}\s+\$4\s*==\s*0[\s\S]{0,500}FindFirst[\s\S]{0,500}DSH_STR_PATH_OWNERSHIP/,
+    '非注册且无本产品主程序的非空目录须 fail-closed 拒绝');
+  assert.doesNotMatch(body, /\$\{OrIfNot\}/,
+    '不得照抄官方 ${OrIfNot}：官方只认 HKCU 一处注册目录，会挡死 HKLM 残留旧壳接管');
 });
 
 test('preflight 在 PREINSTALL 内、写入与接管之前 fail-closed 执行', () => {

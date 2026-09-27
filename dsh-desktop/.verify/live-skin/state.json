@@ -1,0 +1,10 @@
+{
+  "webUrl": "http://127.0.0.1:3501/?token=KFaXH1kDFjr12SHSkfTIh1FwYo3CdAmLkKl2Jmg0LTo",
+  "cookie": "dsh-auth-XkeDrNnsxA_87xDchpXNZhbPuNRwlA-hExGKQld73uc=v1.eyJ2ZXJzaW9uIjoxLCJhdXRob3JpdHkiOiIxMjcuMC4wLjE6MzUwMSIsImlzc3VlZEF0IjoxNzkwNDQ3MjYyNTE1LCJleHBpcmVzQXQiOjE3OTMwMzkyNjI1MTV9.K1XUwaVVmpgYPBqsfJaHI9yS9AW68zIS-yMogKukFOw",
+  "dshHome": "D:\\tmp\\dsh-live-skin-4zekPo\\dsh-home",
+  "isolated": "D:\\tmp\\dsh-live-skin-4zekPo",
+  "pid": 16024,
+  "bootedAt": "2026-09-26T18:27:42.537Z",
+  "stoppedAt": "2026-09-26T18:34:20.667Z",
+  "why": "stop-sentinel"
+}

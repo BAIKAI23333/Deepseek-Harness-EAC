@@ -50,15 +50,42 @@ packages/skins/trading/
 | 样式节点随插件常驻、从不移除 | teardown 按自有 `data-plugin` 标记清扫自产 style 节点（§4.3「退出后不可观测」的补齐） |
 | `ctx.get("connection"/"workspaces")` 惰性定位 | best-effort 镜像（缺席即上游自带的降级路径） |
 
-vendored 文件的全部改动（去壳、上述 S3 移位、`export { apply }`）逐条记录在
-`src/vendor/dsh-web-ui-client.js` 文件头；除这些外与上游产物逐字节一致
-（含 esbuild region 标记与原注释）。上游 CSS-module 哈希类名（`Ra1MMG_*`）
-作为观感内容原样保留——CSS 文本与类名映射表成对迁移、自洽封闭，不构成对
-上游构建产物的运行时依赖（R5）。
+vendored 文件的全部改动（去壳、上述 S3 移位、`export { apply }`，以及下节的
+发行前安全修复）逐条记录在 `src/vendor/dsh-web-ui-client.js` 文件头与本
+README；除这些外与上游产物逐字节一致（含 esbuild region 标记与原注释）。
+随包分发的 `lib/client.js` 内亦就地留有该安全修复的说明注释（记在上游取数
+通道被删除的位置）。上游 CSS-module 哈希类名（`Ra1MMG_*`）作为观感内容
+原样保留——CSS 文本与类名映射表成对迁移、自洽封闭，不构成对上游构建产物
+的运行时依赖（R5）。
 
-已知上游行为（保持迁移保真，未改）：行情 JSONP script 标签在 deactivate 后
-由其自身 8s 超时自清理；`disposed` 标志保证不再写任何状态。实机验收（S4）
-时关注此项。
+## 已知行为（发行前安全修复：JSONP 取数通道已删除）
+
+审查发现（P1，发行前必修）：上游自带一条 JSONP 通道——`loadTencentQuotes`
+向 `https://qt.gtimg.cn` 动态插入 `<script>`，由本机 WebView 执行第三方返回的
+脚本体。宿主 WebView 的 CSP 为 `null`，该通道等同把远端任意 JS 执行权交给
+第三方，故**整条删除**（`parseTencentRow` / `loadTencentQuotes` 及
+`fetchDirectQuotes` 的交易所分支一并移除）。
+
+修复后的行为契约（由 `dsh-desktop/test/skin-trading-security-contract.test.ts`
+守卫）：
+
+- 本包不再以任何形式动态注入 `<script>`，不再执行任何远端返回的脚本，也不
+  存在任何 JSONP 执行路径；行情取数只走既有安全 `fetch` / RPC 源。
+- 股票/指数报价只有在宿主或其他已安装插件实际提供本地 ticker 端点
+  `/plugins/dsh-ticker/api` 或长桥 RPC 快照时才会显示；这两个 provider **不随本包
+  分发，也不由本包创建**。远程源仍是既有白名单（Binance、Frankfurter），
+  **未新增任何远程源**，未改 sidecar。
+- 交易所前缀品种（`sh`/`sz`/`hk`/`us`，即 A股/港股/美股指数与个股）在没有
+  外部 provider 时**优雅降级**为占位符：跑马灯与标题芯片显示 `--` / `—`，
+  指数栏显示 `-- --`；行情缺席不会让皮肤激活或卸载崩溃（无异常、无未处理
+  拒绝）。本包不伪造报价，也不把可选 provider 宣称为随包能力。
+- 上游原有的「JSONP script 标签在 deactivate 后由其自身 8s 超时自清理」行为
+  随之不再适用（该 script 标签已不存在）；`disposed` 标志与定时器/节点清扫
+  逻辑保持原样。实机验收（S4）时以本节的降级表现为准。
+
+这是对上游产物的**有意偏离**（安全性优先于逐字节迁移保真），偏离内容已在上
+表与本节记录；`THIRD-PARTY-NOTICES.md` 的「逐字节迁移」表述需连同本节一并
+理解（该文件本轮未改，属待同步项）。
 
 ## 接线形态（同先例）
 

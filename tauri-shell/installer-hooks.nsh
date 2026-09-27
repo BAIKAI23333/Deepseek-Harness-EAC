@@ -351,7 +351,7 @@ FunctionEnd
 ; 官方 path.nsh InstallerValidatePath 的 EAC 版：只做只读判定与归一化；
 ; 合法时清空 $DshLocationError，非法时保持错误文案。
 ; 规则（逐条对应官方实现）：4..180 字符、X:\ 盘符形态、仅本地固定盘、
-; 排除 : * ? 双引号 < > / 与控制字符、逐级上溯排除保留设备名（含扩展名形态）、
+; 排除 : * ? 双引号 尖括号 管道符 / 与控制字符、逐级上溯排除保留设备名（含扩展名形态）、
 ; 重解析点与非目录、WINDIR 与 PROGRAMFILES 根、PROFILE 与 LOCALAPPDATA 自身。
 Function DshValidateInstallLocation
   StrCpy $DshLocationError "$(DSH_STR_PATH_INVALID)"
@@ -377,6 +377,11 @@ Function DshValidateInstallLocation
   ${If} $2 != ${DSH_DRIVE_FIXED}
     Return
   ${EndIf}
+  ; 非法字符清单 = 官方 InstallerValidatePath 同一组：: * ? " < > 管道符 / 与控制字符。
+  ; 管道符不能写字面量 —— 本文件受 installer-nsh-pipe 守护（整份 nsh 零管道符，
+  ; nsExec 直连 taskkill 的前提），故用 ASCII 124 经 IntFmt "%c" 构造（NSIS 文档
+  ; 同款用法：IntFmt $1 "%c" 0x41），再进同一张逐字符清单。
+  IntFmt $7 "%c" 124
   StrCpy $1 3
   ${Do}
     StrCpy $2 $INSTDIR 1 $1
@@ -390,6 +395,7 @@ Function DshValidateInstallLocation
     ${OrIf} $2 == '<'
     ${OrIf} $2 == '>'
     ${OrIf} $2 == '/'
+    ${OrIf} $2 == $7
     ${OrIf} $2 == '$\r'
     ${OrIf} $2 == '$\n'
     ${OrIf} $2 == '$\t'
@@ -480,26 +486,66 @@ Function DshValidateInstallLocation
   StrCpy $DshLocationError ""
 FunctionEnd
 
-; 官方 path.nsh InstallerPreflight 的 EAC 版：归属（空目录或已注册安装目录）、
+; 官方 path.nsh InstallerPreflight 的 EAC 版：归属（空目录或本产品目录）、
 ; 可写探针、磁盘余量（对比模板的 ESTIMATEDSIZE，单位 KB）。
 ; 宏而非函数：这里的 ${UNINSTKEY}、${MAINBINARYNAME}、${ESTIMATEDSIZE} 由 Tauri
 ; 模板在本文件之后定义，宏在 !insertmacro 处（Section 内）才展开。
+
+; 卸载键路径前缀（Tauri 模板 ${UNINSTKEY} 与 DSH_TakeoverOldShell 的同一处）。
+!define DSH_UNINST_ROOT "Software\Microsoft\Windows\CurrentVersion\Uninstall"
+
+; 归属探针：该卸载键注册的 InstallLocation 就是当前 $INSTDIR 时置 $4 = 1。
+; 键集必须与 PREINSTALL 的接管键集完全一致（2 hive × 3 键名）——接管语义要求
+; 旧壳/旧版无论注册在哪个键都能原地覆盖升级：
+;   - 只认 SHCTX ${UNINSTKEY}（currentUser 下即 HKCU 的 productName 键）会把
+;     perMachine 时代的 HKLM 残留（issue #224）与 identifier 键注册的旧装目录
+;     误判成外部目录而 fail-closed 挡死升级 —— 官方原版只认这一处（${OrIfNot}
+;     形态），照抄即破坏 EAC 接管语义；
+;   - 探针只读注册表：无写入、不需要提权（HKLM 的 Uninstall 键普通用户可读）。
+; 注：键路径的引号写在宏体内 —— !insertmacro 的参数解析会吃掉调用处的引号，
+; productName 键含空格（"Deepseek Harness EAC"），调用处若自带引号会被拆成多个参数。
+!macro DSH_OwnershipProbe HIVE KEYPATH
+  ${If} $4 == 0
+    ClearErrors
+    ReadRegStr $5 ${HIVE} "${KEYPATH}" "InstallLocation"
+    ${If} $5 != ""
+      ; Tauri 模板写带引号形态（WriteRegStr ... "$\"$INSTDIR$\""）→ 剥引号再比较。
+      StrCpy $6 $5 1
+      ${If} $6 == '"'
+        StrCpy $5 $5 "" 1
+        StrCpy $5 $5 -1
+      ${EndIf}
+      ${If} $5 == $INSTDIR
+        StrCpy $4 1
+      ${EndIf}
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 !macro DSH_InstallPreflight
   !insertmacro DSH_ResolveInstallerDpi
   System::Call 'kernel32::MulDiv(i ${DSH_INSTALLER_WINDOW_SIZE}, i $DshInstallerDpi, i 96) i.r2'
   DetailPrint "DSH EAC: install location preflight (official path.nsh) dpi=$DshInstallerDpi window=${DSH_INSTALLER_WINDOW_SIZE}lp=$2px"
   Call DshValidateInstallLocation
-  ; 归属：非空目录必须是已注册安装目录（Tauri 模板把 InstallLocation 写成带引号形态）。
+  ; 归属判定：非空目录必须是本产品目录，否则 fail-closed —— 与
+  ; $(DSH_STR_PATH_OWNERSHIP) 文案一致（空文件夹，或本产品原来的安装目录）。
+  ; 两个「本产品」信号任一成立即放行：
+  ;   A. 任一接管卸载键注册的安装目录：探针键集 = DSH_TakeoverOldShell 的
+  ;      2 hive × 3 键名（「已注册升级覆盖」语义；见 DSH_OwnershipProbe）；
+  ;   B. 目录含本产品主程序 ${MAINBINARYNAME}.exe：卸载键被清理 / 卸载器缺失的
+  ;      旧壳残留仍可原地接管（接管宏对「脏键也接管」同一前提）；主程序名与
+  ;      productName 同源，误判面仅限本产品自己的目录。
+  ; 两个信号都不成立的非空目录（非注册、无本产品主程序）一律拒绝，绝不静默覆盖。
   ${If} $DshLocationError == ""
-    ReadRegStr $1 SHCTX "${UNINSTKEY}" "InstallLocation"
-    ${If} $1 != ""
-      StrCpy $2 $1 1
-      ${If} $2 == '"'
-        StrCpy $1 $1 "" 1
-        StrCpy $1 $1 -1
-      ${EndIf}
-    ${EndIf}
-    ${If} $1 != $INSTDIR
+    StrCpy $4 0
+    !insertmacro DSH_OwnershipProbe SHCTX "${UNINSTKEY}"
+    !insertmacro DSH_OwnershipProbe HKLM "${UNINSTKEY}"
+    !insertmacro DSH_OwnershipProbe HKCU "${DSH_UNINST_ROOT}\com.deepseek.dsh.desktop"
+    !insertmacro DSH_OwnershipProbe HKCU "${DSH_UNINST_ROOT}\com.deepseek.dsh.desktop.tauri"
+    !insertmacro DSH_OwnershipProbe HKLM "${DSH_UNINST_ROOT}\com.deepseek.dsh.desktop"
+    !insertmacro DSH_OwnershipProbe HKLM "${DSH_UNINST_ROOT}\com.deepseek.dsh.desktop.tauri"
+    ClearErrors
+    ${If} $4 == 0
     ${AndIfNot} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
       StrCpy $3 0
       FindFirst $0 $2 "$INSTDIR\*.*"

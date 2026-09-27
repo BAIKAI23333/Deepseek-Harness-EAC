@@ -471,7 +471,7 @@ exports.PLUGIN_SYNC_REGISTRY = {
             "source": {
                 "kind": "internal",
                 "name": "@dsh-eac/skin-trading",
-                "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
+                "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact, then security-hardened in EAC by removing its remote-script JSONP path; local tree digest is pinned in plugins.lock.json"
             },
             "syncMode": "manual"
         },

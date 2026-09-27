@@ -156,9 +156,18 @@ window.__ModuleLoader__.load({
         return () => { active = false; clearInterval(timer) }
       }, [])
 
+      // ConfigFormController.set() 的契约是 Promise<boolean>：Host 明确拒绝时
+      // resolve(false)，只有传输/校验异常才 reject。false 必须显式提示，否则
+      // preset 只读 / web profile 只读存储 / revision 冲突这些常见拒绝在 UI 上
+      // 完全静默（勾选后回弹，看起来像点了没反应）。
       const set = (key, next) => {
         setMessage(null)
-        scope.set(key, next).catch((error) => setMessage({ ok: false, text: error?.message ?? String(error) }))
+        scope.set(key, next).then(
+          (accepted) => {
+            if (accepted === false) setMessage({ ok: false, text: '保存失败：Host 未接受本次修改。' })
+          },
+          (error) => setMessage({ ok: false, text: error?.message ?? String(error) }),
+        )
       }
 
       const compactNow = async () => {

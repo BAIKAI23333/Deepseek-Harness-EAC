@@ -18,13 +18,17 @@
 
 ## 本包改造说明（covenant-converted）
 
-内容载体 `src/vendor/dsh-web-ui-client.js` = 上游 `lib/client.js` 的逐字节
-迁移，唯一改动（公约化改造 S3，详见该文件头注释）：
+内容载体 `src/vendor/dsh-web-ui-client.js` 的观感与结构来自上游；本仓库的
+`lib/client.js` 不是逐字节上游副本。除公约化改造 S3 外，本次发行还删除了上游
+不安全的远程脚本取数通道：
 
 1. 去除 `window.__ModuleLoader__.load({ id, factory })` 打包外壳与
    `exports.apply = apply` 粘合（上游打包机械，非皮肤内容）；
 2. 模块顶层的 style 注入块移入 `apply()` 顶部（公约 R1：未激活零副作用）；
-3. 追加 `export { apply };`（ESM 导出原入口）。
+3. 追加 `export { apply };`（ESM 导出原入口）；
+4. 删除 `loadTencentQuotes` / `parseTencentRow` 及动态 `<script>` JSONP 注入，
+   避免 CSP 缺失的 WebView 执行第三方返回脚本；没有随包行情 provider 时，
+   交易所品种按 README 约定显示占位符。
 
 执行骨架（`src/client/session.ts`）为公约适配层：上游 apply 的全部副作用收进
 activate，disposer 账本逆序幂等 teardown，并补齐上游没有的 style 节点清理
@@ -33,8 +37,9 @@ activate，disposer 账本逆序幂等 teardown，并补齐上游没有的 style
 ## 资产审查记录（IP 轻检）
 
 本包 client bundle 不含任何内嵌位图/字体/第三方品牌素材（favicon 与 K 线
-图标均为上游自绘的内联 SVG 数据 URI；行情数据来自运行时公共接口，不随包
-分发）。未发现第三方商标/角色/品牌素材。
+图标均为上游自绘的内联 SVG 数据 URI）。本包不分发行情 provider；若宿主另行
+提供 ticker/长桥接口则按约定读取，否则安全降级为占位符。未发现第三方商标/角色/
+品牌素材。
 
 ## BSD 3-Clause License（上游原文）
 

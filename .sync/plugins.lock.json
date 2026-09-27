@@ -1,7 +1,7 @@
 {
   "generatedRegistry": "dsh-desktop/lib/desktop/plugin-sync-registry.ts",
   "manifest": ".sync/plugins.json",
-  "manifestRevision": "c5080300ee0ac64d4b851e217da8e9ef98620915fc08a3cc9e65f813196933a9",
+  "manifestRevision": "cc539e5f306ad11eadf782b5ce989f41aac3e7e78ffda4ad8cd84f29a5d3afc1",
   "plugins": {
     "agent-teams": {
       "compatibility": {},
@@ -155,7 +155,7 @@
         "packageName": "dsh-compact",
         "packageVersion": "1.0.0",
         "path": "dsh-desktop/assets/plugins/dsh-compact",
-        "treeSha256": "7a2a304c4c0607a0a1118b47a31a4df567275fbf5562ab38a03e5e9c1dbe3dca"
+        "treeSha256": "9f135e9b8f2abcf3046607ccdcada3419cb18e96411c9247aa2aafbeea859a61"
       },
       "manifestEntrySha256": "2cf65bbbf0a3240bd02fc40d42dc564446219a88f6d972da681a64370bd666c5",
       "patchFiles": [],
@@ -165,7 +165,7 @@
       "runtimeUpdate": "disabled",
       "source": {
         "kind": "unknown",
-        "sha256": "7a2a304c4c0607a0a1118b47a31a4df567275fbf5562ab38a03e5e9c1dbe3dca",
+        "sha256": "9f135e9b8f2abcf3046607ccdcada3419cb18e96411c9247aa2aafbeea859a61",
         "version": "1.0.0"
       },
       "sourceCommit": null
@@ -490,7 +490,7 @@
         "packageName": "@dsh-eac/skin-miku",
         "packageVersion": "1.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-eac-skin-miku",
-        "treeSha256": "d16f983a6421e1bff27ec8525fbce04c622f0435e08c11976f4d90a3053bf220"
+        "treeSha256": "2b4628ac8778fe3079d09a26a50db4ca28adb36551696025b1c85e74980a1829"
       },
       "manifestEntrySha256": "37f4a6a816ce92eaa6c6c36b7c1758bf2fd51eae0ac289959ae106ccef64aff9",
       "patchFiles": [],
@@ -501,7 +501,7 @@
       "source": {
         "kind": "internal",
         "name": "@dsh-eac/skin-miku",
-        "sha256": "d16f983a6421e1bff27ec8525fbce04c622f0435e08c11976f4d90a3053bf220",
+        "sha256": "2b4628ac8778fe3079d09a26a50db4ca28adb36551696025b1c85e74980a1829",
         "version": "1.1.0"
       },
       "sourceCommit": null
@@ -518,7 +518,7 @@
         "packageName": "@dsh-eac/skin-minecraft",
         "packageVersion": "1.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-eac-skin-minecraft",
-        "treeSha256": "167527c35b88d74d6979386c87965caa31535443ba08d92df60b47154c726f8e"
+        "treeSha256": "8afc87ce7399cd6fee962a43e7fddbb628534925f922e0520992ec77d1b94e24"
       },
       "manifestEntrySha256": "fde3cb5400da449b4980947ab636ada86f938a579ccab9751b29cc38c192ca6e",
       "patchFiles": [],
@@ -529,7 +529,7 @@
       "source": {
         "kind": "internal",
         "name": "@dsh-eac/skin-minecraft",
-        "sha256": "167527c35b88d74d6979386c87965caa31535443ba08d92df60b47154c726f8e",
+        "sha256": "8afc87ce7399cd6fee962a43e7fddbb628534925f922e0520992ec77d1b94e24",
         "version": "1.1.0"
       },
       "sourceCommit": null
@@ -546,7 +546,7 @@
         "packageName": "@dsh-eac/skin-qq98",
         "packageVersion": "1.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-eac-skin-qq98",
-        "treeSha256": "54bf324e418e79b678c1c3ceb92e2d64cf3606f0b119fbd0af8284b522b6fc34"
+        "treeSha256": "9ecfa64d3e7be6b26b95cd5f461ad41fb55ddf5636b860dda8ef00aa97c08294"
       },
       "manifestEntrySha256": "7a8b653a6224658826a9dbec556f98368faff0a88043516e5719d4dda09b8b7e",
       "patchFiles": [],
@@ -557,7 +557,7 @@
       "source": {
         "kind": "internal",
         "name": "@dsh-eac/skin-qq98",
-        "sha256": "54bf324e418e79b678c1c3ceb92e2d64cf3606f0b119fbd0af8284b522b6fc34",
+        "sha256": "9ecfa64d3e7be6b26b95cd5f461ad41fb55ddf5636b860dda8ef00aa97c08294",
         "version": "1.1.0"
       },
       "sourceCommit": null
@@ -574,7 +574,7 @@
         "packageName": "@dsh-eac/skin-ths",
         "packageVersion": "1.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-eac-skin-ths",
-        "treeSha256": "2d7a03c4e48c1004c34fe9ce232eb5223d7bed15666d30c7a0ac69471460a0e3"
+        "treeSha256": "3ea976d466aea093744357c44841be2acab4d1f86705ecc07d54eedb40273ef9"
       },
       "manifestEntrySha256": "9484ed707570442c4a989577eea02f3462df69bf2a02490b4de7c4ccc86c6a3a",
       "patchFiles": [],
@@ -585,7 +585,7 @@
       "source": {
         "kind": "internal",
         "name": "@dsh-eac/skin-ths",
-        "sha256": "2d7a03c4e48c1004c34fe9ce232eb5223d7bed15666d30c7a0ac69471460a0e3",
+        "sha256": "3ea976d466aea093744357c44841be2acab4d1f86705ecc07d54eedb40273ef9",
         "version": "1.1.0"
       },
       "sourceCommit": null
@@ -602,9 +602,9 @@
         "packageName": "@dsh-eac/skin-trading",
         "packageVersion": "1.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-eac-skin-trading",
-        "treeSha256": "573a171022ea6b89956fa1312b7aa2b8eb460ac2465d7c33c859a8ed4bdbcd15"
+        "treeSha256": "90cf0c7e13673900a0188e6ee0aa4accd9ba55086e541fb8d20849953ae93879"
       },
-      "manifestEntrySha256": "67f099fa9a6b1c293f4109f41db88b72af4b6abd038483908f32a37e33572a0b",
+      "manifestEntrySha256": "88d54f684a9199ccfc82306b145ca27b5f39e7bc67f3ea158a05802a0aa5da5b",
       "patchFiles": [],
       "patchSet": "none",
       "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -613,7 +613,7 @@
       "source": {
         "kind": "internal",
         "name": "@dsh-eac/skin-trading",
-        "sha256": "573a171022ea6b89956fa1312b7aa2b8eb460ac2465d7c33c859a8ed4bdbcd15",
+        "sha256": "90cf0c7e13673900a0188e6ee0aa4accd9ba55086e541fb8d20849953ae93879",
         "version": "1.1.0"
       },
       "sourceCommit": null
@@ -658,7 +658,7 @@
         "packageName": "@dsh-eac/skin-xp",
         "packageVersion": "1.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-eac-skin-xp",
-        "treeSha256": "5bea282e2f2e844f3a13d9200f99026ceb166be22634d2658139a31fb83e841e"
+        "treeSha256": "f0f3de30f28d0da0b2c718320cef7e2940da731bf6acebd830796b34d57bf388"
       },
       "manifestEntrySha256": "ee938a0dc081aaedf275a5058f11ca8f184b078f110391856e9bc71e8e704289",
       "patchFiles": [],
@@ -669,7 +669,7 @@
       "source": {
         "kind": "internal",
         "name": "@dsh-eac/skin-xp",
-        "sha256": "5bea282e2f2e844f3a13d9200f99026ceb166be22634d2658139a31fb83e841e",
+        "sha256": "f0f3de30f28d0da0b2c718320cef7e2940da731bf6acebd830796b34d57bf388",
         "version": "1.1.0"
       },
       "sourceCommit": null

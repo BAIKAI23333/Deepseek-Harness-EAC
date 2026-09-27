@@ -26,6 +26,10 @@
 //    拒绝同一语义，这里把状态提前暴露给 UI，避免出现按不动的开关）；
 //  · L2 行保持可开关，并标注推荐包 id + 「安装时可选是否启用」；
 //  · L3 行标注外部来源、安装默认禁用（defaultEnabled=false），可手动启用。
+//  · **包名 → 标识**统一走 canonicalBundleId（见其注释）：台账包走台账 id
+//    （`@dsh-eac/skin-aurora` → `dsh-eac-skin-aurora`）、内核骨架走短名、
+//    未登记 scoped 包编码为稳定 ID（`@evil/dsh-pet` → `scoped-406576696c2f6473682d706574`）。禁止
+//    无条件去 scope 折叠 —— 那会让冒名包借别人的 id 躲过默认禁用（#416 回归）。
 
 /**
  * @param {Array} entries   cordis.patch.yml 解析出的条目数组
@@ -50,6 +54,75 @@ const KERNEL_BUNDLE_IDS = new Set([
   'web-runtime',
   'client-modules',
 ]);
+
+/** 内核骨架的**完整包名**白名单（与 KERNEL_BUNDLE_IDS 同一批注册点的包名形态）。
+ *  #416 回归：包名解析不再无条件去 scope（见 canonicalBundleId），内核骨架必须
+ *  按完整包名精确匹配 —— `@evil/dsh-base` / `@evil/dsh-web-app` 不是内核骨架，
+ *  不得借折叠后的短名豁免「外部层默认禁用」。 */
+const KERNEL_BUNDLE_PACKAGES = new Set<string>([
+  ...KERNEL_BUNDLE_IDS,
+  '@deepseek-ai/dsh-base',
+  '@deepseek-ai/dsh-web-app',
+  '@deepseek-ai/web-app',
+  '@deepseek-ai/web-runtime',
+  '@deepseek-ai/client-modules',
+]);
+
+/** 生成注册表的「包名 → 条目 id」反查（canonical 事实源）。
+ *  lib/desktop/plugin-sync-registry.js 是随包分发的生成产物（与 .sync 台账
+ *  逐字节一致，见 test/issue-416-plugin-distribution-tiers.test.ts），
+ *  entries[id].packageName 是「包名 ↔ 行/条目标识」的唯一权威映射：
+ *  `@dsh-eac/skin-aurora` → `dsh-eac-skin-aurora`（**不是**去 scope 的
+ *  `skin-aurora`）、`@dsh-eac/ui-skin-loader` → `dsh-ui-skin-loader`、
+ *  `@vlln/dsh-navbar` → `dsh-navbar`。注册表缺失（未构建的裁剪部署）时退化为
+ *  空表：除内核骨架白名单外一律按 scoped-<hex> 稳定编码处理，宁可按外部层
+ *  规划（可手动启用），也不再做会撞车的去 scope 折叠。 */
+const KNOWN_PACKAGE_IDS: Map<string, string> = (() => {
+  const out = new Map<string, string>();
+  try {
+    const reg = require('./lib/desktop/plugin-sync-registry.js') as {
+      PLUGIN_SYNC_REGISTRY?: { entries?: Record<string, { packageName?: string }> };
+    };
+    const entries = reg && reg.PLUGIN_SYNC_REGISTRY ? reg.PLUGIN_SYNC_REGISTRY.entries : undefined;
+    for (const [id, info] of Object.entries(entries || {})) {
+      const pkg = info && typeof info.packageName === 'string' ? info.packageName : '';
+      if (id && pkg && !out.has(pkg)) out.set(pkg, id);
+    }
+  } catch {
+    /* 注册表不可读：退化为「内核骨架白名单 + scoped-<hex> 编码」 */
+  }
+  return out;
+})();
+
+/** bundle 包名 → 规范标识（canonical id）。
+ *  1. 台账登记过的包名（生成注册表反查）→ 台账 id（EAC/推荐/配套包的真实行 id）；
+ *  2. 内核骨架包名 → 现有短名（KERNEL_BUNDLE_IDS 语义不变）；
+ *  3. 其余：无 scope 的包名即 id；有 scope 的包名编码为 `scoped-<hex>`
+ *     （`@evil/dsh-pet` → `scoped-406576696c2f6473682d706574`）——稳定、可落盘
+ *     （scripts/plugin-manager-patch.js 的 ID_RE 只收 [A-Za-z0-9_.-]，直接拿
+ *     完整包名（含 `@` `/`）会抛 TypeError），且绝不与另一个插件的 bare id、
+ *     skipIds、分级表键撞车。
+ *  历史缺陷（本次回归）：这里曾无条件 `slice(indexOf('/') + 1)`，把
+ *  `@evil/dsh-pet` 折成配套插件 `dsh-pet`（∈ skipIds）、`@evil/dsh-navbar`
+ *  折成推荐包 `dsh-navbar`（∈ 分级表）、`@evil/dsh-base` 折成内核骨架 —— 三个
+ *  冒名包全部躲过默认禁用；同短名不同 scope 的包还会互相覆盖成一行。 */
+function canonicalBundleId(name: string, packageIds: ReadonlyMap<string, string> = KNOWN_PACKAGE_IDS): string {
+  const known = packageIds.get(name);
+  if (known) return known;
+  const bare = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
+  if (KERNEL_BUNDLE_PACKAGES.has(name)) return bare;
+  if (!name.startsWith('@') || !name.includes('/')) return name;
+  // Encode the complete scoped package name instead of flattening it to
+  // `<scope>-<name>`: `@a/x-y` must not collide with an unscoped `a-x-y`, and
+  // `@a/x` must remain distinct from `@b/x`. Hex uses only the patch ID alphabet
+  // and is injective for package names, so the persisted ID is deterministic.
+  return `scoped-${Buffer.from(name, 'utf8').toString('hex')}`;
+}
+
+/** 是否内核骨架 bundle：短名（历史 id）或完整包名任一命中即算。 */
+function isKernelBundle(name: string, id: string): boolean {
+  return KERNEL_BUNDLE_IDS.has(id) || KERNEL_BUNDLE_PACKAGES.has(name);
+}
 
 type DistributionClass = 'builtin' | 'recommended' | 'external';
 
@@ -200,16 +273,21 @@ function collectPluginRows(entries: unknown[], ctx: CollectCtx = {}): PluginRow[
   // （dsh plugin add / 市场安装同样登记进 bundles）。旧实现把后者也一律标
   // 成 core → 插件列表变成「全核心、无法关闭」（issue #212）。改为仅对
   // 白名单内的内核骨架标 core，第三方 bundle 归入 other、可开关。
+  // 行 id 用 canonicalBundleId（台账 id / 内核短名 / scoped-<hex> 编码），与
+  // externalDefaultDisabledPlan 落盘的 id 同一空间：冒名 scoped 包既不会
+  // 顶掉同名配套行，也不会在管理页里消失。
   for (const name of bundles) {
     if (companionNames.has(name)) continue;
-    const id = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
-    if (!seen.has(id)) addRow(id, name, KERNEL_BUNDLE_IDS.has(id) ? 'core' : 'other');
+    const id = canonicalBundleId(name);
+    if (!seen.has(id)) addRow(id, name, isKernelBundle(name, id) ? 'core' : 'other');
   }
   const order = { companion: 0, other: 1, core: 2 };
   return rows.sort((a, b) => order[a.group] - order[b.group] || a.id.localeCompare(b.id));
 }
 
 interface ExternalDefaultDisabledOpts {
+  /** 测试/裁剪部署可显式提供包名 → canonical id 映射，模拟注册表不可读。 */
+  packageIds?: ReadonlyMap<string, string>;
   /** profile 的 dsh.profile.bundles（市场 / dsh plugin add 装入的包名）。 */
   bundles?: unknown[];
   /** patch 里是否已有该 id 的登记点（用户/市场/同步写入的状态优先）。 */
@@ -219,7 +297,7 @@ interface ExternalDefaultDisabledOpts {
   /** 无 canonical 映射时的分级集合兜底（生成注册表 id 清单）。 */
   builtinIds?: Iterable<string>;
   recommendedIds?: Iterable<string>;
-  /** 已由其它同步面（配套插件清单）负责的 id。 */
+  /** 已由其它同步面（配套插件清单）负责的 id（canonical id 或原始包名匹配）。 */
   skipIds?: Iterable<string>;
 }
 
@@ -247,8 +325,13 @@ function externalDefaultDisabledPlan(o: ExternalDefaultDisabledOpts = {}): Array
   const seen = new Set();
   for (const name of bundles) {
     if (typeof name !== 'string' || !name) continue;
-    const id = name.includes('/') ? name.slice(name.indexOf('/') + 1) : name;
-    if (!id || seen.has(id) || KERNEL_BUNDLE_IDS.has(id) || skipIds.has(id)) continue;
+    // identity = canonicalBundleId：台账 id / 内核短名 / 未登记 scoped 包的
+    // scoped-<hex> 编码。绝不把 scope 抹掉去撞另一个插件的 bare id（#416 回归）。
+    const id = canonicalBundleId(name, o.packageIds || KNOWN_PACKAGE_IDS);
+    if (!id || seen.has(id) || isKernelBundle(name, id)) continue;
+    // skipIds 是配套插件同步面（companion-sync）交来的排除集：按 canonical id
+    // 与原始包名两边匹配，保留「配套插件不进默认禁用」的既有语义。
+    if (skipIds.has(id) || skipIds.has(name)) continue;
     if (distributionClassOf(id, 'other', distributionClasses, builtinIds, recommendedIds) !== 'external') continue;
     if (isRegistered(id)) continue;
     seen.add(id);
@@ -257,4 +340,12 @@ function externalDefaultDisabledPlan(o: ExternalDefaultDisabledOpts = {}): Array
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export = { collectPluginRows, distributionClassOf, externalDefaultDisabledPlan, KERNEL_BUNDLE_IDS, TIER_LABELS };
+export = {
+  collectPluginRows,
+  distributionClassOf,
+  externalDefaultDisabledPlan,
+  canonicalBundleId,
+  KERNEL_BUNDLE_IDS,
+  KERNEL_BUNDLE_PACKAGES,
+  TIER_LABELS,
+};

@@ -39,7 +39,7 @@ const { healProfileModuleShadowing } = require('../../profile-module-heal') as {
 // M3/#416 L3：外部层（第三方/社区）新装插件默认禁用 —— 规划是纯函数
 // （plugin-manager-state），落盘复用插件管理页同一套 patch 手术
 // （scripts/plugin-manager-patch.js），不新增安装器。
-const { externalDefaultDisabledPlan } = require('../../plugin-manager-state') as {
+const { externalDefaultDisabledPlan, canonicalBundleId } = require('../../plugin-manager-state') as {
   externalDefaultDisabledPlan(o: {
     bundles?: unknown[];
     isRegistered?: (id: string) => boolean;
@@ -48,6 +48,7 @@ const { externalDefaultDisabledPlan } = require('../../plugin-manager-state') as
     recommendedIds?: Iterable<string>;
     skipIds?: Iterable<string>;
   }): Array<{ id: string; name: string }>;
+  canonicalBundleId(name: string): string;
 };
 import {
   DISTRIBUTION_BUILTIN_PLUGIN_IDS,
@@ -543,10 +544,35 @@ export function healProfileModules(): void {
   }
 }
 
+// M2/#415 迁移清理：旧链（AIO ≤ 9.6.3 的 assets/skins 目录播种）留在老
+// profile 里的 10 款旧桌面皮肤 —— 包名 `@linxin666|@dsh-external/
+// dsh-client-ui-skin-*`，patch 行 id 取皮肤包清单里声明的 wiring.id
+//（`ui-skin-*`，insert 内层行）。旧链退役后这些行指向的包不再随包分发：
+// 「行在包不在」让 loader 找不到 entry、「包在行不在」残留旧皮肤继续加载，
+// 两者都会拖垮插件树。清理按**精确 id + 精确包名**逐条进行（不是作用域/前缀
+// 级联删除）：`@linxin666` / `@dsh-external` 下市场安装的其他插件必须留存，
+// 新皮肤平台（包 `@dsh-eac/ui-skin-loader` + `@dsh-eac/skin-*`，行
+// `dsh-ui-skin-loader` + `dsh-eac-skin-*`）更不得被碰。
+// （契约测试锚定本清单与 RETIRED_BUILTIN_PLUGINS 的并集，勿改前缀语义。）
+export const LEGACY_UI_SKIN_RESIDUE: { id: string; name: string }[] = [
+  { id: 'ui-skin-blue-fantasy', name: '@linxin666/dsh-client-ui-skin-blue-fantasy' },
+  { id: 'ui-skin-dragon-heir', name: '@linxin666/dsh-client-ui-skin-dragon-heir' },
+  { id: 'ui-skin-maid-atelier', name: '@dsh-external/dsh-client-ui-skin-maid-atelier' },
+  { id: 'ui-skin-miku', name: '@linxin666/dsh-client-ui-skin-miku' },
+  { id: 'ui-skin-minecraft', name: '@linxin666/dsh-client-ui-skin-minecraft' },
+  { id: 'ui-skin-qq98', name: '@linxin666/dsh-client-ui-skin-qq98' },
+  { id: 'ui-skin-ths', name: '@linxin666/dsh-client-ui-skin-ths' },
+  { id: 'ui-skin-trading', name: '@linxin666/dsh-client-ui-skin-trading' },
+  { id: 'ui-skin-whale-song', name: '@linxin666/dsh-client-ui-skin-whale-song' },
+  { id: 'ui-skin-xp', name: '@linxin666/dsh-client-ui-skin-xp' },
+];
+
 // 曾内置、现已从内置清单移除的插件。老用户 profile 可能残留其 patch 行、
 // node_modules 副本与 package.json 依赖：行在包被清会拖垮插件树，包在行在则
 // 退役插件继续加载。旧市场还会与 dsh-unified-market 重复注册 /api/dsh-market，
 // 使 dsh web 以 code=1 退出。启动时统一清理这些精确的历史内置条目。
+// 旧链皮肤残留（LEGACY_UI_SKIN_RESIDUE）走同一套清理与同一道升级对齐门控：
+// 清单内容变化会改指纹，升级后首次启动必然重跑一次迁移。
 // （契约测试锚定字面量 `const RETIRED_BUILTIN_PLUGINS = [`，勿加内联注解。）
 export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'auto-compact', name: 'dsh-auto-compact' },
@@ -572,6 +598,8 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 包副本由退役清理兜底，避免「行在包被清」拖垮插件树。壳层 ui-skin
   // manager 的 boot/recovery 回退资源不受影响（ADR 0010）。
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
+  // M2/#415：旧链播种的 10 款 `ui-skin-*` 皮肤残留（见上方迁移清单）。
+  ...LEGACY_UI_SKIN_RESIDUE,
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -1011,9 +1039,11 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // 因此必须显式排除 —— 否则每个皮肤包都会被写一条 `disabled: true` 行，
     // 既把 loader 误标成「外部/默认禁用」，又与 bundle 自己的补丁层形成
     // duplicate loader entry id 风险。
-    const companionBundleIds = COMPANION_PLUGINS.map(
-      (p) => (p.name.includes('/') ? p.name.slice(p.name.indexOf('/') + 1) : p.name),
-    );
+    const companionBundleIds = COMPANION_PLUGINS.flatMap((p) => [
+      p.name,
+      p.id,
+      canonicalBundleId(p.name),
+    ]);
     const externalDefaults = inSafeMode ? [] : externalDefaultDisabledPlan({
       bundles: bundled,
       isRegistered: (id: string) => hasEntryId(patch, id),

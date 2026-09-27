@@ -95,57 +95,12 @@ function toNumber(value) {
   if (typeof value === "string") return Number.parseFloat(value);
   return NaN;
 }
-function parseTencentRow(raw) {
-  const f = raw.split("~");
-  if (f.length < 35) return null;
-  const price = toNumber(f[3]);
-  if (!Number.isFinite(price)) return null;
-  return {
-    name: f[1] !== void 0 && f[1] !== "" ? f[1] : f[2] ?? "",
-    price,
-    prevClose: toNumber(f[4]),
-    change: toNumber(f[31]),
-    changePct: toNumber(f[32]),
-    high: toNumber(f[33]),
-    low: toNumber(f[34])
-  };
-}
-function loadTencentQuotes(symbols, timeoutMs = 8e3) {
-  return new Promise((resolve) => {
-    if (symbols.length === 0) {
-      resolve(/* @__PURE__ */ new Map());
-      return;
-    }
-    const globals = symbols.map((s) => `v_${s}`);
-    let settled = false;
-    const script = document.createElement("script");
-    const finish = (out) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      script.remove();
-      for (const g of globals) try {
-        delete window[g];
-      } catch {
-      }
-      resolve(out);
-    };
-    const timer = window.setTimeout(() => finish(/* @__PURE__ */ new Map()), timeoutMs);
-    script.onload = () => {
-      const out = /* @__PURE__ */ new Map();
-      for (const s of symbols) {
-        const raw = window[`v_${s}`];
-        if (typeof raw !== "string") continue;
-        const row = parseTencentRow(raw);
-        if (row !== null) out.set(s, row);
-      }
-      finish(out);
-    };
-    script.onerror = () => finish(/* @__PURE__ */ new Map());
-    script.src = `https://qt.gtimg.cn/q=${symbols.join(",")}&_t=${Date.now()}`;
-    document.head.append(script);
-  });
-}
+// 发行前安全修复（P1，DSH-EAC 2026-09-27）：上游自带一条「动态注入 <script>、由本
+// WebView 执行第三方行情端点返回的脚本体」的取数通道。宿主 WebView 的 CSP 为 null，
+// 该通道等同把远端任意 JS 执行权交给第三方，故整条删除：本包不再以任何形式注入
+// <script>、也不再执行远端返回的脚本。交易所前缀品种（sh/sz/hk/us）改由既有安全
+// 源承担（本地 ticker 端点 / 长桥 RPC），缺席时走皮肤既有降级路径（placeholderQuote
+// 的 -- / — 占位，不抛错）。这是对上游产物的**有意偏离**，已记入本包 README「已知行为」。
 var BINANCE_ENDPOINTS = ["https://api.binance.com/api/v3/ticker/24hr", "https://data-api.binance.vision/api/v3/ticker/24hr"];
 var CRYPTO_NAMES = {
   BTCUSDT: "\u6BD4\u7279\u5E01",
@@ -420,35 +375,24 @@ var DEFAULT_INDEX_CELLS = [
 ];
 function classifyDirectSymbol(symbol) {
   const value = symbol.trim();
-  if (/^(?:sh|sz|hk|us)[A-Za-z0-9.]+$/.test(value)) return "tencent";
+  if (/^(?:sh|sz|hk|us)[A-Za-z0-9.]+$/.test(value)) return "exchange";
   if (/^(?=.*[A-Z])[A-Z0-9]{4,12}$/.test(value)) return "crypto";
   if (/^[A-Z]{3}\/[A-Z]{3}$/.test(value)) return "fx";
   return null;
 }
 async function fetchDirectQuotes(symbols, timeoutMs = 8e3) {
-  const tencentSymbols = [];
   const cryptoSymbols = [];
   const fxSymbols = [];
   for (const symbol of symbols) {
     const category = classifyDirectSymbol(symbol);
-    if (category === "tencent") tencentSymbols.push(symbol);
-    else if (category === "crypto") cryptoSymbols.push(symbol);
+    if (category === "crypto") cryptoSymbols.push(symbol);
     else if (category === "fx") fxSymbols.push(symbol);
   }
-  const [tencent, crypto, fx] = await Promise.all([
-    loadTencentQuotes(tencentSymbols, timeoutMs),
+  const [crypto, fx] = await Promise.all([
     fetchBinanceQuotes(cryptoSymbols, timeoutMs),
     fetchFrankfurterQuotes(fxSymbols, timeoutMs)
   ]);
   const quotes = [];
-  for (const [symbol, row] of tencent) quotes.push({
-    symbol,
-    name: row.name !== "" ? row.name : symbol,
-    price: row.price,
-    changeAbs: row.change,
-    changePct: row.changePct,
-    source: "tencent"
-  });
   for (const quote of crypto.values()) quotes.push(quote);
   for (const quote of fx.values()) quotes.push(quote);
   return quotes;
@@ -545,7 +489,7 @@ function placeholderQuote(symbol) {
     price: NaN,
     changePct: NaN,
     changeAbs: NaN,
-    source: "tencent"
+    source: "placeholder"
   };
 }
 function pctText(trend, pct) {

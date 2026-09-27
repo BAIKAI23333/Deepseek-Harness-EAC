@@ -177,9 +177,11 @@ test('external default-disable plan targets only new third-party bundles', () =>
       'dsh-community-thing',
       '@scope/other-thing',
       'dsh-navbar',
+      '@vlln/dsh-navbar',
       'balance',
     ],
-    isRegistered: (id: string) => id === 'other-thing',
+    // 登记判定跟着 canonical id 走：@scope/other-thing 使用无碰撞编码。
+    isRegistered: (id: string) => id === 'scoped-4073636f70652f6f746865722d7468696e67',
     distributionClasses: classes,
     skipIds: ['balance'],
   }) as { id: string; name: string }[];
@@ -193,6 +195,129 @@ test('external default-disable plan is empty without distribution knowledge', ()
     isRegistered: () => false,
   }) as { id: string; name: string }[];
   assert.deepEqual(plan, [], '缺少分级表时不得擅自禁用第三方插件（fail-open）');
+});
+
+// ---------------------------------------------------------------------------
+// 3b. #416 回归：scoped 包名不得折成 bare id 与别的插件 / skipIds / 分级表撞车
+// ---------------------------------------------------------------------------
+//
+// 缺陷（修前）：identity 由 `name.slice(name.indexOf('/') + 1)` 无条件去 scope
+// 得到 —— `@evil/dsh-pet` 折成配套插件 id `dsh-pet`（∈ skipIds）、
+// `@evil/dsh-navbar` 折成推荐包 `dsh-navbar`（∈ recommended 分级表）、
+// `@evil/dsh-base` 折成内核骨架 `dsh-base`。三个冒名包因此全部躲过「外部层
+// 默认禁用」；同短名不同 scope 的两个包（`@a/thing` / `@b/thing`）还会塌成
+// 同一行。修复后 identity 用「生成注册表的 canonical 包名 → 台账 id 反查 +
+// 内核骨架包名白名单 + 未知 scoped 包规范化全名（`@evil/dsh-pet` →
+// `scoped-406576696c2f6473682d706574`）」，既有落盘 id 又能落盘（plugin-manager-patch 的 ID_RE）。
+
+test('#416 回归：scoped 冒名包不得借 bare id 躲过外部层默认禁用', () => {
+  const plan = state.externalDefaultDisabledPlan({
+    // 四个冒名包分别瞄准：配套插件 skipIds、推荐分级、内核骨架、内核骨架
+    bundles: ['@evil/dsh-pet', '@evil/dsh-navbar', '@evil/dsh-base', '@evil/dsh-web-app'],
+    isRegistered: () => false,
+    distributionClasses: classes,
+    builtinIds: registry.DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+    recommendedIds: registry.RECOMMENDED_PACK_PLUGIN_IDS,
+    skipIds: ['dsh-pet', 'dsh-navbar', 'dsh-base', 'dsh-web-app'],
+  }) as { id: string; name: string }[];
+  assert.deepEqual(plan, [
+    { id: 'scoped-406576696c2f6473682d62617365', name: '@evil/dsh-base' },
+    { id: 'scoped-406576696c2f6473682d6e6176626172', name: '@evil/dsh-navbar' },
+    { id: 'scoped-406576696c2f6473682d706574', name: '@evil/dsh-pet' },
+    { id: 'scoped-406576696c2f6473682d7765622d617070', name: '@evil/dsh-web-app' },
+  ], '冒名 scoped 包必须各自成行：不得被配套 skipIds / 推荐分级 / 内核骨架白名单豁免');
+  for (const ext of plan) {
+    assert.match(ext.id, /^[A-Za-z0-9_.-]+$/,
+      '落盘 id 必须能过 plugin-manager-patch 的 ID_RE（@ 与 / 会被直接拒绝）');
+  }
+});
+
+test('#416 回归：scoped 包的规范化 id 落盘时不动同名配套行', async () => {
+  const { togglePluginInPatch } = await import('../scripts/plugin-manager-patch.js') as {
+    togglePluginInPatch(text: string, id: string, enabled: boolean, name?: string): string;
+  };
+  const before = [
+    '# profile patch',
+    '- insert:',
+    '    - id: dsh-pet',
+    "      name: 'dsh-pet'",
+    '      config:',
+    '        size: 260',
+    '      disabled: true',
+    '',
+  ].join('\n');
+  const plan = state.externalDefaultDisabledPlan({
+    bundles: ['@evil/dsh-pet'],
+    isRegistered: () => false,
+    distributionClasses: classes,
+  }) as { id: string; name: string }[];
+    assert.deepEqual(plan.map((p) => p.id), ['scoped-406576696c2f6473682d706574'], '冒名包必须自成一个规划行');
+  let after = before;
+  for (const ext of plan) after = togglePluginInPatch(after, ext.id, false, ext.name);
+  assert.match(after, /- id: scoped-406576696c2f6473682d706574\n {2}name: '@evil\/dsh-pet'\n {2}disabled: true/,
+    '规划必须能经既有 patch 手术落盘编码后的 id');
+  assert.match(after, /- id: dsh-pet\n/, '配套插件 dsh-pet 的行不得被折掉的 id 命中并改写');
+  assert.match(after, /config:\n {8}size: 260/, '配套行的 config 必须原样保留');
+  assert.equal((after.match(/disabled: true/g) || []).length, 2,
+    'companion 行保持原样：新增且仅新增一条冒名包的关闭行');
+});
+
+test('#416 回归：不同 scope 的同名包不再互相塌成一行', () => {
+  const plan = state.externalDefaultDisabledPlan({
+    bundles: ['@a/thing', '@b/thing'],
+    isRegistered: () => false,
+    distributionClasses: classes,
+  }) as { id: string; name: string }[];
+  assert.deepEqual(plan, [
+    { id: 'scoped-40612f7468696e67', name: '@a/thing' },
+    { id: 'scoped-40622f7468696e67', name: '@b/thing' },
+  ], '同短名不同 scope 是两个不同插件，必须各自进默认禁用清单');
+  const listed = rows([], { bundles: ['@a/thing', '@b/thing'], distributionClasses: classes });
+  assert.deepEqual(listed.map((r) => r.id), ['scoped-40612f7468696e67', 'scoped-40622f7468696e67'], '管理页也必须给出两行');
+  assert.ok(listed.every((r) => r.distributionClass === 'external' && r.defaultEnabled === false),
+    '两个包都按 L3 外部层标注且默认禁用');
+});
+
+test('#416 回归：canonical 包名解析（已知包走台账 id，未知 scoped 规范化全名）', () => {
+  const canonical = state.canonicalBundleId as (name: string) => string;
+  assert.equal(canonical('@dsh-eac/skin-aurora'), 'dsh-eac-skin-aurora',
+    'EAC 皮肤包的行 id 不是去 scope 的短名（skin-aurora），而是台账 id');
+  assert.equal(canonical('@dsh-eac/ui-skin-loader'), 'dsh-ui-skin-loader', 'loader 行 id 与包名不同名');
+  assert.equal(canonical('@vlln/dsh-navbar'), 'dsh-navbar', '推荐包走台账 id');
+  assert.equal(canonical('@deepseek-ai/dsh-web-app'), 'dsh-web-app', '内核骨架保持现有短名语义');
+  assert.equal(canonical('@evil/dsh-navbar'), 'scoped-406576696c2f6473682d6e6176626172', '未登记 scoped 包使用无碰撞编码，绝不折成别人的 id');
+  assert.equal(canonical('dsh-community-thing'), 'dsh-community-thing', '无 scope 包名即 id');
+});
+
+test('#416 回归：已知包（皮肤平台 / 推荐包）不被当成外部层规划', () => {
+  const plan = state.externalDefaultDisabledPlan({
+    bundles: ['@dsh-eac/ui-skin-loader', '@dsh-eac/skin-aurora', '@vlln/dsh-navbar', '@deepseek-ai/dsh-web-app'],
+    isRegistered: () => false,
+    distributionClasses: classes,
+    builtinIds: registry.DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+    recommendedIds: registry.RECOMMENDED_PACK_PLUGIN_IDS,
+    // 刻意不给 skipIds：canonical 分级必须自己立得住（跳过只靠分级表与内核白名单）
+  }) as { id: string; name: string }[];
+  assert.deepEqual(plan, [], '皮肤平台 / 推荐包 / 内核骨架都不得进默认禁用清单');
+});
+
+test('#416 回归：注册表缺失时，companion 的 raw/bare/canonical 三种 id 都能排除', () => {
+  const plan = state.externalDefaultDisabledPlan({
+    // 空 packageIds 模拟裁剪部署/启动时注册表不可读；此时 canonicalBundleId
+    // 会退化为 scope-name，但 companion-sync 传入三种形式的 skipIds。
+    packageIds: new Map(),
+    bundles: ['@deepseek-ai/dsh-balance', '@dsh-eac/skin-miku', '@evil/dsh-pet'],
+    isRegistered: () => false,
+    distributionClasses: {},
+    builtinIds: [],
+    recommendedIds: [],
+    skipIds: [
+      '@deepseek-ai/dsh-balance', 'balance', 'deepseek-ai-dsh-balance',
+      '@dsh-eac/skin-miku', 'dsh-eac-skin-miku',
+      '@evil/dsh-pet', 'scoped-406576696c2f6473682d706574',
+    ],
+  }) as { id: string; name: string }[];
+  assert.deepEqual(plan, [], '注册表缺失时内置/配套包不得被误写 disabled 行');
 });
 
 // ---------------------------------------------------------------------------

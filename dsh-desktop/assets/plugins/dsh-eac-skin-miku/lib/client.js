@@ -220,6 +220,8 @@ function activateMikuSession(ctx, skinCtx, applyImpl = apply) {
   const faviconBefore = new Set(dataFavicons());
   const markerBefore = typeof document !== "undefined" && BODY_KEY in document.body.dataset;
   const titleBefore = typeof document !== "undefined" ? document.title : "";
+  // activation 前的 body 内联样式快照，只在 apply 半途失败时用来回滚（见 restoreBodyStyle）。
+  const bodyStyleBefore = typeof document !== "undefined" && document.body ? document.body.getAttribute("style") : null;
   const vendored = {
     effect(execute) {
       const disposer = execute();
@@ -235,8 +237,26 @@ function activateMikuSession(ctx, skinCtx, applyImpl = apply) {
   try {
     applyImpl(vendored);
   } catch (error) {
-    teardown();
+    try {
+      teardown();
+    } finally {
+      restoreBodyStyle();
+    }
     throw error;
+  }
+  /**
+   * vendored apply 在写完 body 内联背景（background-*）之后、登记 ctx.effect
+   * 之前抛出时，它自己的回滚 disposer 从未登记，通用 teardown 只按「新出现的
+   * 节点 / 新出现的 data marker」清扫，恢复不了 body 的内联样式 —— 这里按
+   * activation 前的快照还原。
+   *
+   * 只在 apply 失败路径调用：正常卸载必须留给 vendored disposer 与后续插件，
+   * 「activation 前的快照」会盖掉其他插件在激活期间对 body 内联样式的修改。
+   */
+  function restoreBodyStyle() {
+    if (typeof document === "undefined" || !document.body) return;
+    if (bodyStyleBefore === null) document.body.removeAttribute("style");
+    else document.body.setAttribute("style", bodyStyleBefore);
   }
   function teardown() {
     if (tornDown) return;

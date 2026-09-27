@@ -17,6 +17,13 @@
 *.ps1 text eol=crlf
 *.nsh text eol=crlf
 
+# Rebuilt skin trees use LF license bytes so their locked digests are stable on every OS.
+dsh-desktop/assets/plugins/dsh-eac-skin-miku/LICENSE text eol=lf
+dsh-desktop/assets/plugins/dsh-eac-skin-minecraft/LICENSE text eol=lf
+dsh-desktop/assets/plugins/dsh-eac-skin-qq98/LICENSE text eol=lf
+dsh-desktop/assets/plugins/dsh-eac-skin-ths/LICENSE text eol=lf
+dsh-desktop/assets/plugins/dsh-eac-skin-xp/LICENSE text eol=lf
+
 *.png binary
 *.jpg binary
 *.jpeg binary

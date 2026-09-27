@@ -3268,13 +3268,13 @@
         "verdict": "catalog-miss",
         "compare": "no-upstream",
         "note": "EAC 皮肤平台包（公约实现 / 皮肤转换产物）；内容出处与许可在包内 THIRD-PARTY-NOTICES.md 逐项记录",
-        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地 SHA-256 校验",
-        "conflict": null
+        "basis": "DSH-EAC 皮肤 monorepo 发布物 + 本地树摘要校验；交易皮肤另有 EAC 安全硬化差异",
+        "conflict": "交易皮肤删除上游远程脚本 JSONP 通道，当前随包树不是上游 release tarball 的逐字节副本"
       },
       "resolution": {
         "date": "2026-09-27",
-        "decision": "eac-original",
-        "evidence": "DSH-EAC 自研皮肤平台：@dsh-eac/ui-skin-loader 与公约皮肤包由 DSH-EAC 皮肤 monorepo 构建；随包分发的 v1.1.0 产物取自本地已校验 release tarball（SHA-256 与 .verify/pkgs-v1.1.0-final/SHA256SUMS.txt 一致）；每包 THIRD-PARTY-NOTICES.md 记录上游内容出处、许可与逐文件哈希。"
+        "decision": "eac-original-security-hardened",
+        "evidence": "交易皮肤的观感内容来自 DSH-EAC 皮肤 monorepo v1.1.0 来源；EAC 在分发前删除动态行情脚本注入，实际树摘要记录于 .sync/plugins.lock.json，provider 不随本包分发且无 provider 时显示占位符。"
       }
     },
     {
