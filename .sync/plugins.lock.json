@@ -1076,7 +1076,7 @@
         "packageName": "@deepseek-ai/dsh-easy-setup",
         "packageVersion": "0.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-easy-setup",
-        "treeSha256": "063bc8a275e04b8d60040dbe6142c936c5fbe8106455b8d542b03e6089704017"
+        "treeSha256": "73d5d2faf0b9f738c4cf35455e8e4d2e3f9beb8655ba469d49ad0eb5dda6008f"
       },
       "manifestEntrySha256": "aef538c02636206d5325e02e48e0f1946aad38ac29a6246fea181a54a25a2614",
       "patchFiles": [],
@@ -1087,7 +1087,7 @@
       "source": {
         "kind": "internal",
         "name": "@deepseek-ai/dsh-easy-setup",
-        "sha256": "063bc8a275e04b8d60040dbe6142c936c5fbe8106455b8d542b03e6089704017",
+        "sha256": "73d5d2faf0b9f738c4cf35455e8e4d2e3f9beb8655ba469d49ad0eb5dda6008f",
         "version": "0.1.0"
       },
       "sourceCommit": null

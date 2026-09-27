@@ -13,6 +13,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripTypeScriptTypes } from 'node:module';
+import { runInNewContext } from 'node:vm';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const bridge = readFileSync(join(root, '..', 'tauri-shell', 'sidecar', 'bridge.ts'), 'utf8');
@@ -124,4 +126,42 @@ test('bridge keeps the introspection escape hatch for shell pages', () => {
   for (const k of ['_call', '_onReady']) {
     assert.ok(k in bridgeTree, `bridge introspection key missing: ${k}`);
   }
+});
+
+test('rc.2 settings update consumer can initialize with the desktop bridge', async () => {
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({ onNotify() {}, send() {}, call: async () => ({}) }),
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document: { readyState: 'loading', addEventListener() {} },
+    setInterval() {},
+  });
+
+  // Exercise the pinned kernel's real consumer: browser-only smoke has no carrier
+  // and cannot catch a missing status() that aborts the desktop settings plugin.
+  const client = readFileSync(join(root, 'node_modules', '@deepseek-ai',
+    'dsh-client-ui-settings-general', 'lib', 'client.js'), 'utf8');
+  const marker = 'var DesktopUpdateSource = class';
+  const start = client.indexOf(marker);
+  const end = client.indexOf('//#endregion', start);
+  assert.ok(start >= 0 && end > start, 'pinned update consumer must be present');
+  const Consumer = runInNewContext(client.slice(start, end) + '\nDesktopUpdateSource;', {
+    _deepseek_ai_dsh_client_store: {
+      createSnapshotStore(initial: unknown) {
+        let snapshot = initial;
+        return { getSnapshot: () => snapshot, set: (next: unknown) => { snapshot = next; } };
+      },
+    },
+  });
+  const updates = window.dshDesktop.updates;
+  const consumer = new Consumer(updates);
+  await Promise.resolve();
+  assert.equal(consumer.store.getSnapshot().presentation.phase, 'idle');
+  assert.equal(consumer.store.getSnapshot().failed, false);
+  assert.equal(typeof updates.open, 'function');
+  await assert.rejects(updates.open(), /capability "client-update"/);
+  assert.equal((await updates.check()).phase, 'idle');
+  consumer.dispose();
 });

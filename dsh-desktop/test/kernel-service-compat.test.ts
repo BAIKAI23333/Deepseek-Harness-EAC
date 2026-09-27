@@ -29,6 +29,20 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (...parts: string[]): string => readFileSync(join(root, ...parts), 'utf8');
 
+test('default host entrypoints have their runtime peer packages in the install closure', async () => {
+  // legacy-peer-deps intentionally skips peer installation; these real imports
+  // catch missing peers that otherwise leave standard sessions waiting for PTC.
+  for (const name of [
+    'dsh-ptc-runtime-node',
+    'dsh-deepseek-account-platform',
+    'dsh-llm-deepseek-api-key',
+    'dsh-llm-deepseek-account',
+    'dsh-api-account-controller',
+  ]) {
+    await assert.doesNotReject(import(`@deepseek-ai/${name}`), `${name} must import with the shipped dependencies`);
+  }
+});
+
 type Half = 'client' | 'host';
 interface Surfaces { client: Set<string>; host: Set<string> }
 interface InjectEntry { owner: string; rel: string; half: Half; injects: string[] }
