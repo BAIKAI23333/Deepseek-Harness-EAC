@@ -71,11 +71,71 @@ fn ws_port() -> u16 {
     WS_PORT_EFFECTIVE.load(Ordering::SeqCst)
 }
 
+/// 内核契约桥：把壳层的自绘标题栏高度翻译成内核认识的形态，并补上被皮肤
+/// 漏掉的「内容区高度扣减」。
+///
+/// 两条契约在 v6 外壳迁移时对不上：
+///   - 壳层（sidecar/bridge.ts）只发布 `data-dsh-title-bar-height="36"`，
+///     注释写「内核据此把顶部固定元素下移」，但内核**从不读这个属性**
+///     （全量检索 apps/ packages/ 均无引用）—— 是个死属性。
+///   - 内核实际读的是 `data-windows-titlebar`（布尔）+
+///     `--dsh-windows-titlebar-height`（长度），而内核设置后者的唯一实现
+///     位于 Electron preload（`import { ipcRenderer } from 'electron'`）；
+///     v6 换 Tauri 后 Electron 整条链不再随包分发，二者都无人提供。
+///
+/// 真正导致「设置按钮看不见」的是皮肤 CSS 的半截补偿（实测 CDP 取证）：
+///   system.default 的 `html[data-dsh-title-bar-height] body` 只写了
+///   `padding-top:36px`，没有同步扣减子树高度。于是 `#root`/`.frame`
+///   仍是 body 的 100%（843px），被 padding 推下 36px 后底边 = 879，
+///   超出 body 的 843px；`body{overflow:hidden}` 把这 36px 裁掉，落在
+///   y=803..873 的侧边栏 footArea（`sidebar.settings` = 设置按钮）底部
+///   30px 因此不可见，用户找不到设置入口。
+///
+/// 皮肤 CSS 属**钉版二进制产物**（system.default-2.0.0.dshpack.tar，
+/// stage-resources.mjs 与 main.rs 双重校验 SHA-256/digest），不可能就地改。
+/// 故由壳层注入自己的补偿规则，且只加在 `[data-dsh-title-bar-height]` 作用域
+/// 下 —— 该属性只有本壳会设，其它部署形态不受影响。
+///
+/// 选择器锚定内核稳定契约 `data-control-name="session-root"`（壳层自己的
+/// CSS 也用它），而非 CSS-modules 哈希类名：内核前端换哈希即静默失效。
+/// 直接命中 frame 而非 `#root`：`#root` 是普通块盒、子级为 display:contents，
+/// 其 height 不向 frame 传递（CDP 实测：改 `#root` 高度 frame 仍 843px）。
+const TITLE_BAR_HEIGHT_PX: u32 = 36;
+
+/// 壳层自有样式表 id：补偿规则与标记同源，便于排查与幂等。
+const TITLE_BAR_STYLE_ID: &str = "__dsh_title_bar_fix__";
+
+/// Windows 自绘标题栏标记 + 布局补偿（内核 preload-windows.ts 的 mark() 同语义）。
+///
+/// 必须与端口注入写在同一次 document-start 注入里：主窗会从壳层 /loading
+/// 导航到内核 Web UI，页面上下文重建后属性与样式都不能丢。
+fn windows_titlebar_marker_js() -> String {
+    format!(
+        "if(navigator.platform.indexOf('Win')===0){{\
+var h='{height}px';\
+var d=function(){{var r=document.documentElement;\
+if(!r)return false;\
+r.setAttribute('data-windows-titlebar','');\
+r.style.setProperty('--dsh-windows-titlebar-height',h);\
+r.setAttribute('data-dsh-title-bar-height','{height}');\
+r.style.setProperty('--dsh-title-bar-height',h);\
+if(!document.getElementById('{style_id}')){{var s=document.createElement('style');\
+s.id='{style_id}';\
+s.textContent='html[data-dsh-title-bar-height] [data-control-name=\"session-root\"]>[class*=frame]{{height:calc(100% - {height}px) !important;max-height:calc(100% - {height}px) !important}}';\
+(document.head||r).appendChild(s)}}\
+return true}};\
+if(!d()){{if(document.readyState==='loading'){{document.addEventListener('DOMContentLoaded',d,{{once:true}})}}else{{document.addEventListener('readystatechange',function h(){{if(d()){{document.removeEventListener('readystatechange',h)}}}})}}}}}}",
+        height = TITLE_BAR_HEIGHT_PX,
+        style_id = TITLE_BAR_STYLE_ID,
+    )
+}
+
 /// 生成带实际桥端口的 WebView 初始化脚本。
 ///
 /// 主窗首屏 /loading 会通过页面 HTML 注入端口，但导航到真实 Web UI
 /// 后页面上下文会重建；仅注入裸 BRIDGE_JS 会让客户端退回固定的
-/// 19873，端口发生回退时窗口控制全部失效。
+/// 19873，端口发生回退时窗口控制全部失效。标记同样必须在每次导航的
+/// document-start 注入，故与端口写在同一段初始化脚本里。
 fn bridge_init_script() -> String {
     let manager_active = ui_skin_manager_snapshot().is_some();
     let skin_css = if manager_active {
@@ -85,7 +145,8 @@ fn bridge_init_script() -> String {
     };
     let manager = ui_skin_manager_bootstrap_json();
     format!(
-        "window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\nwindow.__DSH_UI_SKIN_CSS__={};\nwindow.__DSH_UI_SKIN_MANAGER__={};\n{}",
+        "{}\nwindow.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\nwindow.__DSH_UI_SKIN_CSS__={};\nwindow.__DSH_UI_SKIN_MANAGER__={};\n{}",
+        windows_titlebar_marker_js(),
         ws_port(),
         skin_css,
         manager,
