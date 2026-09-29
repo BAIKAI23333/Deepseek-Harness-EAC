@@ -2,7 +2,15 @@
 
 // 配套 dsh 插件同步（ADR 0002 L2 业务服务层；Wave 2 收官自 companion-sync.js
 // 类型化迁出，行为零变更）：注入 web profile：余额小部件 + 文件更改追踪/
-// 还原 + 皮肤 + 内置插件治理。
+// 还原 + 内置插件治理。
+// M2/#415：旧版用户可见皮肤切换（dsh-skin-switch + assets/skins 目录播种）
+// 已整体退役 —— 换肤由 ui-skin-loader 公约皮肤包接管；壳层 ui-skin manager
+// 的 boot/recovery 回退资源不受本退役影响（ADR 0010）。
+// M2/#415 皮肤平台预装（本文件下半段）：`@dsh-eac/ui-skin-loader` 与 13 款
+// 公约皮肤包在 COMPANION_PLUGINS 里登记（包拷贝来源），装载走 profile
+// bundles（profile.ts 的 BUNDLED_BUILTIN_PLUGINS）—— 它们的 package.json 都
+// 声明 `dsh.bundle.patch`，写 overlay insert 行会撞成 duplicate loader entry id。
+// 无皮肤激活时 loader 的 activeSkin 保持 `default`，观感 = 宿主原生。
 
 import path = require('node:path');
 import fs = require('node:fs');
@@ -28,6 +36,25 @@ const pluginUpdater = require('../../plugin-updater') as {
 const { healProfileModuleShadowing } = require('../../profile-module-heal') as {
   healProfileModuleShadowing(home: string, profile: string): string[];
 };
+// M3/#416 L3：外部层（第三方/社区）新装插件默认禁用 —— 规划是纯函数
+// （plugin-manager-state），落盘复用插件管理页同一套 patch 手术
+// （scripts/plugin-manager-patch.js），不新增安装器。
+const { externalDefaultDisabledPlan, canonicalBundleId } = require('../../plugin-manager-state') as {
+  externalDefaultDisabledPlan(o: {
+    bundles?: unknown[];
+    isRegistered?: (id: string) => boolean;
+    distributionClasses?: Record<string, string>;
+    builtinIds?: Iterable<string>;
+    recommendedIds?: Iterable<string>;
+    skipIds?: Iterable<string>;
+  }): Array<{ id: string; name: string }>;
+  canonicalBundleId(name: string): string;
+};
+import {
+  DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+  RECOMMENDED_PACK_PLUGIN_IDS,
+  PLUGIN_DISTRIBUTION_CLASSES,
+} from './plugin-sync-registry';
 const {
   configLinesFor,
   healSoulMdPatchRow,
@@ -55,9 +82,10 @@ const { migrateManagedRouterPersonaPresets } = require('../../router-persona-pre
     log: (m: string) => void,
   ): { status: string; file: string }[];
 };
-const { hasEntryId, removePluginFromPatch } = require('../../scripts/plugin-manager-patch') as {
+const { hasEntryId, removePluginFromPatch, togglePluginInPatch } = require('../../scripts/plugin-manager-patch') as {
   hasEntryId(patch: string, id: string): boolean;
   removePluginFromPatch(text: string, id: string): string;
+  togglePluginInPatch(text: string, id: string, enabled: boolean, name?: string): string;
 };
 
 /** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
@@ -65,7 +93,6 @@ export interface CompanionSyncCtx {
   log(tag: string, msg: string): void;
   getDshHome(): string | null;
   getUserDataDir(): string;
-  applyLegacySkinChoice(): void;
   showMainWindow(): void;
   notify(n: { title: string; body: string; icon?: string; onClick?: () => void }): void;
   platform?: NodeJS.Platform;
@@ -100,7 +127,8 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 自动更新排队与启动消费 + 市场自更新。取代曾被内置的 webui-market /
   // zat-market / 旧 npm 市场（各自 profile 定位错误或重复，已从清单移除）。
   { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
-  { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
+  // M2/#415：skin-switch（旧版用户可见皮肤切换）已退役并列入
+  // RETIRED_BUILTIN_PLUGINS；换肤由 ui-skin-loader 公约皮肤包接管。
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
   // 旧版/社区客户端插件的英文兼容层：跟随官方 locale 状态翻译固定 UI
   // 文案，不触碰会话、代码、终端、编辑器或用户输入。作为界面底座始终启用。
@@ -291,6 +319,26 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 走 patch 行（非 bundles）：用户可在「设置 → 插件 → 管理」关闭；
   // 其夹带 patch 是普通 insert 行，本行不会被 removeBundledRowDuplicates 去重。
   { id: 'think-zh-expand-eac', name: 'dsh-think-zh-expand-eac', dir: 'dsh-think-zh-expand-eac' },
+  // —— M2/#415：皮肤平台（loader + 13 款公约皮肤）——
+  // 与上面的配套插件不同：这些包的 package.json 声明了 `dsh.bundle.patch`，
+  // 必须在 profile bundles 里装载（BUNDLED_BUILTIN_PLUGINS，见 profile.ts），
+  // 因此同步器只负责「把包拷进 profile node_modules」，不写 overlay 行
+  //（bundled.includes(p.name) 分支跳过；否则 duplicate loader entry id）。
+  // 行 id 就是各自 bundle 补丁层的 entry id == settings 命名空间。
+  { id: 'dsh-ui-skin-loader', name: '@dsh-eac/ui-skin-loader', dir: 'dsh-ui-skin-loader' },
+  { id: 'dsh-eac-skin-aurora', name: '@dsh-eac/skin-aurora', dir: 'dsh-eac-skin-aurora' },
+  { id: 'dsh-eac-skin-blue-fantasy', name: '@dsh-eac/skin-blue-fantasy', dir: 'dsh-eac-skin-blue-fantasy' },
+  { id: 'dsh-eac-skin-deep-whale-day-night', name: '@dsh-eac/skin-deep-whale-day-night', dir: 'dsh-eac-skin-deep-whale-day-night' },
+  { id: 'dsh-eac-skin-dragon-heir', name: '@dsh-eac/skin-dragon-heir', dir: 'dsh-eac-skin-dragon-heir' },
+  { id: 'dsh-eac-skin-inkwash', name: '@dsh-eac/skin-inkwash', dir: 'dsh-eac-skin-inkwash' },
+  { id: 'dsh-eac-skin-maid-atelier', name: '@dsh-eac/skin-maid-atelier', dir: 'dsh-eac-skin-maid-atelier' },
+  { id: 'dsh-eac-skin-miku', name: '@dsh-eac/skin-miku', dir: 'dsh-eac-skin-miku' },
+  { id: 'dsh-eac-skin-minecraft', name: '@dsh-eac/skin-minecraft', dir: 'dsh-eac-skin-minecraft' },
+  { id: 'dsh-eac-skin-qq98', name: '@dsh-eac/skin-qq98', dir: 'dsh-eac-skin-qq98' },
+  { id: 'dsh-eac-skin-ths', name: '@dsh-eac/skin-ths', dir: 'dsh-eac-skin-ths' },
+  { id: 'dsh-eac-skin-trading', name: '@dsh-eac/skin-trading', dir: 'dsh-eac-skin-trading' },
+  { id: 'dsh-eac-skin-whale-song', name: '@dsh-eac/skin-whale-song', dir: 'dsh-eac-skin-whale-song' },
+  { id: 'dsh-eac-skin-xp', name: '@dsh-eac/skin-xp', dir: 'dsh-eac-skin-xp' },
 ];
 
 export function companionPluginsForPlatform(platform: NodeJS.Platform = 'win32'): CompanionPluginDef[] {
@@ -423,8 +471,34 @@ export function pluginUpdateSources(): { id: string; name: string; assetsDir: st
   return out;
 }
 
-/** 内置插件当前生效的源目录：覆盖层（已更新版本）优先，资产版本回退。 */
-export function builtinPluginSourceDir(dirName: string): string {
+/**
+ * 市场同名残留的「第三方证据」判定（纯函数，可单测）。
+ *
+ * 三条证据任一成立才算残留：市场版依赖（非 link:/file: 自建链接）、
+ * **非应用播种**的 bundles 条目、非自写 patch 行。
+ *
+ * M2/#415：bundles 条目只有在「不是应用自己播种的」时才是证据 —— 皮肤平台
+ * （loader + 13 款皮肤）由 EAC 通过 BUNDLED_BUILTIN_PLUGINS 预装进 bundles，
+ * 若沿用旧口径，每次启动都会把内置包误判成市场残留并触发「接管」手术
+ * （剥 bundles 条目 + 建保护快照），依赖同一次启动里的重新播种才侥幸复原。
+ */
+export function marketDuplicateEvidence(o: {
+  name: string;
+  dependencySpec?: unknown;
+  inBundles?: boolean;
+  foreignPatchRows?: boolean;
+  appSeededBundles?: Iterable<string>;
+}): boolean {
+  const spec = o.dependencySpec;
+  if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
+  if (o.inBundles === true) {
+    const seeded = new Set(o.appSeededBundles ?? BUNDLED_BUILTIN_PLUGINS);
+    if (!seeded.has(o.name)) return true;
+  }
+  return o.foreignPatchRows === true;
+}
+
+/** 内置插件当前生效的源目录：覆盖层（已更新版本）优先，资产版本回退。 */export function builtinPluginSourceDir(dirName: string): string {
   const assets = path.join(APP_ROOT, 'assets', 'plugins', dirName);
   const overlay = path.join(ctx.getUserDataDir(), 'builtin-plugin-updates', dirName);
   if (!fs.existsSync(path.join(overlay, 'package.json'))) return assets;
@@ -439,10 +513,8 @@ export function builtinPluginSourceDir(dirName: string): string {
   return overlay;
 }
 
-// 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
-// （package.json + lib/ + skin.json + LICENSE/NOTICE），随桌面端分发；
-// 默认全部以 disabled: true 注册（不启用任何皮肤），由「设置 → 皮肤」切换。
-export const SKINS_DIR = path.join(APP_ROOT, 'assets', 'skins');
+// M2/#415：assets/skins/ 皮肤包目录播种已随旧版皮肤切换退役
+// —— assets/skins 自 v6 起已不存在，皮肤改经 ui-skin-loader 公约皮肤包分发。
 
 import { copyPluginPackage, readJsonFile } from '../plugin-copy.js';
 
@@ -472,10 +544,35 @@ export function healProfileModules(): void {
   }
 }
 
+// M2/#415 迁移清理：旧链（AIO ≤ 9.6.3 的 assets/skins 目录播种）留在老
+// profile 里的 10 款旧桌面皮肤 —— 包名 `@linxin666|@dsh-external/
+// dsh-client-ui-skin-*`，patch 行 id 取皮肤包清单里声明的 wiring.id
+//（`ui-skin-*`，insert 内层行）。旧链退役后这些行指向的包不再随包分发：
+// 「行在包不在」让 loader 找不到 entry、「包在行不在」残留旧皮肤继续加载，
+// 两者都会拖垮插件树。清理按**精确 id + 精确包名**逐条进行（不是作用域/前缀
+// 级联删除）：`@linxin666` / `@dsh-external` 下市场安装的其他插件必须留存，
+// 新皮肤平台（包 `@dsh-eac/ui-skin-loader` + `@dsh-eac/skin-*`，行
+// `dsh-ui-skin-loader` + `dsh-eac-skin-*`）更不得被碰。
+// （契约测试锚定本清单与 RETIRED_BUILTIN_PLUGINS 的并集，勿改前缀语义。）
+export const LEGACY_UI_SKIN_RESIDUE: { id: string; name: string }[] = [
+  { id: 'ui-skin-blue-fantasy', name: '@linxin666/dsh-client-ui-skin-blue-fantasy' },
+  { id: 'ui-skin-dragon-heir', name: '@linxin666/dsh-client-ui-skin-dragon-heir' },
+  { id: 'ui-skin-maid-atelier', name: '@dsh-external/dsh-client-ui-skin-maid-atelier' },
+  { id: 'ui-skin-miku', name: '@linxin666/dsh-client-ui-skin-miku' },
+  { id: 'ui-skin-minecraft', name: '@linxin666/dsh-client-ui-skin-minecraft' },
+  { id: 'ui-skin-qq98', name: '@linxin666/dsh-client-ui-skin-qq98' },
+  { id: 'ui-skin-ths', name: '@linxin666/dsh-client-ui-skin-ths' },
+  { id: 'ui-skin-trading', name: '@linxin666/dsh-client-ui-skin-trading' },
+  { id: 'ui-skin-whale-song', name: '@linxin666/dsh-client-ui-skin-whale-song' },
+  { id: 'ui-skin-xp', name: '@linxin666/dsh-client-ui-skin-xp' },
+];
+
 // 曾内置、现已从内置清单移除的插件。老用户 profile 可能残留其 patch 行、
 // node_modules 副本与 package.json 依赖：行在包被清会拖垮插件树，包在行在则
 // 退役插件继续加载。旧市场还会与 dsh-unified-market 重复注册 /api/dsh-market，
 // 使 dsh web 以 code=1 退出。启动时统一清理这些精确的历史内置条目。
+// 旧链皮肤残留（LEGACY_UI_SKIN_RESIDUE）走同一套清理与同一道升级对齐门控：
+// 清单内容变化会改指纹，升级后首次启动必然重跑一次迁移。
 // （契约测试锚定字面量 `const RETIRED_BUILTIN_PLUGINS = [`，勿加内联注解。）
 export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'auto-compact', name: 'dsh-auto-compact' },
@@ -495,6 +592,14 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 旧 dsh-file-drop 会同时接管普通文件和图片拖放，与 EAC 特化版并存时
   // 会重复注入内容并让官方图片遮罩停留。由 file-drop-eac 完整取代。
   { id: 'file-drop', name: 'dsh-file-drop' },
+  // M2/#415：旧版用户可见皮肤切换（设置页「皮肤」tab，host 半边以
+  // Typert Remote 改写 cordis.patch.yml 的 ui-skin-* 激活行）随换肤职责
+  // 移交 ui-skin-loader 公约皮肤包而退役。老 profile 残留的 patch 行/
+  // 包副本由退役清理兜底，避免「行在包被清」拖垮插件树。壳层 ui-skin
+  // manager 的 boot/recovery 回退资源不受影响（ADR 0010）。
+  { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
+  // M2/#415：旧链播种的 10 款 `ui-skin-*` 皮肤残留（见上方迁移清单）。
+  ...LEGACY_UI_SKIN_RESIDUE,
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -695,17 +800,21 @@ export function syncCompanionPlugins(): void {
         const dupPreCheck = (() => {
           try {
             const deps = precheckPkg && (precheckPkg.dependencies as Record<string, unknown> | undefined);
-            const spec = deps && deps[p.name];
-            if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
             const dsh = precheckPkg && (precheckPkg.dsh as Record<string, unknown> | undefined);
             const prof = dsh && (dsh.profile as Record<string, unknown> | undefined);
-            if (prof && Array.isArray(prof.bundles) && (prof.bundles as string[]).includes(p.name)) return true;
-            // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
-            // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
-            // 的启停状态，不是市场残留。否则 v4.4 首次向导的取消勾选会在同一启动
-            // 里被剥离后按注册表默认回写（dsh-dafeiyu 等默认启用插件被静默重新
-            // 启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:` 行堆积。
-            return patchHasForeignRows(precheckPatch, p.name);
+            const inBundles = !!(prof && Array.isArray(prof.bundles)
+              && (prof.bundles as string[]).includes(p.name));
+            return marketDuplicateEvidence({
+              name: p.name,
+              dependencySpec: deps ? deps[p.name] : undefined,
+              inBundles,
+              // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
+              // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
+              // 的启停状态，不是市场残留。否则 v4.4 首次向导的取消勾选会在同一启动
+              // 里被剥离后按注册表默认回写（dsh-dafeiyu 等默认启用插件被静默重新
+              // 启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:` 行堆积。
+              foreignPatchRows: patchHasForeignRows(precheckPatch, p.name),
+            });
           } catch { return false; }
         })();
         if (dupPreCheck) {
@@ -747,26 +856,10 @@ export function syncCompanionPlugins(): void {
         ctx.log('boot', '内置接管通知发送失败: ' + (err as Error).message);
       }
     }
-    // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
-    // 禁用的皮肤黑名单（因兼容性问题或崩溃而禁用）。
-    const DISABLED_SKINS = ['maid-atelier'];
-    // v6 Task 3.1（ADR 0006）：最简本体不携带 assets/skins（皮肤包由
-    // Task 1.2/6.x 以包形式接入）—— 目录缺失时跳过皮肤行同步，别让
-    // readdirSync 的 ENOENT 炸掉整个 syncCompanionPlugins。
-    if (fs.existsSync(SKINS_DIR)) for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      // 跳过禁用的皮肤
-      if (DISABLED_SKINS.includes(entry.name)) continue;
-      const src = path.join(SKINS_DIR, entry.name);
-      const pkg = readJsonFile(path.join(src, 'package.json'));
-      if (!pkg || typeof pkg.name !== 'string' || !pkg.name.includes('/')) continue;
-      const skin = readJsonFile(path.join(src, 'skin.json'));
-      const wiring = skin && (skin.wiring as Record<string, unknown> | undefined);
-      const rowId = wiring && typeof wiring.id === 'string' ? wiring.id : '';
-      if (!/^ui-skin-[\w-]+$/.test(rowId)) continue;
-      copyPluginPackage(profileDirP, src, pkg.name);
-      pending.push({ id: rowId, name: pkg.name, disabled: true });
-    }
+    // M2/#415：旧版「assets/skins 目录 → profile 皮肤行」播种已退役。
+    // 换肤由 ui-skin-loader 公约皮肤包接管（预装见 COMPANION_PLUGINS 末段的
+    // 皮肤平台清单 + profile.ts 的 BUNDLED_BUILTIN_PLUGINS）；无皮肤激活 =
+    // 宿主原生观感。
     // 内置插件清单标记：插件市场据此把目录里的同名插件标为「已内置」并
     // 拒绝重复安装 —— 内置包每次启动都被重新同步，市场覆盖安装会产生
     // duplicate loader entry / 模块双实例，必须从源头拦截。
@@ -831,9 +924,18 @@ function ensurePluginHostDeps(profileDirP: string): void {
   // 该插件优雅降级为仅页面内提醒 —— 这里落位让系统推送开箱即用）。
   ensureCopy('web-push', 0);
   // cosmokit 只在共享层没有时兜底（避免遮蔽内核闭包内的配套版本）。
-  const sharedCosmo = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules', '@deepseek-ai', 'cosmokit');
+  const sharedRoot = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules');
+  const sharedCosmo = path.join(sharedRoot, '@deepseek-ai', 'cosmokit');
   if (!fs.existsSync(sharedCosmo)) {
     ensureCopy(path.join('@deepseek-ai', 'cosmokit'), 0);
+  }
+  // M2/#415：皮肤加载器与 aurora 的 host 半边直接 import
+  // `@deepseek-ai/schemastery`（vendored loader v1.1.0 的 host 入口只有这一个
+  // 外部 import）。与 cosmokit 同策：共享层已有就不落位，避免遮蔽内核闭包内
+  // 的配套版本；全新隔离 home（共享层尚未由内核重建）时兜底落位。
+  const sharedSchemastery = path.join(sharedRoot, '@deepseek-ai', 'schemastery');
+  if (!fs.existsSync(sharedSchemastery)) {
+    ensureCopy(path.join('@deepseek-ai', 'schemastery'), 0);
   }
 }
 
@@ -925,6 +1027,36 @@ function ensurePluginHostDeps(profileDirP: string): void {
       else patch = patch.replace(/\s*$/, '\n') + block;
       changed = true;
     }
+    // M3/#416 L3：外部层默认禁用。新装进 profile bundles 的第三方包（既非
+    // 内核骨架，也不在 L1/L2 分级）若 patch 里还没有登记点，就补写「编辑型
+    // 关闭行」—— 与插件管理页开关、市场安装后的落盘是同一手术；已有登记点
+    // （用户启用过的裸行、市场写入的行）一律保留，用户选择优先。这样
+    // `dsh plugin add` 这类 CLI 安装路径也落在「装完默认禁用、手动启用」的
+    // 语义内。安全模式不写（与配套行一致）；分级表缺失时规划为空（fail-open）。
+    // M2/#415：配套插件（含 loader 与 13 款皮肤包）已由本函数负责预装，不进
+    // 这一步。规划的 id 空间是 bundle 包名的短名（`@dsh-eac/ui-skin-loader`
+    // → `ui-skin-loader`），与皮肤平台的行 id（`dsh-ui-skin-loader`）不同名，
+    // 因此必须显式排除 —— 否则每个皮肤包都会被写一条 `disabled: true` 行，
+    // 既把 loader 误标成「外部/默认禁用」，又与 bundle 自己的补丁层形成
+    // duplicate loader entry id 风险。
+    const companionBundleIds = COMPANION_PLUGINS.flatMap((p) => [
+      p.name,
+      p.id,
+      canonicalBundleId(p.name),
+    ]);
+    const externalDefaults = inSafeMode ? [] : externalDefaultDisabledPlan({
+      bundles: bundled,
+      isRegistered: (id: string) => hasEntryId(patch, id),
+      distributionClasses: PLUGIN_DISTRIBUTION_CLASSES,
+      builtinIds: DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+      recommendedIds: RECOMMENDED_PACK_PLUGIN_IDS,
+      skipIds: companionBundleIds,
+    });
+    for (const ext of externalDefaults) {
+      patch = togglePluginInPatch(patch, ext.id, false, ext.name);
+      changed = true;
+      ctx.log('boot', `外部插件默认关闭（可在「设置 → 插件 → 管理」启用）: ${ext.id}`);
+    }
     if (changed) {
       // 顺带清理历史遗留的孤儿 `- insert:` 行（v4.2/4.3 每次启动「剥离-回写」
       // 残留的空块；对 cordis 无效果，仅文件卫生）。强制一次写盘，之后幂等。
@@ -944,8 +1076,6 @@ function ensurePluginHostDeps(profileDirP: string): void {
       writeFileAtomic(patchFile, patch);
       ctx.log('boot', '已同步配套插件/皮肤到 web profile: ' + pending.map((p) => p.id).join(', '));
     }
-    // 迁移带来的皮肤选择（migrateFromSharedWebProfile 记录）在此落位。
-    ctx.applyLegacySkinChoice();
   } catch (err) {
     ctx.log('boot', '同步配套插件失败: ' + (err as Error).message);
   }

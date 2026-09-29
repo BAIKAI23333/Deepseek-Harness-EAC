@@ -253,7 +253,7 @@ dsh-desktop/
 ├── preload.js            # 沙箱预加载（自绘玻璃标题栏 + 窗口控制/菜单 IPC + 余额事件桥）
 ├── assets/               # 加载页、更新进度页、图标、托盘图标、配套 dsh 插件（默认 Skin 源码在独立 canonical 仓库）
 │   └── plugins/          # 桌面壳配套（dsh-balance、dsh-file-changes、dsh-terminal、
-│                         # dsh-easy-setup、dsh-skin-switch）+ 内置社区插件
+│                         # dsh-easy-setup）+ 内置社区插件
 │                         # （dsh-unified-market、dsh-soul-md、dsh-web-mobile-fix，
 │                         # 含 vendor 与自包含依赖）
 │                         # 全部自动同步进 web profile

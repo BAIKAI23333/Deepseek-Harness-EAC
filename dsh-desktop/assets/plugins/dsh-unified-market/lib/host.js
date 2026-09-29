@@ -341,6 +341,8 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
   child.on('close', async (code) => {
     if (op.status !== 'running') return
     const ok = code === 0
+    // M3/#416：本次安装是否落在「外部层默认禁用」语义内（热挂载与提示都用）。
+    let installDefaultDisabled = false
     // V4：pnpm 已退出 —— 回填被重新解包清掉的第三方构建产物（先回填再
     // 热挂载，热挂载读到的才是补齐后的树）。
     try {
@@ -387,7 +389,11 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
       // 保留期间发生的一切外部改动。
       const pkgName = op.pkg || op.target
       const id = loaderEntryId(op.profile, pkgName)
-      const disabled = op.kind === 'uninstall'
+      // M3/#416 L3：外部插件（未随客户端内置分发的第三方包）安装后默认禁用，
+      // 用户在「设置 → 插件 → 管理」手动启用；内置/推荐包（壳每次启动同步进
+      // profile，清单见 .dsh-builtin-plugins.json）保持原有「安装即启用」。
+      const disabled = op.kind === 'uninstall' || isExternalInstall(op.profile, pkgName)
+      installDefaultDisabled = op.kind === 'install' && disabled
       syncProfileConfig(
         op,
         (patchText) => {
@@ -399,10 +405,14 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
         },
         (disabled ? '禁用并移除 ' : '启用 ') + pkgName + '（id: ' + id + '）',
       )
+      if (installDefaultDisabled) {
+        appendOutput(op, '\n[M3/#416] 外部插件默认禁用：安装已完成，请在「设置 → 插件 → 管理」中手动启用后生效\n')
+      }
     }
-    if (ok && op.kind === 'install' && hotCtx !== null) {
+    if (ok && op.kind === 'install' && hotCtx !== null && !installDefaultDisabled) {
       // Trial-boot already proved the bundle boots; hot-mount is the bonus
       // that skips the restart. Failure here only falls back to restart.
+      // M3/#416：默认禁用的外部插件不热挂载 —— 否则会绕过关闭行立即生效。
       const mounted = await tryHotMountAll(hotCtx, op.profile, op.beforeDeps)
       if (mounted) {
         op.hot = true
@@ -1201,6 +1211,22 @@ function readBuiltinPlugins(profile) {
     const marker = JSON.parse(readFileSync(join(profileDir(profile), '.dsh-builtin-plugins.json'), 'utf8'))
     return Array.isArray(marker.names) ? marker.names.filter((n) => typeof n === 'string') : []
   } catch { return [] }
+}
+
+/**
+ * M3/#416 L3（外部层）：该包是否「非壳同步面」——即不在客户端每次启动
+ * 同步进 profile 的内置/推荐清单里（.dsh-builtin-plugins.json，由壳的
+ * companion-sync 写入）。外部插件安装后默认禁用，用户在插件管理页手动
+ * 启用；内置/推荐包维持「安装即启用」。标记缺失时按外部处理（保守方向：
+ * 新装的第三方包默认不生效，而不是悄悄启用）。
+ * @param {string} profile
+ * @param {string} pkgName
+ * @returns {boolean}
+ */
+function isExternalInstall(profile, pkgName) {
+  const name = String(pkgName || '').trim()
+  if (!name) return false
+  return !readBuiltinPlugins(profile).includes(name)
 }
 
 /** Basename of a package name or install spec ('dsh-tool-vision', 'github:owner/dsh-pet' → 'dsh-pet'). */

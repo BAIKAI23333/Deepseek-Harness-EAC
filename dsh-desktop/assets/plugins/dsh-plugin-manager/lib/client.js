@@ -10,14 +10,21 @@ window.__ModuleLoader__.load({
 
 		const L = {
 			tab: "管理",
-			tabHint: "搜索插件、点击分类标签过滤；配套/其他插件可一键关闭，「移除」为卸载语义（不再随启动同步），完全退出并重启 DSH Desktop 后生效。",
+			tabHint: "按「内置 / 推荐 / 外部」三级分组：内置插件随客户端分发、默认启用且不可关闭；推荐插件来自推荐包，安装时可选是否启用、之后可随时开关；外部插件新装默认关闭，需手动启用。搜索插件、点击分级标签过滤；「移除」为卸载语义（不再随启动同步），完全退出并重启 DSH Desktop 后生效。",
 			searchPlaceholder: "搜索插件（名称 / id / 描述）…",
 			viewCompact: "简洁",
 			viewDetail: "详情",
 			catAll: "全部",
-			groupCompanion: "配套插件",
-			groupOther: "其他插件",
-			groupCore: "核心组件",
+			groupBuiltin: "内置插件",
+			groupRecommended: "推荐插件",
+			groupExternal: "外部插件",
+			tierBuiltin: "内置",
+			tierRecommended: "推荐",
+			tierExternal: "外部",
+			tierBuiltinNote: "随客户端分发 · 默认启用 · 不可关闭",
+			tierRecommendedNote: "安装时可选是否启用 · 可随时开关",
+			tierExternalNote: "新装默认关闭 · 可手动启用",
+			packPrefix: "推荐包：",
 			groupToggleableNote: "可开关",
 			groupReadonlyNote: "不可关闭",
 			descFallback: "（无描述）",
@@ -67,6 +74,25 @@ window.__ModuleLoader__.load({
 			const i = s.indexOf("/");
 			return i >= 0 ? s.slice(i + 1) : s;
 		};
+
+		/**
+		 * 三层分级（M3/#416）：canonical 字段 = 桥接行上的 distributionClass
+		 * （来源 .sync/plugin-distribution.json 的 distributionClass）。桥接
+		 * 版本落后缺字段时的兜底：不可开关的行按内置、其余按外部（标签只影响
+		 * 分组显示，不影响行本身的启停能力）。
+		 */
+		const TIERS = ["builtin", "recommended", "external"];
+		const tierOf = (row) => {
+			if (row && TIERS.includes(row.distributionClass)) return row.distributionClass;
+			return row && row.toggleable ? "external" : "builtin";
+		};
+		const tierLabelOf = (row) => (tierOf(row) === "recommended" ? L.tierRecommended : tierOf(row) === "external" ? L.tierExternal : L.tierBuiltin);
+		const tierColorOf = (row) => (tierOf(row) === "recommended"
+			? "var(--dsw-alias-state-success-primary, #4caf7d)"
+			: tierOf(row) === "external"
+				? "var(--dsw-alias-label-tertiary, rgba(128,128,128,0.8))"
+				: "var(--dsw-alias-state-info-primary, #5b9bd5)");
+		const tierBadge = (row) => badge(tierLabelOf(row), tierColorOf(row));
 
 		/** 迷你开关（简洁视图卡片用）。 */
 		const switchControl = (row, on, onToggle, pending) => {
@@ -156,6 +182,7 @@ window.__ModuleLoader__.load({
 
 					const toggleableById = new Map(mine.filter((r) => r && r.toggleable).map((r) => [r.id, r]));
 					const descById = new Map(mine.map((r) => [r.id, r.description]));
+					const distById = new Map(mine.map((r) => [r.id, r.distributionClass]));
 					const liveIds = new Set(live.filter((e) => e && e.entryId !== void 0).map((e) => e.entryId));
 					const byId = new Map();
 					for (const r of mine) {
@@ -172,6 +199,12 @@ window.__ModuleLoader__.load({
 							toggleable: !!r.toggleable,
 							removable: !!r.removable,
 							removed: !!r.removed,
+							// M3/#416：分级 + 分级语义（内置锁定 / 推荐可选项 / 外部默认关闭）
+							distributionClass: r.distributionClass,
+							tierLabel: r.tierLabel,
+							defaultEnabled: r.defaultEnabled,
+							enableChoice: !!r.enableChoice,
+							pack: r.pack || null,
 							from: "local"
 						});
 					}
@@ -189,6 +222,12 @@ window.__ModuleLoader__.load({
 								phase: e.fiberPhase || "",
 								description: descById.get(e.entryId) || "",
 								toggleable: toggleableById.has(e.entryId),
+								// live 独有行 = 本地清单未覆盖的内核注册点（web-runtime 等），记内置。
+								distributionClass: distById.get(e.entryId) || "builtin",
+								tierLabel: null,
+								defaultEnabled: true,
+								enableChoice: false,
+								pack: null,
 								from: "live"
 							});
 						}
@@ -238,7 +277,11 @@ window.__ModuleLoader__.load({
 			/** 行当前显示值：有未生效的点击 → 新值；否则实际状态。 */
 			const rowValue = (row) => (row.id in pendingMap ? pendingMap[row.id] : row.enabled);
 			const rowDirty = (row) => row.id in pendingMap;
-			const rowCat = (row) => (row.removed || row.removable ? "companion" : row.toggleable ? (row.id === "llm-deepseek" ? "other" : "companion") : "core");
+			/** 分级说明后缀：推荐组带上推荐包 id（来自桥接行，缺省不显示）。 */
+			const recommendedNote = (items) => {
+				const hit = items.find((r) => tierOf(r) === "recommended" && r.pack);
+				return hit ? L.tierRecommendedNote + " · " + L.packPrefix + hit.pack : L.tierRecommendedNote;
+			};
 
 			/** 移除/恢复（卸载语义）：成功后重拉清单刷新状态。 */
 			const onSetRemoved = (row, removed) => {
@@ -336,6 +379,7 @@ window.__ModuleLoader__.load({
 							]
 						}),
 						jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, flex: "none" }, children: [
+							tierBadge(row),
 							rowDirty(row) ? badge(L.badgePending, "var(--dsw-alias-state-info-primary, #5b9bd5)") : null,
 							row.removed ? badge(L.badgeRemoved, "var(--dsw-alias-state-warning-primary, #d99a3d)") : null,
 							jsx("span", { style: { width: 7, height: 7, borderRadius: 999, background: dotColor, flex: "none" } }),
@@ -358,6 +402,7 @@ window.__ModuleLoader__.load({
 							jsxs("div", { children: [
 								jsx("span", { style: { fontWeight: 600 }, children: rowName(row) || rowPkg(row) }),
 								jsx("span", { style: { fontSize: 12, opacity: 0.55, marginLeft: 8 }, children: rowPkg(row) }),
+								tierBadge(row),
 								row.removed
 									? badge(L.badgeRemoved, "var(--dsw-alias-state-warning-primary, #d99a3d)")
 									: rowValue(row)
@@ -391,12 +436,13 @@ window.__ModuleLoader__.load({
 				if (!rows) return jsx("div", { style: { fontSize: 12, opacity: 0.7, marginTop: 8 }, children: L.loading });
 				const base = rows.filter(matches);
 				if (base.length === 0) return jsx("div", { style: { fontSize: 12, opacity: 0.7, marginTop: 8 }, children: L.noMatch });
-				const groups = {
-					companion: base.filter((r) => rowCat(r) === "companion"),
-					other: base.filter((r) => rowCat(r) === "other"),
-					core: base.filter((r) => rowCat(r) === "core")
+				// M3/#416：可见分组 = 三层分级（内置 / 推荐 / 外部），与行徽章、筛选项同一口径。
+				const tierGroups = {
+					builtin: base.filter((r) => tierOf(r) === "builtin"),
+					recommended: base.filter((r) => tierOf(r) === "recommended"),
+					external: base.filter((r) => tierOf(r) === "external")
 				};
-				const shown = cat === "all" ? base : groups[cat];
+				const shown = cat === "all" ? base : tierGroups[cat];
 				if (shown.length === 0) return jsx("div", { style: { fontSize: 12, opacity: 0.7, marginTop: 8 }, children: L.noMatch });
 				const compact = view === "compact";
 				const group = (title, note, items) => items.length === 0 ? null : jsxs("div", {
@@ -414,15 +460,19 @@ window.__ModuleLoader__.load({
 					]
 				});
 				if (cat !== "all") {
-					const meta = { companion: [L.groupCompanion, L.groupToggleableNote], other: [L.groupOther, L.groupToggleableNote], core: [L.groupCore, L.groupReadonlyNote] };
+					const meta = {
+						builtin: [L.groupBuiltin, L.tierBuiltinNote],
+						recommended: [L.groupRecommended, recommendedNote(shown)],
+						external: [L.groupExternal, L.tierExternalNote]
+					};
 					const [title, note] = meta[cat];
 					return group(title, note, shown);
 				}
 				return jsxs("div", {
 					children: [
-						group(L.groupCompanion, L.groupToggleableNote, groups.companion),
-						group(L.groupOther, L.groupToggleableNote, groups.other),
-						group(L.groupCore, L.groupReadonlyNote, groups.core)
+						group(L.groupBuiltin, L.tierBuiltinNote, tierGroups.builtin),
+						group(L.groupRecommended, recommendedNote(tierGroups.recommended), tierGroups.recommended),
+						group(L.groupExternal, L.tierExternalNote, tierGroups.external)
 					]
 				});
 			};
@@ -448,12 +498,12 @@ window.__ModuleLoader__.load({
 			const renderChips = () => {
 				if (!rows) return null;
 				const base = rows.filter(matches);
-				const n = (k) => base.filter((r) => rowCat(r) === k).length;
+				const n = (k) => base.filter((r) => tierOf(r) === k).length;
 				return jsxs("div", { style: { display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }, children: [
 					chip("all", L.catAll, base.length),
-					chip("companion", L.groupCompanion, n("companion")),
-					chip("other", L.groupOther, n("other")),
-					chip("core", L.groupCore, n("core"))
+					chip("builtin", L.groupBuiltin, n("builtin")),
+					chip("recommended", L.groupRecommended, n("recommended")),
+					chip("external", L.groupExternal, n("external"))
 				] });
 			};
 
