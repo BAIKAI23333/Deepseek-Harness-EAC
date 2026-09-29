@@ -74,6 +74,9 @@
       update: function () { return unavailable('plugin-install'); },
     },
     updates: {
+      // rc.2 设置页在激活时读取 status；保留旧方法供现有插件使用。
+      status: function () { return Promise.resolve({ phase: 'idle' }); },
+      open: function () { return unavailable('client-update'); },
       check: function () { return Promise.resolve({ phase: 'idle' }); },
       install: function () { return unavailable('client-update'); },
       subscribe: function () { return function () { /* 无更新事件源 */ }; },

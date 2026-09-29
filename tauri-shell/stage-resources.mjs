@@ -279,31 +279,49 @@ console.log('[stage] assets（v6 最简本体：图标 + WS 客户端 + skills�
     'dsh-terminal',
     'dsh-viewport-lock',
     'dsh-eac-locale-compat',
-    // 阶段 2：不依赖 window.dshDesktop 已删桥接面的 7 个 builtin 插件。
-    // 余下 6 个（balance / client-file-changes / file-drop-eac /
-    // plugin-manager / plugin-shield / plugin-wizard）依赖 ADR 0006 v5
-    // 整体删除的方法族，需先恢复 bridge 契约，不在 Task 3.3 范围。
+    // 阶段 2：不依赖 window.dshDesktop 已删桥接面的 6 个 builtin 插件。
+    //（dsh-skin-switch 随 M2/#415 退役移出；其余阶段 1/2 项见各自行内清单。）
     'dsh-compact',
     'dsh-eac-core-bridge',
     'dsh-easy-setup',
     'dsh-file-changes',
     'dsh-settings-scroll-fix',
-    'dsh-skin-switch',
     'dsh-unified-market',
     // 阶段 3：服务端 RPC / bridge 面已随本批接回
     'dsh-plugin-manager',
     'dsh-plugin-shield',
     'dsh-file-drop-eac',
     'dsh-client-file-changes',
+    // M2/#415：换肤控制面随包 —— 皮肤加载器（L1 内置；13 款公约皮肤见下方
+    // SKIN_PACKAGE_DIRS）。旧版 dsh-skin-switch 与 assets/skins 播种已退役。
+    'dsh-ui-skin-loader',
   ];
-  for (const dir of BUILTIN_PLUGIN_DIRS) {
+  // M2/#415：公约皮肤包（loader v1.1.0 发布物，逐包 SHA-256 已本地校验）。
+  // 它们与内置插件同落地于 assets/plugins/<dir>，由 companion-sync 经
+  // profile bundles 预装；这里只负责「随安装包携带」这一步。
+  const SKIN_PACKAGE_DIRS = [
+    'dsh-eac-skin-aurora',
+    'dsh-eac-skin-blue-fantasy',
+    'dsh-eac-skin-deep-whale-day-night',
+    'dsh-eac-skin-dragon-heir',
+    'dsh-eac-skin-inkwash',
+    'dsh-eac-skin-maid-atelier',
+    'dsh-eac-skin-miku',
+    'dsh-eac-skin-minecraft',
+    'dsh-eac-skin-qq98',
+    'dsh-eac-skin-ths',
+    'dsh-eac-skin-trading',
+    'dsh-eac-skin-whale-song',
+    'dsh-eac-skin-xp',
+  ];
+  for (const dir of [...BUILTIN_PLUGIN_DIRS, ...SKIN_PACKAGE_DIRS]) {
     const from = path.join(dd, 'assets', 'plugins', dir);
     if (!existsSync(from)) {
       throw new Error(`[stage] 内置插件目录缺失: assets/plugins/${dir}`);
     }
     cpSync(from, path.join(staged, 'dsh-desktop', 'assets', 'plugins', dir), { recursive: true });
   }
-  console.log(`[stage] 内置插件已随行（Task 3.3，${BUILTIN_PLUGIN_DIRS.length} 个）`);
+  console.log(`[stage] 内置插件已随行（Task 3.3，${BUILTIN_PLUGIN_DIRS.length} 个）+ 公约皮肤/加载器（M2，${SKIN_PACKAGE_DIRS.length + 1} 个包）`);
 }
 
 // dsh-distribution 发行版描述符（阶段 3）：组件清单来自插件来源台账

@@ -30,7 +30,34 @@ export const DESKTOP_PROFILE = 'web-desktop';
 // v6 Task 3.1（ADR 0006 v3 · 严格模式）：内置 bundle 插件随 assets/plugins
 // 资产面剥出 —— 最简 profile 只含官方 @deepseek-ai/dsh-base + dsh-web-app
 //（纯净 boot 实测 200 可达）。Task 3.3 接回插件时恢复此清单。
-export const BUNDLED_BUILTIN_PLUGINS: string[] = [];
+//
+// M2/#415（皮肤加载器接入）：清单里现在是皮肤平台 —— `@dsh-eac/ui-skin-loader`
+// 与 13 款公约皮肤包（loader v1.1.0 发布物，逐包 SHA-256 本地校验）。它们都
+// 在 package.json 声明 `dsh.bundle.patch`，唯一正确装载方式就是 profile
+// bundles（`dsh plugin add` 的语义也是「bundles 自动追加 = 安装即启用」）；
+// 写 overlay insert 行会与 bundle 自己的补丁层撞成 duplicate loader entry id，
+// 反而拖垮插件树。
+// 默认回退：loader 的 `Config.activeSkin` 默认 `default`（不引入任何覆盖），
+// 因此「预装全部皮肤」= 皮肤可被加载器发现/切换，而不是默认改变外观 ——
+// 未选择任何皮肤时观感为宿主原生（Dsh 默认主题）。
+export const UI_SKIN_PLATFORM_PACKAGES: string[] = [
+  // 顺序即 bundles 装载顺序：加载器最先（皮肤经它的服务注册）。
+  '@dsh-eac/ui-skin-loader',
+  '@dsh-eac/skin-aurora',
+  '@dsh-eac/skin-blue-fantasy',
+  '@dsh-eac/skin-deep-whale-day-night',
+  '@dsh-eac/skin-dragon-heir',
+  '@dsh-eac/skin-inkwash',
+  '@dsh-eac/skin-maid-atelier',
+  '@dsh-eac/skin-miku',
+  '@dsh-eac/skin-minecraft',
+  '@dsh-eac/skin-qq98',
+  '@dsh-eac/skin-ths',
+  '@dsh-eac/skin-trading',
+  '@dsh-eac/skin-whale-song',
+  '@dsh-eac/skin-xp',
+];
+export const BUNDLED_BUILTIN_PLUGINS: string[] = [...UI_SKIN_PLATFORM_PACKAGES];
 // 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app），
 // 外加内置 bundle 插件；仅用于全新 profile 播种。
 export const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...BUNDLED_BUILTIN_PLUGINS];

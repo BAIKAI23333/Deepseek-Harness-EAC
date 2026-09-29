@@ -1,7 +1,7 @@
 {
   "generatedRegistry": "dsh-desktop/lib/desktop/plugin-sync-registry.ts",
   "manifest": ".sync/plugins.json",
-  "manifestRevision": "2be58904737bf3cc90b2321080faf4085c4714e0957a7a6acb567fcbfb3c5263",
+  "manifestRevision": "cc539e5f306ad11eadf782b5ce989f41aac3e7e78ffda4ad8cd84f29a5d3afc1",
   "plugins": {
     "agent-teams": {
       "compatibility": {},
@@ -155,7 +155,7 @@
         "packageName": "dsh-compact",
         "packageVersion": "1.0.0",
         "path": "dsh-desktop/assets/plugins/dsh-compact",
-        "treeSha256": "6f7bca37cbfea44571ba4ac755968912abe3dd019a15b3a94642344a3213b754"
+        "treeSha256": "9f135e9b8f2abcf3046607ccdcada3419cb18e96411c9247aa2aafbeea859a61"
       },
       "manifestEntrySha256": "2cf65bbbf0a3240bd02fc40d42dc564446219a88f6d972da681a64370bd666c5",
       "patchFiles": [],
@@ -165,7 +165,7 @@
       "runtimeUpdate": "disabled",
       "source": {
         "kind": "unknown",
-        "sha256": "6f7bca37cbfea44571ba4ac755968912abe3dd019a15b3a94642344a3213b754",
+        "sha256": "9f135e9b8f2abcf3046607ccdcada3419cb18e96411c9247aa2aafbeea859a61",
         "version": "1.0.0"
       },
       "sourceCommit": null
@@ -307,6 +307,370 @@
         "repository": "git+https://github.com/QCYTSN/dsh-dafeiyu.git",
         "sha256": "fb1c17f86406934b79c26246698a33d6b16b8e5343b544c42a748747f0f5a845",
         "version": "0.1.0-alpha.6"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-aurora": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 8,
+        "license": "MIT",
+        "packageName": "@dsh-eac/skin-aurora",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-aurora",
+        "treeSha256": "f579b3707bad7311031ecdda801e1333d6bb6c0c10010c49d9b36a2de94943aa"
+      },
+      "manifestEntrySha256": "583cd2c4fde3d4ba066b60a0cb1313d7e65e676dc4bbe87fd5817cbb25d191e7",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-aurora",
+        "sha256": "f579b3707bad7311031ecdda801e1333d6bb6c0c10010c49d9b36a2de94943aa",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-blue-fantasy": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-blue-fantasy",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-blue-fantasy",
+        "treeSha256": "02a306a79ef1433718615ad38ee7b4b71e04d296de325dc3a6e53a09201f1975"
+      },
+      "manifestEntrySha256": "2eb4a5005664f970b36548079c7d81f53a53c5523c7f21e3964501a722d53c99",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-blue-fantasy",
+        "sha256": "02a306a79ef1433718615ad38ee7b4b71e04d296de325dc3a6e53a09201f1975",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-deep-whale-day-night": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "CC-BY-NC-SA-4.0",
+        "packageName": "@dsh-eac/skin-deep-whale-day-night",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-deep-whale-day-night",
+        "treeSha256": "2f1214cb5cc557de9436b470346b423829dbab8e47522e7369adb01e1bea745e"
+      },
+      "manifestEntrySha256": "161336220458d935b3b82484536bf798ef129447b56c973f40826a82f4306c93",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-deep-whale-day-night",
+        "sha256": "2f1214cb5cc557de9436b470346b423829dbab8e47522e7369adb01e1bea745e",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-dragon-heir": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 8,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-dragon-heir",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-dragon-heir",
+        "treeSha256": "8f9d29eb30c257ef3303f5c42fda1f5ca98351508e6fb10185fd042860560624"
+      },
+      "manifestEntrySha256": "e920af280282ad6ad24a39230eb4303d15fa63d199e46c70a277ec3f742aa268",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-dragon-heir",
+        "sha256": "8f9d29eb30c257ef3303f5c42fda1f5ca98351508e6fb10185fd042860560624",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-inkwash": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 8,
+        "license": "MIT",
+        "packageName": "@dsh-eac/skin-inkwash",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-inkwash",
+        "treeSha256": "a6990013a2cba7207af7c7879318972f979f5dc79bf0420c6a62a59ef6b5a8e1"
+      },
+      "manifestEntrySha256": "1bbe32a8021eff5e1c90387024693bcc329d0d8a988228892e13bcbd9f3c31b4",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-inkwash",
+        "sha256": "a6990013a2cba7207af7c7879318972f979f5dc79bf0420c6a62a59ef6b5a8e1",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-maid-atelier": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND CC-BY-NC-SA-4.0",
+        "packageName": "@dsh-eac/skin-maid-atelier",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-maid-atelier",
+        "treeSha256": "36cc5ede28d1d6966748ae936f5c5106500f911428d3c62289e5e9296013cbbb"
+      },
+      "manifestEntrySha256": "33ea8a0bc6357fdd158fba595917ab125fd3cd9055efd94489f61845670187dc",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-maid-atelier",
+        "sha256": "36cc5ede28d1d6966748ae936f5c5106500f911428d3c62289e5e9296013cbbb",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-miku": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-miku",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-miku",
+        "treeSha256": "2b4628ac8778fe3079d09a26a50db4ca28adb36551696025b1c85e74980a1829"
+      },
+      "manifestEntrySha256": "37f4a6a816ce92eaa6c6c36b7c1758bf2fd51eae0ac289959ae106ccef64aff9",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-miku",
+        "sha256": "2b4628ac8778fe3079d09a26a50db4ca28adb36551696025b1c85e74980a1829",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-minecraft": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-minecraft",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-minecraft",
+        "treeSha256": "8afc87ce7399cd6fee962a43e7fddbb628534925f922e0520992ec77d1b94e24"
+      },
+      "manifestEntrySha256": "fde3cb5400da449b4980947ab636ada86f938a579ccab9751b29cc38c192ca6e",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-minecraft",
+        "sha256": "8afc87ce7399cd6fee962a43e7fddbb628534925f922e0520992ec77d1b94e24",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-qq98": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-qq98",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-qq98",
+        "treeSha256": "9ecfa64d3e7be6b26b95cd5f461ad41fb55ddf5636b860dda8ef00aa97c08294"
+      },
+      "manifestEntrySha256": "7a8b653a6224658826a9dbec556f98368faff0a88043516e5719d4dda09b8b7e",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-qq98",
+        "sha256": "9ecfa64d3e7be6b26b95cd5f461ad41fb55ddf5636b860dda8ef00aa97c08294",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-ths": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-ths",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-ths",
+        "treeSha256": "3ea976d466aea093744357c44841be2acab4d1f86705ecc07d54eedb40273ef9"
+      },
+      "manifestEntrySha256": "9484ed707570442c4a989577eea02f3462df69bf2a02490b4de7c4ccc86c6a3a",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-ths",
+        "sha256": "3ea976d466aea093744357c44841be2acab4d1f86705ecc07d54eedb40273ef9",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-trading": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 8,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-trading",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-trading",
+        "treeSha256": "90cf0c7e13673900a0188e6ee0aa4accd9ba55086e541fb8d20849953ae93879"
+      },
+      "manifestEntrySha256": "88d54f684a9199ccfc82306b145ca27b5f39e7bc67f3ea158a05802a0aa5da5b",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-trading",
+        "sha256": "90cf0c7e13673900a0188e6ee0aa4accd9ba55086e541fb8d20849953ae93879",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-whale-song": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 8,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-whale-song",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-whale-song",
+        "treeSha256": "a86961c04ba58602aa19ff2901f711a1a881d30cb350bde30363650cc9165af9"
+      },
+      "manifestEntrySha256": "4e8c23884648a9a19ba26e3b2468e07af68be36a4fa3a2474cfb2eeabb66c6b9",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-whale-song",
+        "sha256": "a86961c04ba58602aa19ff2901f711a1a881d30cb350bde30363650cc9165af9",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
+    "dsh-eac-skin-xp": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 10,
+        "license": "MIT AND BSD-3-Clause",
+        "packageName": "@dsh-eac/skin-xp",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-eac-skin-xp",
+        "treeSha256": "f0f3de30f28d0da0b2c718320cef7e2940da731bf6acebd830796b34d57bf388"
+      },
+      "manifestEntrySha256": "ee938a0dc081aaedf275a5058f11ca8f184b078f110391856e9bc71e8e704289",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/skin-xp",
+        "sha256": "f0f3de30f28d0da0b2c718320cef7e2940da731bf6acebd830796b34d57bf388",
+        "version": "1.1.0"
       },
       "sourceCommit": null
     },
@@ -535,6 +899,34 @@
       },
       "sourceCommit": null
     },
+    "dsh-ui-skin-loader": {
+      "compatibility": {},
+      "local": {
+        "entrypoints": [
+          "lib/index.js"
+        ],
+        "excludedPaths": [],
+        "fileCount": 8,
+        "license": "MIT",
+        "packageName": "@dsh-eac/ui-skin-loader",
+        "packageVersion": "1.1.0",
+        "path": "dsh-desktop/assets/plugins/dsh-ui-skin-loader",
+        "treeSha256": "b834efb866de72fc315a67273a205699bf6d968fbe1c692220d1811212efccde"
+      },
+      "manifestEntrySha256": "b63a1f3859adef94b7837ffce7086b4b992a36e1d5823bed68ae45d0fc935fc7",
+      "patchFiles": [],
+      "patchSet": "none",
+      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "requested": "1.1.0",
+      "runtimeUpdate": "disabled",
+      "source": {
+        "kind": "internal",
+        "name": "@dsh-eac/ui-skin-loader",
+        "sha256": "b834efb866de72fc315a67273a205699bf6d968fbe1c692220d1811212efccde",
+        "version": "1.1.0"
+      },
+      "sourceCommit": null
+    },
     "dsh-undo": {
       "compatibility": {},
       "local": {
@@ -684,7 +1076,7 @@
         "packageName": "@deepseek-ai/dsh-easy-setup",
         "packageVersion": "0.1.0",
         "path": "dsh-desktop/assets/plugins/dsh-easy-setup",
-        "treeSha256": "9608b6214c31b748ecbda92016ca86f04eb58dcf6fd1b15153170016c3ad128f"
+        "treeSha256": "73d5d2faf0b9f738c4cf35455e8e4d2e3f9beb8655ba469d49ad0eb5dda6008f"
       },
       "manifestEntrySha256": "aef538c02636206d5325e02e48e0f1946aad38ac29a6246fea181a54a25a2614",
       "patchFiles": [],
@@ -695,7 +1087,7 @@
       "source": {
         "kind": "internal",
         "name": "@deepseek-ai/dsh-easy-setup",
-        "sha256": "9608b6214c31b748ecbda92016ca86f04eb58dcf6fd1b15153170016c3ad128f",
+        "sha256": "73d5d2faf0b9f738c4cf35455e8e4d2e3f9beb8655ba469d49ad0eb5dda6008f",
         "version": "0.1.0"
       },
       "sourceCommit": null
@@ -1231,34 +1623,6 @@
       },
       "sourceCommit": null
     },
-    "skin-switch": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 4,
-        "license": "MIT",
-        "packageName": "@deepseek-ai/dsh-skin-switch",
-        "packageVersion": "0.1.0",
-        "path": "dsh-desktop/assets/plugins/dsh-skin-switch",
-        "treeSha256": "8faab15f0fd40ad2c6a29c6db9f81e4f165217405c64216387e28214e0bd528b"
-      },
-      "manifestEntrySha256": "df6252df12ba08e3a9d164d2d030dfb156525887f5971f265607783632806b0f",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.0",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "internal",
-        "name": "@deepseek-ai/dsh-skin-switch",
-        "sha256": "8faab15f0fd40ad2c6a29c6db9f81e4f165217405c64216387e28214e0bd528b",
-        "version": "0.1.0"
-      },
-      "sourceCommit": null
-    },
     "soul-md": {
       "compatibility": {},
       "local": {
@@ -1343,286 +1707,6 @@
         "repository": "https://github.com/jing-hy/dsh-think-zh-expand-eac",
         "sha256": "6772379b0eadcc7b688a22af355e2e623198f7c52766867f39b262dadc3ba080",
         "version": "1.0.0"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-blue-fantasy": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-blue-fantasy",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/blue-fantasy",
-        "treeSha256": "869daf4db300e569b273000d5361eb37aca20a0c15cc241bc63decc0f1a32ae1"
-      },
-      "manifestEntrySha256": "f2e4722c5317b64eebe87de54829536658203f8354f048c375bcb2da4d85caff",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "869daf4db300e569b273000d5361eb37aca20a0c15cc241bc63decc0f1a32ae1",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-dragon-heir": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-dragon-heir",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/dragon-heir",
-        "treeSha256": "553314a8f041d3728df5bb89cba9b4d5ce466114f7bf2d9eca0016e39b3b8d73"
-      },
-      "manifestEntrySha256": "b35e94e3121b5196f7095522ffb9b406ebeff74947dd17912b72098346451320",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "553314a8f041d3728df5bb89cba9b4d5ce466114f7bf2d9eca0016e39b3b8d73",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-maid-atelier": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 10,
-        "license": "CC-BY-NC-SA-4.0",
-        "packageName": "@dsh-external/dsh-client-ui-skin-maid-atelier",
-        "packageVersion": "0.0.1",
-        "path": "dsh-desktop/assets/skins/maid-atelier",
-        "treeSha256": "fc47009a4a974ad249538d951d8d154927d21099c7742106dfb5dbac9ce34ef9"
-      },
-      "manifestEntrySha256": "0927121550e1bcc168e95f6505cae767bf23d043ecc6b12fb6eab03d5a2b6ae2",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.0.1",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-external/dsh-client-ui-skin-maid-atelier",
-        "sha256": "fc47009a4a974ad249538d951d8d154927d21099c7742106dfb5dbac9ce34ef9",
-        "version": "0.0.1"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-miku": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-miku",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/miku",
-        "treeSha256": "84f5bebf2c20403559704b88a2929a5b7c41cffee388d2f83de155183763ba7f"
-      },
-      "manifestEntrySha256": "5fe8951c87493709ffceae5dd5a8aeb0a1e973fa45743ae55a9ea9e29581a1c9",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "84f5bebf2c20403559704b88a2929a5b7c41cffee388d2f83de155183763ba7f",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-minecraft": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-minecraft",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/minecraft",
-        "treeSha256": "72e59b7aa3b278b82254491e5660007811649e727cc6600fb62f4b9a864a1569"
-      },
-      "manifestEntrySha256": "8878a3471f251088c824f0ca61dd40c50f80183706eb15bd04999b3fbf4d59c4",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "72e59b7aa3b278b82254491e5660007811649e727cc6600fb62f4b9a864a1569",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-qq98": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-qq98",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/qq98",
-        "treeSha256": "3840c5a667a701067f8482b86242759c529f4f3e08b5ac347be968bfc409eea2"
-      },
-      "manifestEntrySha256": "de1932eb850dff2470dc4713475e1cefaec1993780f81e7c616a02150a319e47",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "3840c5a667a701067f8482b86242759c529f4f3e08b5ac347be968bfc409eea2",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-ths": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-ths",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/ths",
-        "treeSha256": "de8da0d32c1f5a1924e08a31ac37ffd61c85c4de9d463f5c03927f6c77c7d337"
-      },
-      "manifestEntrySha256": "8a531a58981f283de9f8b9683df46e16d525c2c107a46a4ed09498944747e913",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "de8da0d32c1f5a1924e08a31ac37ffd61c85c4de9d463f5c03927f6c77c7d337",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-trading": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-trading",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/trading",
-        "treeSha256": "3715e2e8e6846657fbc7fa46930bd273c9e95b25cd118791d4f6765900e30847"
-      },
-      "manifestEntrySha256": "d289de35b0bddb99d12027896528b42dbce4b86c060a1ff339001385254d2746",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "3715e2e8e6846657fbc7fa46930bd273c9e95b25cd118791d4f6765900e30847",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-whale-song": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-whale-song",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/whale-song",
-        "treeSha256": "6dd73928fd6542c023f0c126d02ee4aa994435f8110adb64681f6d228e82587a"
-      },
-      "manifestEntrySha256": "c6e37a129e579da59fa12f273feab2402a578d93f85a830df55e362e6b6e6729",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "6dd73928fd6542c023f0c126d02ee4aa994435f8110adb64681f6d228e82587a",
-        "version": "0.1.11"
-      },
-      "sourceCommit": null
-    },
-    "ui-skin-xp": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 7,
-        "license": "BSD-3-Clause",
-        "packageName": "@linxin666/dsh-client-ui-skin-xp",
-        "packageVersion": "0.1.11",
-        "path": "dsh-desktop/assets/skins/xp",
-        "treeSha256": "527077fbb20604ecc22dfe22c36390db5ce133c84cda212275d383952fe55420"
-      },
-      "manifestEntrySha256": "949e7ccf08c3541d26413656780d10d017b6b8bd785a48bcf9a3e2692c0e36ae",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.11",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "github",
-        "repository": "https://github.com/zhu1090093659/dsh-web-ui.git",
-        "sha256": "527077fbb20604ecc22dfe22c36390db5ce133c84cda212275d383952fe55420",
-        "version": "0.1.11"
       },
       "sourceCommit": null
     },
