@@ -116,10 +116,15 @@
 
 以下社区插件随安装包分发（`assets/plugins/`），每次启动自动同步进 web profile 并幂等注册；`pnpm` 安装第三方插件后导致模块双实例时，启动时的 heal 流程会自动清理遮蔽包并重建副本。
 
+> **EAC-CORE-SHELL-01 最小壳**：随包内置插件已收敛为 10 个（皮肤平台 14 包外迁、
+> `dsh-plugin-manager`/`dsh-terminal`/`dsh-file-drop-eac` 因与内核同名或官方已内置而退役）。
+> 插件启停管理改用官方侧栏 Plugins 页（`@deepseek-ai/dsh-client-ui-plugin-manager`）；
+> 终端改用官方侧栏终端（PTY）；拖入文件 → `@path` 引用由官方桌面端内置。
+> 表中其余插件为市场可选（推荐/外部层），不在随包清单内。
+
 | 插件 | 功能 | 设置入口 |
 | --- | --- | --- |
 | `dsh-unified-market` | 统一插件市场：三源合一（awesome-dsh-plugin.com 精选目录 + GitHub `dsh-plugin` 生态 + npm 检索），安装走试装验证 + 冲突预检；已下载插件更新面板（一键全部/逐个更新）、自动更新三档、更新进度窗口、市场自更新 | 设置 → 插件 → 统一市场 |
-| `dsh-plugin-manager`（v4） | 插件启停管理：列出配套/用户/核心插件与启用状态，不重启切换启停 | 设置 → 插件 → 管理 |
 | `dsh-message-rewind` | 对话回退（Trae 风格）：悬停任意用户消息 →「编辑并回退」→ 从该消息之前分叉新会话并自动重发编辑后内容，原会话保留 | 对话界面（消息 hover 按钮） |
 | `dsh-dock-settings` | Skills 与 MCP 管理：技能目录浏览（EAC 内置/用户来源徽标、打开目录）+ MCP 服务增删改（stdio / streamable-http），保存后一键重启生效 | 设置 → Skills 与 MCP |
 | `dsh-pet` | 桌面宠物：28 个透明动画的悬浮宠物，空闲呼吸、随机动作、屏幕游走 | 随包自动启用 |
