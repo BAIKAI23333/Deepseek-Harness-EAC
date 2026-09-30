@@ -322,6 +322,60 @@
   };
   var dshDesktop: any = (window as any).dshDesktop;
 
+  // ---------------------------------------------------------------------------
+  // __DSH_LOCALE__（SYNC-002 · 官方 LocaleBridge，preload-app.ts:102-105 逐字段
+  // 对齐）
+  //
+  // 官方形态：read() = ipcRenderer.invoke(DESKTOP_IPC.localeBootstrap)；
+  // onChange(locale) = ipcRenderer.send(DESKTOP_IPC.localeChanged, locale)
+  //（fire-and-forget）。消费者 dsh-client-locale（client.js:1504-1533）：激活时
+  // read() 经 parseLocaleBootstrap（client.js:18-19）严格校验 —— languages 必须
+  // 是 string[]、preference 键必须存在且为 string|null，形态错即 throw
+  // "locale: invalid native initialization data"；语言切换时 onChange(active) 上报。
+  //
+  // 通道映射：read() 经 WS call('locale.bootstrap')（Rust L1 本地拦截：返回壳
+  // 持久化 preference + 系统语言标签）。languages 按 detectBrowserLocale 的
+  // 浏览器侧语义（client.js:1476-1479）以 navigator.languages 优先、L1 系统标签
+  // 兜底合并去重 —— WebView2 的 navigator.languages 跟随 OS 用户语言列表，与
+  // 官方 app.getPreferredSystemLanguages() 等价且更完整；languages 保证非空
+  //（'en' 兜底，与官方 resolveInitialLocale 的默认语言一致）。preference 透传
+  // L1（string 或 null），壳无持久化时为 null（= 官方「自动选择」语义）。
+  // read() 失败不降级 —— 与官方一致（invoke 失败即异常，消费者据此终止激活）。
+  // onChange 经 WS send('locale.changed', {locale})（L1 拦截：持久化 preference
+  // + 重建托盘菜单文案）。官方 main.ts:711 的应用菜单/平台页刷新在 EAC 无对应
+  // 面（无原生应用菜单、无平台页），托盘菜单文案是语言回写的壳侧落点。
+  // ---------------------------------------------------------------------------
+  (window as any).__DSH_LOCALE__ = {
+    read: function (): Promise<{ languages: string[]; preference: string | null }> {
+      return call('locale.bootstrap', {}).then(function (r: any) {
+        var languages: string[] = [];
+        var seen: Record<string, boolean> = {};
+        var push = function (tag: unknown): void {
+          if (typeof tag !== 'string' || !tag || seen[tag]) return;
+          seen[tag] = true;
+          languages.push(tag);
+        };
+        try {
+          // 浏览器侧语言优先序（detectBrowserLocale 同源）；桥单测 vm 无
+          // navigator 时引用即 ReferenceError，捕获后走 L1 系统标签兜底。
+          var navList = (navigator && navigator.languages) || [];
+          for (var i = 0; i < navList.length; i++) push(navList[i]);
+          push((navigator && navigator.language) || '');
+        } catch (e) { /* 同上 */ }
+        var fromShell = r && Array.isArray(r.languages) ? r.languages : [];
+        for (var j = 0; j < fromShell.length; j++) push(fromShell[j]);
+        if (languages.length === 0) push('en');
+        return {
+          languages: languages,
+          preference: r && typeof r.preference === 'string' ? r.preference : null,
+        };
+      });
+    },
+    onChange: function (locale: string): void {
+      send('locale.changed', { locale: locale });
+    },
+  };
+
   // 页面异常 → 壳层日志。
   window.addEventListener('error', function (e) {
     try { send('log.page-error', { message: 'window.onerror: ' + ((e && (e.message || e.error)) || 'unknown') }); } catch (err) { /* 忽略 */ }

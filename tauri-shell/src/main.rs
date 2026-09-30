@@ -196,8 +196,9 @@ fn ui_text<'a>(zh: &'a str, en: &'a str) -> &'a str {
 #[cfg(test)]
 mod shell_tests {
     use super::{
-        is_sidecar_respawn_request, locale_tag_is_chinese, shell_http_status, ui_skin_asset,
-        ui_skin_manager_enabled, ui_skin_manager_snapshot, verified_resource_root,
+        is_sidecar_respawn_request, locale_tag_is_chinese, locale_tag_is_well_formed,
+        shell_http_status, ui_skin_asset, ui_skin_manager_enabled, ui_skin_manager_snapshot,
+        verified_resource_root,
     };
     use std::fs;
     use std::sync::Mutex;
@@ -212,6 +213,22 @@ mod shell_tests {
         assert!(!locale_tag_is_chinese("en-US"));
         assert!(!locale_tag_is_chinese("ja-JP"));
         assert!(!locale_tag_is_chinese(""));
+    }
+
+    #[test]
+    fn locale_tag_gate_matches_official_id_pattern() {
+        // 官方 LOCALE_ID_PATTERN：^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$。
+        assert!(locale_tag_is_well_formed("zh"));
+        assert!(locale_tag_is_well_formed("en"));
+        assert!(locale_tag_is_well_formed("zh-CN"));
+        assert!(locale_tag_is_well_formed("zh-Hant-TW"));
+        assert!(!locale_tag_is_well_formed("z")); // 主段过短
+        assert!(!locale_tag_is_well_formed("chineseee")); // 主段 9 > 8
+        assert!(!locale_tag_is_well_formed("zh_ CN")); // 非法字符
+        assert!(!locale_tag_is_well_formed(""));
+        assert!(!locale_tag_is_well_formed("zh_CN")); // 下划线不是分隔符
+        assert!(locale_tag_is_well_formed("zh-C")); // 子段 1-8 位均合法（含 1）
+        assert!(!locale_tag_is_well_formed("zh-CNbbbbbbbbb")); // 子段 >8
     }
 
     #[test]
@@ -629,6 +646,204 @@ fn throttle_save_window_state(app: &tauri::AppHandle) {
     *last = Some(now);
     save_window_state(app);
 }
+
+// ---------------------------------------------------------------------------
+// 壳语言态（SYNC-002 · __DSH_LOCALE__ 回写链，官方 preload-app.ts:102-105）
+//
+// 官方语义（main.ts:703-721）：localeBootstrap 返回 {languages, preference}，
+// preference 存 Host 设置文档（ns=locale）；localeChanged 后更新应用菜单/平台页。
+// EAC 权威源选型（任务卡要求调研后定点）：壳 L1 自持 locale-state.json ——
+//   * L1 现无任何语言持久化（CHINESE_UI OnceLock 启动探测 OS、只读，全程不变）；
+//   * sidecar settings.json 兼容层无语言键，且 L1 与 L2 并发写同一 JSON 有覆盖
+//     竞态 —— 本域内唯一写者单独成文件，天然无冲突；
+//   * 内核 Host 设置文档（ns=locale）是官方存储，但属禁改内核面，且壳 bootstrap
+//     时 web 服务可能未起，语言读取不得依赖它。
+// 文件放在壳设置目录（与 sidecar settings.json 同目录），路径解析与
+// dsh-desktop/lib/desktop/platform.ts 的 userDataDir() 逐分支对齐：
+// APPDATA / XDG_CONFIG_HOME 环境变量重定向即可隔离验证。preference 缺失 =
+// null（官方语义：自动选择，回退 OS 语言检测）。
+// ---------------------------------------------------------------------------
+
+/// 壳设置目录（= sidecar platform.ts userDataDir() 的 Rust 镜像）。
+fn shell_settings_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                // platform.ts 回退：homeDir\AppData\Roaming（homeDir = USERPROFILE）。
+                let home = std::env::var_os("USERPROFILE")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                home.join("AppData").join("Roaming")
+            });
+        base.join("Deepseek Harness EAC")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        home.join("Library").join("Application Support").join("deepseek-harness-eac")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                home.join(".config")
+            });
+        base.join("deepseek-harness-eac")
+    }
+}
+
+fn locale_state_path() -> std::path::PathBuf {
+    shell_settings_dir().join("locale-state.json")
+}
+
+/// 读持久化 preference（文件缺失/损坏/形态非法 → None = 自动选择）。
+fn load_locale_preference() -> Option<String> {
+    let raw = std::fs::read_to_string(locale_state_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .get("preference")
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string())
+}
+
+fn save_locale_preference(preference: &str) {
+    let path = locale_state_path();
+    let json = serde_json::json!({ "preference": preference }).to_string();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[shell] locale-state mkdir failed: {}", e);
+            return;
+        }
+    }
+    if let Err(e) = std::fs::write(&path, json) {
+        eprintln!("[shell] locale-state save failed: {}", e);
+    }
+}
+
+/// 壳 UI 语言：持久化 preference 命中 zh 系 → 中文；其余 tag → 英文
+///（官方 resolveDesktopStartupLocale：preference 归一到 zh/en，fallback en）；
+/// 无持久化 → OS 语言检测（既有 use_chinese_ui）。
+fn shell_prefers_chinese() -> bool {
+    match load_locale_preference() {
+        Some(p) => locale_tag_is_chinese(&p),
+        None => use_chinese_ui(),
+    }
+}
+
+/// 官方 LocaleSettings id 形态（client-locale LOCALE_ID_PATTERN）：
+/// /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/。send 型通道的输入闸门：
+/// 非法 tag 静默丢弃（官方 main.ts:713 对非 string 亦直接 return）。
+fn locale_tag_is_well_formed(tag: &str) -> bool {
+    let mut segments = tag.split('-');
+    let Some(primary) = segments.next() else { return false };
+    let primary_len = primary.len();
+    if !(2..=8).contains(&primary_len) || !primary.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
+    segments.all(|sub| {
+        let n = sub.len();
+        (1..=8).contains(&n) && sub.bytes().all(|b| b.is_ascii_alphanumeric())
+    })
+}
+
+/// 系统语言标签（locale.bootstrap 的 L1 languages 来源 = 官方
+/// app.getPreferredSystemLanguages 的 EAC 等价物；页面侧 navigator.languages
+/// 由桥合并优先，L1 单标签兜底）。
+#[cfg(windows)]
+fn system_language_tag() -> String {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut locale = [0u16; 85];
+    let len = unsafe { GetUserDefaultLocaleName(locale.as_mut_ptr(), locale.len() as i32) };
+    if len <= 1 {
+        return "en".to_string();
+    }
+    String::from_utf16_lossy(&locale[..len as usize - 1])
+}
+
+#[cfg(not(windows))]
+fn system_language_tag() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|value| {
+            value
+                .split(':')
+                .next()
+                .unwrap_or(&value)
+                .split('.')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|tag| !tag.is_empty())
+        .unwrap_or_else(|| "en".to_string())
+}
+
+/// 托盘菜单构建（初始 + locale.changed 重建共用；文案随壳语言态）。
+fn build_tray_menu(
+    app: &tauri::AppHandle,
+    zh: bool,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let text = |zh_text: &'static str, en_text: &'static str| if zh { zh_text } else { en_text };
+    let show = tauri::menu::MenuItem::with_id(
+        app,
+        "show",
+        text("显示 / 隐藏窗口", "Show / Hide Window"),
+        true,
+        None::<&str>,
+    )?;
+    let restart = tauri::menu::MenuItem::with_id(
+        app,
+        "restart",
+        text("重启 Web 服务", "Restart Web Service"),
+        true,
+        None::<&str>,
+    )?;
+    let feedback = tauri::menu::MenuItem::with_id(
+        app,
+        "feedback",
+        text("反馈建议", "Feedback"),
+        true,
+        None::<&str>,
+    )?;
+    let quit = tauri::menu::MenuItem::with_id(app, "quit", text("退出", "Quit"), true, None::<&str>)?;
+    let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
+    tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &feedback, &quit])
+}
+
+/// locale.changed → 重建托盘菜单（语言回写落点）。菜单操作要求主线程，经
+/// run_on_main_thread 派发；托盘未就绪（启动竞态）或重建失败只记日志 ——
+/// send 型通道无回复可承载失败。
+fn rebuild_tray_menu(app: &tauri::AppHandle) {
+    let zh = shell_prefers_chinese();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        match build_tray_menu(&handle, zh) {
+            Ok(menu) => match handle.tray_by_id(TRAY_ID) {
+                Some(tray) => {
+                    if let Err(e) = tray.set_menu(Some(menu)) {
+                        eprintln!("[shell] tray menu rebuild failed: {}", e);
+                    } else {
+                        println!("[shell] tray menu rebuilt (locale: {})", if zh { "zh" } else { "en" });
+                    }
+                }
+                None => eprintln!("[shell] tray not ready for locale rebuild"),
+            },
+            Err(e) => eprintln!("[shell] tray menu build failed: {}", e),
+        }
+    });
+}
+
+/// 托盘固定 id（locale.changed 重建时按 id 取回 TrayIcon 句柄）。
+const TRAY_ID: &str = "dsh-main-tray";
 
 // ---------------------------------------------------------------------------
 // 视口失同步自愈（issue：全屏窗口只有左侧 ~208px 条带被绘制、其余黑屏，
@@ -1335,6 +1550,31 @@ async fn handle_shell_method(
             let msg = params.get("message").and_then(|v| v.as_str()).unwrap_or("");
             eprintln!("[page-error] {}", msg);
             Ok(None)
+        }
+        // SYNC-002：官方 __DSH_LOCALE__ 面（preload-app.ts:102-105）。localeBootstrap
+        //（官方 main.ts:703）返回 {languages, preference}；languages 给 L1 系统标签
+        //（页面侧 navigator.languages 由桥合并优先），preference 透传持久化值
+        //（string | null，null = 自动选择）。
+        "locale.bootstrap" => {
+            let preference = load_locale_preference();
+            let languages = vec![system_language_tag()];
+            Ok(Some(reply(serde_json::json!({
+                "languages": languages,
+                "preference": preference,
+            }))))
+        }
+        // localeChanged（官方 main.ts:711）：send 型 fire-and-forget。校验官方
+        // id 形态后持久化 preference + 重建托盘菜单文案（官方的应用菜单/平台页
+        // 刷新在 EAC 无对应面）。无效输入静默忽略（官方对非 string 亦直接 return）。
+        "locale.changed" => {
+            if let Some(next) = params.get("locale").and_then(|v| v.as_str()) {
+                if locale_tag_is_well_formed(next) {
+                    save_locale_preference(next);
+                    eprintln!("[shell] locale.changed: {}", next);
+                    rebuild_tray_menu(app);
+                }
+            }
+            Ok(None) // send 型
         }
         _ => Err(()),
     }
@@ -2512,17 +2752,14 @@ fn main() {
             });
 
             // 托盘（L1）：显示/隐藏、重启服务、反馈、退出。
-            let app_handle = app.handle().clone();
-            let show = tauri::menu::MenuItem::with_id(app, "show", ui_text("显示 / 隐藏窗口", "Show / Hide Window"), true, None::<&str>)?;
-
-            let restart = tauri::menu::MenuItem::with_id(app, "restart", ui_text("重启 Web 服务", "Restart Web Service"), true, None::<&str>)?;
-            let feedback = tauri::menu::MenuItem::with_id(app, "feedback", ui_text("反馈建议", "Feedback"), true, None::<&str>)?;
-            let quit = tauri::menu::MenuItem::with_id(app, "quit", ui_text("退出", "Quit"), true, None::<&str>)?;
-            let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &feedback, &quit])?;
-            let mut tray = tauri::tray::TrayIconBuilder::new()
+            // 文案语言 = 持久化 preference ?? OS 检测（SYNC-002：设置页改语言
+            // 经 __DSH_LOCALE__.onChange → locale.changed → rebuild_tray_menu
+            // 按 id 取回本托盘重建菜单）。菜单事件挂在托盘上，重建菜单不丢。
+            let menu = build_tray_menu(app.handle(), shell_prefers_chinese())?;
+            let mut tray = tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu);
+            let app_handle = app.handle().clone();
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
@@ -2580,7 +2817,10 @@ fn main() {
                 }
             })
             .build(app)?;
-            println!("[shell] tray ready");
+            println!(
+                "[shell] tray ready (locale: {})",
+                if shell_prefers_chinese() { "zh" } else { "en" }
+            );
             Ok(())
         })
         .on_window_event(|window, event| {

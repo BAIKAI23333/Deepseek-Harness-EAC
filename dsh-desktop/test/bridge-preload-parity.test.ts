@@ -237,6 +237,72 @@ test('SYNC-001: keyboard bridge works on the official shortcuts probe path', asy
   assert.equal(close.params.revision, 'rev-1');
 });
 
+test('SYNC-002: __DSH_LOCALE__ bridge locked to the official LocaleBridge contract', async () => {
+  // 官方 LocaleBridge（client-locale bootstrap.d.ts）只暴露 read/onChange，
+  // 经 contextBridge.exposeInMainWorld('__DSH_LOCALE__', ...) 挂在 window 上、
+  // 与 window.dshDesktop 同层并列（preload-app.ts:102-105）—— 键集精确锁定，
+  // 防止实现漂移出非契约面。
+  assert.match(bridge, /\(window as any\)\.__DSH_LOCALE__ = \{/,
+    'bridge must expose window.__DSH_LOCALE__（官方 preload-app.ts:102-105 同名同层）');
+
+  const calls: Array<{ method: string; params: any }> = [];
+  let bootstrapReply: any = { languages: ['zh-CN'], preference: null };
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({
+      onNotify() {},
+      send(method: string, params: any) { calls.push({ method, params }); },
+      call(method: string, params: any) {
+        calls.push({ method, params });
+        return Promise.resolve(bootstrapReply);
+      },
+    }),
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document: { readyState: 'loading', documentElement: { setAttribute() {} }, addEventListener() {} },
+    navigator: { platform: 'Win32', languages: ['en-US', 'en'], language: 'en-US' },
+    setInterval() {},
+  });
+
+  const localeApi = window.__DSH_LOCALE__;
+  assert.deepEqual(Object.keys(localeApi).sort(), ['onChange', 'read'],
+    `LocaleBridge key drift: ${Object.keys(localeApi).join(',')}`);
+  assert.equal(typeof localeApi.read, 'function');
+  assert.equal(typeof localeApi.onChange, 'function');
+
+  // read()：languages = navigator.languages 优先 + L1 系统标签兜底（去重），
+  // preference 透传。形态必须过 parseLocaleBootstrap（client.js:18-19）：
+  // languages 为非空 string[]、preference 为 string|null（键必须存在）。
+  const boot = await localeApi.read();
+  assert.deepEqual(JSON.parse(JSON.stringify(boot)), {
+    languages: ['en-US', 'en', 'zh-CN'],
+    preference: null,
+  });
+  const bootstrapCall = calls.find((c) => c.method === 'locale.bootstrap');
+  assert.ok(bootstrapCall, 'read() must route through locale.bootstrap');
+
+  // read() 容错：壳回复缺 languages 字段 → 仍返回合法 LocaleBootstrap（不把
+  // 壳侧畸形形态外泄给消费者）；preference 非字符串归一为 null。
+  bootstrapReply = { preference: 'zh' };
+  const boot2 = await localeApi.read();
+  assert.ok(Array.isArray(boot2.languages) && boot2.languages.length >= 1,
+    'languages must stay a non-empty string[] even when the shell reply lacks it');
+  assert.ok(boot2.languages.every((s: unknown) => typeof s === 'string'));
+  assert.equal(boot2.preference, 'zh');
+  bootstrapReply = null;
+  assert.equal((await localeApi.read()).preference, null);
+
+  // onChange：官方 fire-and-forget（ipcRenderer.send 语义）→ send 帧（无 id、
+  // 不等回复），载荷 {locale}。
+  localeApi.onChange('zh');
+  const changed = calls.find((c) => c.method === 'locale.changed');
+  assert.ok(changed, 'onChange must route through locale.changed');
+  // vm realm 对象原型与宿主不同，deepStrictEqual 做引用比较 —— 先 JSON 归一
+  //（与上方 SYNC-001 测试同款处理）。
+  assert.deepEqual(JSON.parse(JSON.stringify(changed.params)), { locale: 'zh' });
+});
+
 test('rc.2 settings update consumer can initialize with the desktop bridge', async () => {
   const window: any = {
     addEventListener() {},
