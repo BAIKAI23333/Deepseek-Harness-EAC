@@ -1,7 +1,7 @@
 // GENERATED FILE — do not edit by hand.
 // Sources: .sync/plugins.json, plugin-distribution.json, and recommended pack registry (run generate-plugin-registry.mjs).
 // plugin-sync:update-sources {"better-sidebar":{"npm":"dsh-better-sidebar"},"computer-user":{"npm":"computer-user"},"dsh-navbar":{"npm":"@vlln/dsh-navbar"},"dsh-pet":{"npm":"dsh-pet"},"dsh-session-manager":{"npm":"dsh-session-manager"},"dsh-undo":{"github":"lire1131/dsh-undo-savepoint"},"mobile-fix":{"npm":"dsh-web-mobile-fix"},"offpeak":{"npm":"dsh-offpeak"},"picturereader":{"npm":"picturereader"},"soul-md":{"npm":"dsh-soul-md"},"think-zh-expand-eac":{"github":"jing-hy/dsh-think-zh-expand-eac"},"unified-market":{"npm":"dsh-unified-market"}}
-// plugin-sync:distribution {"builtinPluginIds":["balance","client-file-changes","compact","dsh-eac-skin-aurora","dsh-eac-skin-blue-fantasy","dsh-eac-skin-deep-whale-day-night","dsh-eac-skin-dragon-heir","dsh-eac-skin-inkwash","dsh-eac-skin-maid-atelier","dsh-eac-skin-miku","dsh-eac-skin-minecraft","dsh-eac-skin-qq98","dsh-eac-skin-ths","dsh-eac-skin-trading","dsh-eac-skin-whale-song","dsh-eac-skin-xp","dsh-ui-skin-loader","eac-core-bridge","eac-locale-compat","easy-setup","file-changes","file-drop-eac","plugin-manager","plugin-shield","plugin-wizard","settings-scroll-fix","terminal","unified-market","viewport-lock"],"recommendedPluginIds":["better-sidebar","change-review","composer-dynamic-island","conversation-tweaks","dock-settings","dsh-navbar","dsh-raw-html","dsh-session-manager","message-rewind","mobile-fix","offpeak","picturereader","prompt-custom","soul-md"],"recommendedPackId":"dev.dsh-eac.desktop-recommended","pluginClasses":{"agent-teams":"external","balance":"builtin","better-sidebar":"recommended","change-review":"recommended","client-file-changes":"builtin","compact":"builtin","composer-dynamic-island":"recommended","computer-user":"external","conversation-tweaks":"recommended","dock-settings":"recommended","dsh-dafeiyu":"external","dsh-eac-skin-aurora":"builtin","dsh-eac-skin-blue-fantasy":"builtin","dsh-eac-skin-deep-whale-day-night":"builtin","dsh-eac-skin-dragon-heir":"builtin","dsh-eac-skin-inkwash":"builtin","dsh-eac-skin-maid-atelier":"builtin","dsh-eac-skin-miku":"builtin","dsh-eac-skin-minecraft":"builtin","dsh-eac-skin-qq98":"builtin","dsh-eac-skin-ths":"builtin","dsh-eac-skin-trading":"builtin","dsh-eac-skin-whale-song":"builtin","dsh-eac-skin-xp":"builtin","dsh-feature-toggles":"external","dsh-navbar":"recommended","dsh-pet":"external","dsh-pet-settings":"external","dsh-phone":"external","dsh-raw-html":"recommended","dsh-session-manager":"recommended","dsh-stt":"external","dsh-ui-skin-loader":"builtin","dsh-undo":"external","dsh-webui-prompt-optimizer":"external","dsh-whale-widget":"external","eac-core-bridge":"builtin","eac-locale-compat":"builtin","easy-setup":"builtin","file-changes":"builtin","file-drop-eac":"builtin","float-window":"external","font-custom":"external","image-paste":"external","meow-smooth":"external","message-rewind":"recommended","mobile-fix":"recommended","offpeak":"recommended","openclaw-bridge":"external","picturereader":"recommended","plugin-manager":"builtin","plugin-shield":"builtin","plugin-wizard":"builtin","prompt-custom":"recommended","settings-groups":"external","settings-scroll-fix":"builtin","side-session":"external","soul-md":"recommended","terminal":"builtin","think-zh-expand-eac":"external","unified-market":"builtin","viewport-lock":"builtin"}}
+// plugin-sync:distribution {"builtinPluginIds":["balance","client-file-changes","compact","eac-core-bridge","eac-locale-compat","easy-setup","file-changes","file-drop-eac","plugin-manager","plugin-shield","plugin-wizard","settings-scroll-fix","terminal","unified-market","viewport-lock"],"recommendedPluginIds":["better-sidebar","change-review","composer-dynamic-island","conversation-tweaks","dock-settings","dsh-navbar","dsh-raw-html","dsh-session-manager","message-rewind","mobile-fix","offpeak","picturereader","prompt-custom","soul-md"],"recommendedPackId":"dev.dsh-eac.desktop-recommended","pluginClasses":{"agent-teams":"external","balance":"builtin","better-sidebar":"recommended","change-review":"recommended","client-file-changes":"builtin","compact":"builtin","composer-dynamic-island":"recommended","computer-user":"external","conversation-tweaks":"recommended","dock-settings":"recommended","dsh-dafeiyu":"external","dsh-feature-toggles":"external","dsh-navbar":"recommended","dsh-pet":"external","dsh-pet-settings":"external","dsh-phone":"external","dsh-raw-html":"recommended","dsh-session-manager":"recommended","dsh-stt":"external","dsh-undo":"external","dsh-webui-prompt-optimizer":"external","dsh-whale-widget":"external","eac-core-bridge":"builtin","eac-locale-compat":"builtin","easy-setup":"builtin","file-changes":"builtin","file-drop-eac":"builtin","float-window":"external","font-custom":"external","image-paste":"external","meow-smooth":"external","message-rewind":"recommended","mobile-fix":"recommended","offpeak":"recommended","openclaw-bridge":"external","picturereader":"recommended","plugin-manager":"builtin","plugin-shield":"builtin","plugin-wizard":"builtin","prompt-custom":"recommended","settings-groups":"external","settings-scroll-fix":"builtin","side-session":"external","soul-md":"recommended","terminal":"builtin","think-zh-expand-eac":"external","unified-market":"builtin","viewport-lock":"builtin"}}
 
 export const PLUGIN_SYNC_REGISTRY = {
   "distribution": {
@@ -9,20 +9,6 @@ export const PLUGIN_SYNC_REGISTRY = {
       "balance",
       "client-file-changes",
       "compact",
-      "dsh-eac-skin-aurora",
-      "dsh-eac-skin-blue-fantasy",
-      "dsh-eac-skin-deep-whale-day-night",
-      "dsh-eac-skin-dragon-heir",
-      "dsh-eac-skin-inkwash",
-      "dsh-eac-skin-maid-atelier",
-      "dsh-eac-skin-miku",
-      "dsh-eac-skin-minecraft",
-      "dsh-eac-skin-qq98",
-      "dsh-eac-skin-ths",
-      "dsh-eac-skin-trading",
-      "dsh-eac-skin-whale-song",
-      "dsh-eac-skin-xp",
-      "dsh-ui-skin-loader",
       "eac-core-bridge",
       "eac-locale-compat",
       "easy-setup",
@@ -48,19 +34,6 @@ export const PLUGIN_SYNC_REGISTRY = {
       "conversation-tweaks": "recommended",
       "dock-settings": "recommended",
       "dsh-dafeiyu": "external",
-      "dsh-eac-skin-aurora": "builtin",
-      "dsh-eac-skin-blue-fantasy": "builtin",
-      "dsh-eac-skin-deep-whale-day-night": "builtin",
-      "dsh-eac-skin-dragon-heir": "builtin",
-      "dsh-eac-skin-inkwash": "builtin",
-      "dsh-eac-skin-maid-atelier": "builtin",
-      "dsh-eac-skin-miku": "builtin",
-      "dsh-eac-skin-minecraft": "builtin",
-      "dsh-eac-skin-qq98": "builtin",
-      "dsh-eac-skin-ths": "builtin",
-      "dsh-eac-skin-trading": "builtin",
-      "dsh-eac-skin-whale-song": "builtin",
-      "dsh-eac-skin-xp": "builtin",
       "dsh-feature-toggles": "external",
       "dsh-navbar": "recommended",
       "dsh-pet": "external",
@@ -69,7 +42,6 @@ export const PLUGIN_SYNC_REGISTRY = {
       "dsh-raw-html": "recommended",
       "dsh-session-manager": "recommended",
       "dsh-stt": "external",
-      "dsh-ui-skin-loader": "builtin",
       "dsh-undo": "external",
       "dsh-webui-prompt-optimizer": "external",
       "dsh-whale-widget": "external",
@@ -297,214 +269,6 @@ export const PLUGIN_SYNC_REGISTRY = {
       },
       "syncMode": "metadata-only"
     },
-    "dsh-eac-skin-aurora": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-aurora",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-aurora",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-aurora",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-blue-fantasy": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-blue-fantasy",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-blue-fantasy",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-blue-fantasy",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-deep-whale-day-night": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-deep-whale-day-night",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-deep-whale-day-night",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-deep-whale-day-night",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-dragon-heir": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-dragon-heir",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-dragon-heir",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-dragon-heir",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-inkwash": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-inkwash",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-inkwash",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-inkwash",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-maid-atelier": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-maid-atelier",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-maid-atelier",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-maid-atelier",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-miku": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-miku",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-miku",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-miku",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-minecraft": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-minecraft",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-minecraft",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-minecraft",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-qq98": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-qq98",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-qq98",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-qq98",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-ths": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-ths",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-ths",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-ths",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-trading": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-trading",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-trading",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-trading",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact, then security-hardened in EAC by removing its remote-script JSONP path; local tree digest is pinned in plugins.lock.json"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-whale-song": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-whale-song",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-whale-song",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-whale-song",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
-    "dsh-eac-skin-xp": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/skin-xp",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-xp",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/skin-xp",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
-    },
     "dsh-feature-toggles": {
       "class": "manual",
       "kind": "plugin",
@@ -639,22 +403,6 @@ export const PLUGIN_SYNC_REGISTRY = {
         "repository": "https://github.com/BAIKAI23333/dsh-stt"
       },
       "syncMode": "mirror"
-    },
-    "dsh-ui-skin-loader": {
-      "class": "internal",
-      "kind": "plugin",
-      "packageName": "@dsh-eac/ui-skin-loader",
-      "path": "dsh-desktop/assets/plugins/dsh-ui-skin-loader",
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "source": {
-        "kind": "internal",
-        "name": "@dsh-eac/ui-skin-loader",
-        "reason": "maintained in the DSH-EAC ui-skin-loader repository; vendored from the locally verified v1.1.0 release artifact (SHA-256 checked against the local release manifest)"
-      },
-      "syncMode": "manual"
     },
     "dsh-undo": {
       "class": "follow-upstream",

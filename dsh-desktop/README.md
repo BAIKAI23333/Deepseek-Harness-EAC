@@ -19,7 +19,7 @@
 - ✅ **会话删除与归档管理（v4）**：会话行菜单「删除对话」+ 设置内归档恢复/删除面板（官方只有归档，运行时补丁幂等打通全链路）
 - ✅ **微信 ClawBot / OpenClaw 桥（v4）**：设置页「ClawBot」栏扫码绑定微信官方 ClawBot 小程序，微信里直接驱动常驻 DSH 会话（每用户独立会话/工作区/白名单）；OpenAI 兼容端点供 OpenClaw 网关接入
 - ✅ **会话完成系统通知**：agent 任务跑完时弹 Windows 系统通知，点击回到窗口
-- ✅ **界面皮肤**：v6 通过 Skin manager 按槽位加载精确锁定的 `system.default` artifact；默认内容源码归 `dsh-desktop-eac-default-skins`，EAC 只装配 pinned artifact，并保留一版紧急回退开关。
+- ✅ **界面皮肤（市场可选）**：皮肤不随包内置（EAC-CORE-SHELL-01），最小壳为宿主原生外观；皮肤经统一市场按需安装，遵循 `dsh.ecosystem.ui-skin-loader/v1` 公约。壳层 Skin manager 的 boot/recovery 回退资源保留（ADR 0010）。
 - ✅ **内置社区插件套件**（v2.0 起，详见「内置社区插件」章节）：插件市场 / 外置视觉模型 / 长期记忆 / soul.md 人设卡 / 移动端适配修复，全部随包分发、开箱即用
 - ✅ **崩溃急救与撤销（v4，dsh-undo-savepoint）**：配置与插件代码树快照、undo/redo、一键安全模式、密钥脱敏 vault —— 配置改坏、dsh 起不来也能救
 - ✅ **插件启停管理（v4）**：设置页「插件 → 管理」不重启切换任意插件启停（含默认禁用的大肥鱼桌宠）
@@ -107,26 +107,10 @@
 
 ## 界面皮肤
 
-- 设置页新增「皮肤」标签页：内置 10 款 Web UI 皮肤，卡片式网格展示（名称/简介/主色/作者/出处与许可角标），当前皮肤高亮。
-- **默认皮肤即"不启用任何皮肤"**（原生外观）：10 款皮肤默认全部以 `disabled: true` 注册，无需改动即可保持默认外观；选中某款后其余自动禁用（互斥切换），「恢复默认皮肤」一键还原。
-- 切换在设置页即时生效于配置，**重启 Web 服务后生效**（服务重启由桌面端自动完成）。
-- 机制：皮肤是 browser-only 的 dsh client 插件（`window.__ModuleLoader__.load({id, factory})`），桌面端启动时把 `assets/skins/` 下皮肤包同步进 web profile 的 `node_modules`，并以 `ui-skin-*` 行注册到 `cordis.patch.yml`（幂等，已有行不重写，保留用户选择）；切换即重写这些行的 `disabled` 标记，配套插件 `@deepseek-ai/dsh-skin-switch`（host 半边 Typert Remote + 设置页 tab）负责列出/切换/恢复。
-- **内置皮肤一览**：
-
-| 皮肤 | 出处 | 许可 |
-| --- | --- | --- |
-| xp（Windows XP 风格） | [dsh-web-ui](https://github.com/zhu1090093659/dsh-web-ui) | BSD-3-Clause |
-| qq98（QQ 经典 98 风格） | 同上 | BSD-3-Clause |
-| ths（同花顺风格） | 同上 | BSD-3-Clause |
-| blue-fantasy（蓝幻） | 同上 | BSD-3-Clause |
-| dragon-heir（龙裔） | 同上 | BSD-3-Clause |
-| minecraft（我的世界） | 同上 | BSD-3-Clause |
-| trading（交易风格） | 同上 | BSD-3-Clause |
-| whale-song（鲸歌） | 同上 | BSD-3-Clause |
-| miku（初音未来） | 同上 | BSD-3-Clause |
-| maid-atelier（深海女仆工坊） | [dsh-deep-whale](https://github.com/Small-tailqwq/dsh-deep-whale) | **CC BY-NC-SA 4.0**（禁止商用） |
-
-- 皮肤来源与版权：dsh-web-ui 九款皮肤包随包分发 `LICENSE`（BSD-3-Clause，出处/作者字段见皮肤卡片与包内元数据）；maid-atelier 为衍生创作（角色原作：上善；DeepSeek 元素二次设计：ZipZipPipe；本皮肤：Small-tailqwq），完整署名链见包内 `NOTICE`，整体仅限非商业使用。各皮肤包的 `LICENSE`/`NOTICE`/`README` 随同步一并分发到 web profile 的 `node_modules` 中。
+- **皮肤不随包内置**（EAC-CORE-SHELL-01）：宿主最小壳不再携带任何皮肤或皮肤加载器，安装后即为宿主原生外观。
+- 皮肤改为**市场可选包**：在「设置 → 插件 → 统一市场」中按需安装 `@dsh-eac/ui-skin-loader` 与任意公约皮肤；安装即写入 profile bundles，加载器控制台负责发现/互斥切换/持久化/故障隔离。
+- 皮肤遵循弱约束公约 `dsh.ecosystem.ui-skin-loader/v1`（发现登记、全局至多一个激活、退出不可观测）；皮肤索引与制品由 Mojobox 目录提供，Market Core 据此安装。
+- 旧版「内置 10 款皮肤 + `dsh-skin-switch`」链路已于 M2/#415 退役；老 profile 残留的行/包副本/bundles 成员由退役清理兜底（见 `lib/desktop/companion-sync.ts` 的 `RETIRED_BUILTIN_PLUGINS`）。
 
 ## 内置社区插件（v2.0）
 

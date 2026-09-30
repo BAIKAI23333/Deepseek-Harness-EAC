@@ -57,71 +57,6 @@
       "patched": true
     },
     {
-      "id": "dsh-eac-skin-aurora",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-aurora",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-blue-fantasy",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-blue-fantasy",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-deep-whale-day-night",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-deep-whale-day-night",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-dragon-heir",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-dragon-heir",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-inkwash",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-inkwash",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-maid-atelier",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-maid-atelier",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-miku",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-miku",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-minecraft",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-minecraft",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-qq98",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-qq98",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-ths",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-ths",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-trading",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-trading",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-whale-song",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-whale-song",
-      "patched": true
-    },
-    {
-      "id": "dsh-eac-skin-xp",
-      "path": "dsh-desktop/assets/plugins/dsh-eac-skin-xp",
-      "patched": true
-    },
-    {
       "id": "dsh-feature-toggles",
       "path": "dsh-desktop/assets/plugins/dsh-feature-toggles",
       "patched": false
@@ -159,11 +94,6 @@
     {
       "id": "dsh-stt",
       "path": "dsh-desktop/assets/plugins/dsh-stt",
-      "patched": false
-    },
-    {
-      "id": "dsh-ui-skin-loader",
-      "path": "dsh-desktop/assets/plugins/dsh-ui-skin-loader",
       "patched": false
     },
     {

@@ -280,25 +280,25 @@ test('#416 回归：不同 scope 的同名包不再互相塌成一行', () => {
 
 test('#416 回归：canonical 包名解析（已知包走台账 id，未知 scoped 规范化全名）', () => {
   const canonical = state.canonicalBundleId as (name: string) => string;
-  assert.equal(canonical('@dsh-eac/skin-aurora'), 'dsh-eac-skin-aurora',
-    'EAC 皮肤包的行 id 不是去 scope 的短名（skin-aurora），而是台账 id');
-  assert.equal(canonical('@dsh-eac/ui-skin-loader'), 'dsh-ui-skin-loader', 'loader 行 id 与包名不同名');
+  assert.equal(canonical('@deepseek-ai/dsh-plugin-manager'), 'plugin-manager',
+    '已登记 scoped 包的行 id 走台账 id，不是去 scope 的短名');
+  assert.equal(canonical('@deepseek-ai/dsh-terminal'), 'terminal', '已登记 scoped 包的行 id 走台账 id');
   assert.equal(canonical('@vlln/dsh-navbar'), 'dsh-navbar', '推荐包走台账 id');
   assert.equal(canonical('@deepseek-ai/dsh-web-app'), 'dsh-web-app', '内核骨架保持现有短名语义');
   assert.equal(canonical('@evil/dsh-navbar'), 'scoped-406576696c2f6473682d6e6176626172', '未登记 scoped 包使用无碰撞编码，绝不折成别人的 id');
   assert.equal(canonical('dsh-community-thing'), 'dsh-community-thing', '无 scope 包名即 id');
 });
 
-test('#416 回归：已知包（皮肤平台 / 推荐包）不被当成外部层规划', () => {
+test('#416 回归：已知包（内置 / 推荐包）不被当成外部层规划', () => {
   const plan = state.externalDefaultDisabledPlan({
-    bundles: ['@dsh-eac/ui-skin-loader', '@dsh-eac/skin-aurora', '@vlln/dsh-navbar', '@deepseek-ai/dsh-web-app'],
+    bundles: ['@deepseek-ai/dsh-plugin-manager', '@vlln/dsh-navbar', '@deepseek-ai/dsh-web-app'],
     isRegistered: () => false,
     distributionClasses: classes,
     builtinIds: registry.DISTRIBUTION_BUILTIN_PLUGIN_IDS,
     recommendedIds: registry.RECOMMENDED_PACK_PLUGIN_IDS,
     // 刻意不给 skipIds：canonical 分级必须自己立得住（跳过只靠分级表与内核白名单）
   }) as { id: string; name: string }[];
-  assert.deepEqual(plan, [], '皮肤平台 / 推荐包 / 内核骨架都不得进默认禁用清单');
+  assert.deepEqual(plan, [], '内置包 / 推荐包 / 内核骨架都不得进默认禁用清单');
 });
 
 test('#416 回归：注册表缺失时，companion 的 raw/bare/canonical 三种 id 都能排除', () => {

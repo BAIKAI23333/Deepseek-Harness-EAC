@@ -319,26 +319,10 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 走 patch 行（非 bundles）：用户可在「设置 → 插件 → 管理」关闭；
   // 其夹带 patch 是普通 insert 行，本行不会被 removeBundledRowDuplicates 去重。
   { id: 'think-zh-expand-eac', name: 'dsh-think-zh-expand-eac', dir: 'dsh-think-zh-expand-eac' },
-  // —— M2/#415：皮肤平台（loader + 13 款公约皮肤）——
-  // 与上面的配套插件不同：这些包的 package.json 声明了 `dsh.bundle.patch`，
-  // 必须在 profile bundles 里装载（BUNDLED_BUILTIN_PLUGINS，见 profile.ts），
-  // 因此同步器只负责「把包拷进 profile node_modules」，不写 overlay 行
-  //（bundled.includes(p.name) 分支跳过；否则 duplicate loader entry id）。
-  // 行 id 就是各自 bundle 补丁层的 entry id == settings 命名空间。
-  { id: 'dsh-ui-skin-loader', name: '@dsh-eac/ui-skin-loader', dir: 'dsh-ui-skin-loader' },
-  { id: 'dsh-eac-skin-aurora', name: '@dsh-eac/skin-aurora', dir: 'dsh-eac-skin-aurora' },
-  { id: 'dsh-eac-skin-blue-fantasy', name: '@dsh-eac/skin-blue-fantasy', dir: 'dsh-eac-skin-blue-fantasy' },
-  { id: 'dsh-eac-skin-deep-whale-day-night', name: '@dsh-eac/skin-deep-whale-day-night', dir: 'dsh-eac-skin-deep-whale-day-night' },
-  { id: 'dsh-eac-skin-dragon-heir', name: '@dsh-eac/skin-dragon-heir', dir: 'dsh-eac-skin-dragon-heir' },
-  { id: 'dsh-eac-skin-inkwash', name: '@dsh-eac/skin-inkwash', dir: 'dsh-eac-skin-inkwash' },
-  { id: 'dsh-eac-skin-maid-atelier', name: '@dsh-eac/skin-maid-atelier', dir: 'dsh-eac-skin-maid-atelier' },
-  { id: 'dsh-eac-skin-miku', name: '@dsh-eac/skin-miku', dir: 'dsh-eac-skin-miku' },
-  { id: 'dsh-eac-skin-minecraft', name: '@dsh-eac/skin-minecraft', dir: 'dsh-eac-skin-minecraft' },
-  { id: 'dsh-eac-skin-qq98', name: '@dsh-eac/skin-qq98', dir: 'dsh-eac-skin-qq98' },
-  { id: 'dsh-eac-skin-ths', name: '@dsh-eac/skin-ths', dir: 'dsh-eac-skin-ths' },
-  { id: 'dsh-eac-skin-trading', name: '@dsh-eac/skin-trading', dir: 'dsh-eac-skin-trading' },
-  { id: 'dsh-eac-skin-whale-song', name: '@dsh-eac/skin-whale-song', dir: 'dsh-eac-skin-whale-song' },
-  { id: 'dsh-eac-skin-xp', name: '@dsh-eac/skin-xp', dir: 'dsh-eac-skin-xp' },
+  // —— EAC-CORE-SHELL-01：皮肤平台（loader + 13 款公约皮肤）已外迁 ——
+  // 宿主最小壳不再随包皮肤/加载器；皮肤改为市场可选包（Market Core 按需
+  // 安装，安装即写 profile bundles）。老 profile 的包副本/patch 行由
+  // RETIRED_BUILTIN_PLUGINS 兜底清理（见下方清单）。
 ];
 
 export function companionPluginsForPlatform(platform: NodeJS.Platform = 'win32'): CompanionPluginDef[] {
@@ -600,6 +584,24 @@ export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
   // M2/#415：旧链播种的 10 款 `ui-skin-*` 皮肤残留（见上方迁移清单）。
   ...LEGACY_UI_SKIN_RESIDUE,
+  // EAC-CORE-SHELL-01：M2/#415 曾随包预装的皮肤平台（loader + 13 款公约
+  // 皮肤）已外迁为市场可选包。老 profile 残留的 bundles 成员 / patch 行 /
+  // 包副本由本清单兜底清理，避免「行在包被清」或 bundles 成员指空拖垮
+  // 插件树。皮肤改由 Market Core 安装（安装即写 profile bundles）。
+  { id: 'dsh-ui-skin-loader', name: '@dsh-eac/ui-skin-loader' },
+  { id: 'dsh-eac-skin-aurora', name: '@dsh-eac/skin-aurora' },
+  { id: 'dsh-eac-skin-blue-fantasy', name: '@dsh-eac/skin-blue-fantasy' },
+  { id: 'dsh-eac-skin-deep-whale-day-night', name: '@dsh-eac/skin-deep-whale-day-night' },
+  { id: 'dsh-eac-skin-dragon-heir', name: '@dsh-eac/skin-dragon-heir' },
+  { id: 'dsh-eac-skin-inkwash', name: '@dsh-eac/skin-inkwash' },
+  { id: 'dsh-eac-skin-maid-atelier', name: '@dsh-eac/skin-maid-atelier' },
+  { id: 'dsh-eac-skin-miku', name: '@dsh-eac/skin-miku' },
+  { id: 'dsh-eac-skin-minecraft', name: '@dsh-eac/skin-minecraft' },
+  { id: 'dsh-eac-skin-qq98', name: '@dsh-eac/skin-qq98' },
+  { id: 'dsh-eac-skin-ths', name: '@dsh-eac/skin-ths' },
+  { id: 'dsh-eac-skin-trading', name: '@dsh-eac/skin-trading' },
+  { id: 'dsh-eac-skin-whale-song', name: '@dsh-eac/skin-whale-song' },
+  { id: 'dsh-eac-skin-xp', name: '@dsh-eac/skin-xp' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -632,11 +634,26 @@ function retireRemovedBuiltinPlugins(profileDirP: string): void {
     try {
       const pkgFile = path.join(profileDirP, 'package.json');
       const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'));
+      let changed = false;
       if (pkg.dependencies && pkg.dependencies[p.name]) {
         delete pkg.dependencies[p.name];
-        fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
+        changed = true;
         ctx.log('boot', `已清理退役内置插件 ${p.id} 的 package.json 依赖`);
       }
+      // bundles 成员同样必须清掉：bundle 成员指向已不在包体的包会让
+      // dsh-app-boot 的 bundle 准入失败（或与 L3 默认禁用规划互撞成
+      // duplicate loader entry id），拖垮插件树。外迁的皮肤平台正是
+      // 由 BUNDLED_BUILTIN_PLUGINS 预装进 bundles 的，故必须在此兜底。
+      const bundles = pkg?.dsh?.profile?.bundles;
+      if (Array.isArray(bundles)) {
+        const next = bundles.filter((entry: unknown) => entry !== p.name);
+        if (next.length !== bundles.length) {
+          pkg.dsh.profile.bundles = next;
+          changed = true;
+          ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile bundles 成员`);
+        }
+      }
+      if (changed) fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
     } catch { /* package.json 缺失/损坏则跳过 */ }
   }
 }

@@ -23,8 +23,13 @@ node scripts/plugin-ledger.mjs --report   # 只看汇总，跳过版本比对
 
 校验内容：结构合法（枚举、必填、`(id,line)` 唯一）；main 线每个
 package.json 的 `name`/`version` 与台账一致（**改版必须同步台账，否则 CI 红**）；
-`assets/{plugins,skins,agent-presets,sdk-plugins}` 下无孤儿目录；
+`assets/plugins` 下无孤儿目录；
 `origin=upstream` 必须有 `upstream.repository`，`unresolved` 必须有 `candidates`。
+
+> EAC-CORE-SHELL-01：`assets/skins` 与 `assets/sdk-plugins` 两个受控目录随
+> v6 Task 3.1（ADR 0006）剥离后即不再存在，校验范围已收敛为 `assets/plugins`；
+> 皮肤平台（loader + 13 款公约皮肤）亦于同期外迁为市场可选包，其 main 线条目
+> 已从台账移除（aio-v1 线历史保留）。
 
 ## 字段说明
 

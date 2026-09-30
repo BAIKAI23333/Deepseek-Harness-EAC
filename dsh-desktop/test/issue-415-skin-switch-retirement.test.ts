@@ -75,8 +75,8 @@ test('offline ledgers no longer carry skin-switch', () => {
   const builtinCount = distribution.plugins.filter((p) => p.distributionClass === 'builtin').length;
   assert.equal(policies.pluginDistribution.expectedCounts.builtin, builtinCount,
     'policies.expectedCounts.builtin 必须与 plugin-distribution 的 builtin 数一致');
-  assert.equal(builtinCount, 29,
-    '15 个内置插件 + M2 皮肤平台 14 个包（loader + 13 款公约皮肤，见 issue-415-loader-preinstall.test.ts）');
+  assert.equal(builtinCount, 15,
+    '15 个内置插件（皮肤平台 14 包已于 EAC-CORE-SHELL-01 外迁，不再随包）');
   // lock 的 manifestRevision 与被编辑后的 .sync/plugins.json 逐字节对应
   //（与 scripts/plugin-sync.mjs buildLock 的 sha256File 口径一致）。
   const lock = json<{ manifestRevision: string }>('.sync', 'plugins.lock.json');
@@ -113,7 +113,10 @@ test('staging drops the retired plugin but preserves the ADR 0010 manager fallba
   assert.ok(arrayMatch, 'BUILTIN_PLUGIN_DIRS 清单必须存在');
   const stagedDirs = (arrayMatch![1].match(/'([^']+)'/g) || []).map((s) => s.slice(1, -1));
   assert.equal(stagedDirs.includes('dsh-skin-switch'), false, '退役插件不得再随包装配');
-  assert.equal(stagedDirs.length, 14, '装配清单应为阶段 1-3 的 13 个内置插件 + M2 皮肤加载器（L1 控制面）');
+  // EAC-CORE-SHELL-01：皮肤平台（loader + 13 款皮肤）已外迁，装配清单收敛为
+  // 阶段 1-3 的 13 个内置插件（不含任何皮肤/加载器）。
+  assert.equal(stagedDirs.includes('dsh-ui-skin-loader'), false, '皮肤加载器不得再随包装配（已外迁）');
+  assert.equal(stagedDirs.length, 13, '装配清单应为阶段 1-3 的 13 个内置插件（皮肤平台已外迁）');
   // ADR 0010：壳层 ui-skin manager 钉版产物与 boot/recovery 回退资源必须随包。
   assert.match(stageScript, /ui-skin-manager/);
   assert.match(stageScript, /pinned UI skin manager artifacts staged/);
