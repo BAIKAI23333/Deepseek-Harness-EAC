@@ -66,12 +66,17 @@ export function auditLinuxBundle(root, options = {}) {
   if (!existsSync(scanRoot)) throw new Error(`Linux bundle scan root does not exist: ${scanRoot}`);
 
   const runtime = path.join(absoluteRoot, 'dsh-desktop', 'vendor', 'node', 'node');
-  const requiredNative = [
-    path.join(absoluteRoot, 'dsh-desktop', 'native', 'supervisor', 'index.node'),
-    path.join(absoluteRoot, 'dsh-desktop', 'native', 'snapshot', 'index.node'),
-  ];
+  // ISO-003（口径对齐）：进程隔离围栏载荷
+  //   dsh-desktop/native/supervisor/index.node
+  //   dsh-desktop/native/snapshot/index.node
+  // 当前**不随包**（stage-resources.mjs 的 NATIVE_MODULES=[]，ADR 0003 已随
+  // ADR 0006 裁废；native 源码与预编译产物仍由 git 追踪，等接回）。
+  // 曾经把它们列为「Linux 必需载荷」与装配面自相矛盾 —— 缺一件即 error，
+  // 而装配面根本不拷贝。现改为可选：存在则仍由下方统一 walk 校验 ELF/目标
+  // 架构（PE 或异架构仍报错），缺失不报错。接回隔离运行时（恢复
+  // NATIVE_MODULES）时，把这两条重新并入下面的必需载荷循环即可。
   const errors = [];
-  for (const file of [runtime, ...requiredNative]) {
+  for (const file of [runtime]) {
     if (!existsSync(file)) errors.push(`required Linux payload is missing: ${relativePath(absoluteRoot, file)}`);
   }
   if (process.platform !== 'win32' && existsSync(runtime) && (statSync(runtime).mode & 0o111) === 0) {

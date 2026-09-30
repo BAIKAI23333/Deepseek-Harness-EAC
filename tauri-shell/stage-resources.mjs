@@ -278,10 +278,15 @@ console.log('[stage] assets（v6 最简本体：图标 + WS 客户端 + skills�
     // 阶段 1（PR #392）：零外设依赖的试点插件
     'dsh-viewport-lock',
     'dsh-eac-locale-compat',
-    // 阶段 2：不依赖 window.dshDesktop 已删桥接面的 6 个 builtin 插件。
-    //（dsh-skin-switch 随 M2/#415 退役移出；其余阶段 1/2 项见各自行内清单。）
+    // 阶段 2：不依赖 window.dshDesktop 已删桥接面的 5 个 builtin 插件。
+    //（dsh-skin-switch 随 M2/#415 退役移出；dsh-eac-core-bridge 随 ISO-003
+    // 退役移出；其余阶段 1/2 项见各自行内清单。）
+    // ISO-003：eac-core-bridge 的端点生产者缺失 —— DSH_EAC_BRIDGE_URL/TOKEN
+    // 全仓零写入方（lib/desktop/proc.ts 的 childEnv() 不注入，插件 index.js
+    // 读不到端点即提前 return），随包且默认启用只会静默空转；本控制包（边界
+    // 收敛，ADR 0003 已裁废）下退役，不再随包装配。资产目录保留在
+    // assets/plugins/dsh-eac-core-bridge 不动，等进程隔离接回时恢复本行。
     'dsh-compact',
-    'dsh-eac-core-bridge',
     'dsh-easy-setup',
     'dsh-file-changes',
     'dsh-settings-scroll-fix',

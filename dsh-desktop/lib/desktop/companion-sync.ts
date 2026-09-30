@@ -132,10 +132,12 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 旧版/社区客户端插件的英文兼容层：跟随官方 locale 状态翻译固定 UI
   // 文案，不触碰会话、代码、终端、编辑器或用户输入。作为界面底座始终启用。
   { id: 'eac-locale-compat', name: 'dsh-eac-locale-compat', dir: 'dsh-eac-locale-compat' },
-  // VNext Core Bridge（受信组件，vnext-absorb Phase 2）：把隔离 SDK 插件的
-  // 工具/上下文经回环端点桥接进 dsh Agent（DSH_EAC_BRIDGE_URL/TOKEN 由
-  // sidecar 在拉起 dsh web 前注入）；必须随包分发并默认启用。
-  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge', dir: 'dsh-eac-core-bridge' },
+  // ISO-003：VNext Core Bridge（eac-core-bridge）已退役 —— 它曾在此默认启用，
+  // 但端点由 sidecar 注入的前提从未成立：DSH_EAC_BRIDGE_URL/TOKEN 全仓零
+  // 写入方（lib/desktop/proc.ts 的 childEnv() 不注入），插件读不到端点即提前
+  // return，随包且默认启用只会静默空转（ADR 0003 已随 ADR 0006 裁废）。历史
+  // profile 的行/包副本由 RETIRED_BUILTIN_PLUGINS 清理；资产目录保留在
+  // assets/plugins/dsh-eac-core-bridge 等进程隔离接回时恢复。
   // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
   // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
   // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
@@ -603,6 +605,12 @@ export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
   { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
   { id: 'file-drop-eac', name: 'dsh-file-drop-eac' },
+  // ISO-003：VNext Core Bridge 退役 —— 端点生产者缺失（DSH_EAC_BRIDGE_URL/
+  // TOKEN 全仓零写入方，lib/desktop/proc.ts 的 childEnv() 不注入），该插件
+  // 随包且默认启用却只静默空转；ADR 0003 已随 ADR 0006 裁废，进程隔离接回
+  // 前不再随包/默认启用。老 profile 的行/包副本/依赖项由本清单兜底清理；
+  // 资产目录保留在 assets/plugins/dsh-eac-core-bridge 等接回。
+  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
