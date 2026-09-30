@@ -1,11 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const read = (...parts: string[]): string => readFileSync(join(root, ...parts), 'utf8');
+// 递归收集目录下所有 .js 的仓库相对路径；目录不存在（已清除）返回空数组。
+const listJs = (dir: string, ...parts: string[]): string[] => {
+  const base = join(dir, ...parts);
+  if (!existsSync(base)) return [];
+  const out: string[] = [];
+  for (const entry of readdirSync(base, { withFileTypes: true })) {
+    const rel = join(...parts, entry.name);
+    if (entry.isDirectory()) out.push(...listJs(dir, rel));
+    else if (entry.name.endsWith('.js')) out.push(rel);
+  }
+  return out;
+};
 const main = read('tauri-shell', 'src', 'main.rs');
 const server = read('tauri-shell', 'sidecar', 'server.ts');
 const stubs = read('tauri-shell', 'sidecar', 'capability-stubs.ts');
@@ -91,4 +103,14 @@ test('WS JSON-RPC client remains a single staged source for the main window brid
 test('bundle integrity remains in build manifest generation and startup verification', () => {
   assert.match(stage, /buildBundleManifest|bundle-integrity\.js/);
   assert.match(server, /verifyBundle/);
+});
+
+// ADR 0006 v4「源码删除」裁决：supervisor / extension-host / recovery-center 的进程隔离
+// 运行时源码已剥出，本机残留的 tsc 编译产物（未被 git 跟踪）属死代码——require 闭包已断
+// （host-bootstrap.js 未跟踪、shared/protocol.js 已列 RETIRED_PATHS）。此处锁死不得回归。
+test('isolation runtime leaves no compiled .js residue', () => {
+  const residue = ['supervisor', 'extension-host', 'recovery-center'].flatMap((retired) =>
+    listJs(join(root, 'dsh-desktop'), 'lib', retired),
+  );
+  assert.deepEqual(residue, [], '隔离运行时源码已剥出，lib 下不得残留 .js 编译产物');
 });
