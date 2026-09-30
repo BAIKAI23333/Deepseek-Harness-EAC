@@ -23,13 +23,14 @@ const updater = require('../../updater') as {
 };
 
 export const DESKTOP_PROFILE = 'web-desktop';
-// 内置 bundle 插件（随应用内置分发、默认随 bundles 加载）：bundle 机制
-// 驱动 host + client 注入，overlay 配套行会被 removeBundledRowDuplicates
-// 去重（见 companion-sync.ts），故必须走 bundles 而非 patch 行。
-// dsh-raw-html —— VCP 视觉通感协议插件（消息 HTML 渲染为界面）。
-// v6 Task 3.1（ADR 0006 v3 · 严格模式）：内置 bundle 插件随 assets/plugins
-// 资产面剥出 —— 最简 profile 只含官方 @deepseek-ai/dsh-base + dsh-web-app
-//（纯净 boot 实测 200 可达）。Task 3.3 接回插件时恢复此清单。
+// 内置 bundle 插件（经 profile bundles 播种）：bundle 机制驱动 host + client
+// 注入，overlay 配套行会被 removeBundledRowDuplicates 去重（见
+// companion-sync.ts），故这类插件必须走 bundles 而非 patch 行。
+// 当前为空数组（ISO-005 复核）：v6 Task 3.1（ADR 0006）把内置插件资产剥出
+// assets/plugins，Task 3.3 起接回的随包插件走 COMPANION_PLUGINS 的配套行 /
+// 包拷贝路径，不经 bundles 播种 —— 最简 profile 只含官方
+// @deepseek-ai/dsh-base + dsh-web-app（纯净 boot 实测 200 可达）。这条链当前
+// 无成员，仅保留播种机制：将来确有声明 `dsh.bundle.patch` 的随包插件再登记。
 //
 // M2/#415（皮肤加载器接入）：皮肤平台曾在此清单（`@dsh-eac/ui-skin-loader`
 // 与 13 款公约皮肤包，逐包 SHA-256 本地校验）。
@@ -40,7 +41,7 @@ export const DESKTOP_PROFILE = 'web-desktop';
 export const UI_SKIN_PLATFORM_PACKAGES: string[] = [];
 export const BUNDLED_BUILTIN_PLUGINS: string[] = [...UI_SKIN_PLATFORM_PACKAGES];
 // 与官方 web profile 出厂模板一致（@deepseek-ai/dsh-base + dsh-web-app），
-// 外加内置 bundle 插件；仅用于全新 profile 播种。
+// 外加内置 bundle 插件（当前为空）；仅用于全新 profile 播种。
 export const DESKTOP_PROFILE_BUNDLES = ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...BUNDLED_BUILTIN_PLUGINS];
 
 /** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */

@@ -3,8 +3,8 @@
 // 安装形态（v5.4 单发行版双形态）：同一个安装包，安装器选择「完整版 / 精简版」。
 // 安装器（NSIS POSTINSTALL 钩子）把选择写入 <payload>/profile.txt（"full"/"lite"，
 // 便携包默认缺省 = full），companion-sync 启动时读取并把它作为「新行默认值」
-// —— 已有注册行不重写、用户选择优先（与 dsh-pet 默认禁用同一语义），因此
-// 精简版用户随时可在「设置 → 插件 → 管理 / 增强功能」启用完整功能。
+// —— 已有注册行不重写、用户选择优先（与配套行的 disabled 标记同一语义），因此
+// 精简版用户随时可在「设置 → 插件 → 管理」启用完整功能。
 
 import fs = require('node:fs');
 import path = require('node:path');
@@ -16,31 +16,31 @@ export const PROFILE_MARKER_FILE = 'profile.txt';
 /**
  * 精简版默认停用的配套插件（companion id）。
  *
- * 精简原则：保留修复核心体验（滚动/视口/设置）、安全兜底（保护中心/急救/
- * 压缩）、省钱（余额/峰谷）与市场管理；停用高门槛或重外围能力，全部可在
- * 设置页一键启用。
+ * 精简原则：只保留最简体验必需项 —— 修复核心体验（滚动/视口/设置）、安全
+ * 兜底（保护中心/压缩/文件回退）、省钱（余额/峰谷）与市场管理；高门槛或重
+ * 外围能力默认停用，全部可在设置页一键启用。
  *
- * 约束（install-profile.test.ts 守护）：
+ * ISO-005 收敛（当前为空数组）：停用对象只能是「随包的增强插件」，而随包面
+ * 收敛后（装配面 BUILTIN_PLUGIN_DIRS 9 项 = COMPANION_PLUGINS 9 项）这 9 个
+ * 全部是 ADR 0008 的 builtin（= onboarding CORE_PLUGIN_IDS），既被核心组锁定
+ * 停用路径（plugin-ops 拒绝停用），本身又正是精简版要保留的项：
+ *   viewport-lock 视口钳制 / settings-scroll-fix 设置滚动修复 /
+ *   compact 请求压缩 / plugin-shield 保护中心 / unified-market 市场管理 /
+ *   file-changes + client-file-changes 文件视图 / easy-setup 快速配置 /
+ *   eac-locale-compat 界面底座。
+ * 收敛前登记的 14 项（agent-teams / dsh-stt / dsh-phone / computer-user /
+ * dsh-dafeiyu / offpeak / change-review …）自 v6 Task 3.1 起已不随包（.sync
+ * 分级 recommended/external，市场按需安装），不再是本清单的合法成员 —— 它们
+ * 的「装完默认禁用」由 L3 外部层规划承接（plugin-manager-state）。
+ *
+ * 约束（ISO-005 复核）：
  *  - 必须是 COMPANION_PLUGINS 的子集；
  *  - 不得命中 scripts/onboarding 的 CORE_PLUGIN_IDS（核心组锁定停用路径，
- *    核心插件即便在精简版也保持默认启用 —— 如 terminal、compact）。
+ *    核心插件即便在精简版也保持默认启用 —— 如 compact）。
+ * 当前 9 项随包插件全部落在上述两条约束内，故清单为空；将来有「随包但默认关」
+ * 的增强插件接回时在此登记。
  */
-export const LITE_DEFAULT_DISABLED: readonly string[] = [
-  'agent-teams',                 // 多智能体团队协作（高级玩法）
-  'openclaw-bridge',             // 微信 ClawBot / OpenClaw 桥（集成类）
-  'dsh-phone',                   // 手机桥（LAN 配对 + 反向代理）
-  'computer-user',               // 读屏 + 鼠标键盘自动化（高级玩法）
-  'dsh-dafeiyu',                 // 大肥鱼桌宠（含 49MB PyInstaller helper）
-  'dsh-stt',                     // 本地离线语音识别（启用后下载 SenseVoice 模型 ~230MB）
-  'dsh-pet-settings',            // 桌宠设置分区（桌宠默认停用时无对象可管）
-  'composer-dynamic-island',     // 输入灵动岛（改变输入区形态）
-  'side-session',                // 侧边临时会话
-  'float-window',                // 会话浮窗分屏
-  'message-rewind',              // 消息回退编辑
-  'prompt-custom',               // 自定义注入提示词
-  'dsh-webui-prompt-optimizer',  // 提示词优化器
-  'change-review',               // AI 变更审核
-];
+export const LITE_DEFAULT_DISABLED: readonly string[] = [];
 
 export function isLiteDisabled(id: string, profile: InstallProfile): boolean {
   return profile === 'lite' && LITE_DEFAULT_DISABLED.includes(id);
