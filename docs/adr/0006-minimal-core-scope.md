@@ -18,6 +18,9 @@
   模块作为“插口”。
 - **验证数字不沿用历史快照。** v2/v3/v4/v5 各节的计数只记录当时状态；
   Task 3.1 最终结果以 `reports/verify/v6-task-3.1-final.md` 的命令输出为准。
+- **ADR 0003 已由本文 v5/v6 取代。** `docs/adr/0003-plugin-isolation-architecture.md`
+  （插件进程隔离架构）现标注 **Superseded**，仅作历史设计记录，不再作为实现
+  依据（见 `工程控制/EAC-ISOLATION-SYNC-02`，2026-09-30）。
 
 ## 背景
 
