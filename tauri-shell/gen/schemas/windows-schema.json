@@ -177,6 +177,54 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the diagnose_environment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-diagnose-environment",
+          "markdownDescription": "Enables the diagnose_environment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the repair_environment command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-repair-environment",
+          "markdownDescription": "Enables the repair_environment command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the shell_ping command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-shell-ping",
+          "markdownDescription": "Enables the shell_ping command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the sidecar_call command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-sidecar-call",
+          "markdownDescription": "Enables the sidecar_call command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the diagnose_environment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-diagnose-environment",
+          "markdownDescription": "Denies the diagnose_environment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the repair_environment command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-repair-environment",
+          "markdownDescription": "Denies the repair_environment command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the shell_ping command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-shell-ping",
+          "markdownDescription": "Denies the shell_ping command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the sidecar_call command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-sidecar-call",
+          "markdownDescription": "Denies the sidecar_call command without any pre-configured scope."
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

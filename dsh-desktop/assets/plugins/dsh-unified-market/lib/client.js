@@ -976,7 +976,16 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
     return h('div', { className: 'mkts' },
       h('div', { className: 'mkts-sec' }, '📦 功能包',
         h('small', null, '把插件 + 预设 + 技能打包分发；声明官方内核兼容范围，官方版本升级后自动检出（思路借鉴 HMCL 整合包）。')),
-      compatBanner.length > 0 ? h('div', { className: 'mkts-health' },
+      // 功能包执行体（feature-pack CLI）属 ADR 0006「增值功能」剥出面，本版
+      // 客户端不携带。此时**不把内部错误原样弹给用户**（原实现直接显示
+      // "功能包 CLI 不可用：<路径>…" 并留下一排点了必报错的按钮），改为说明
+      // 现状 + 隐藏所有依赖 CLI 的入口。功能包市场（纯索引浏览，不依赖 CLI）
+      // 保留在下方。
+      data.error ? h('div', { className: 'mkts-health' },
+        h('div', { className: 'mkts-health-item' }, '本版客户端未随包提供「功能包」能力，本节暂不可用。'),
+        h('div', { className: 'mkts-health-item' }, '插件本身不受影响；如需导入/导出 .dshpack，请使用提供该能力的客户端版本。'),
+      ) : null,
+      data.error ? null : compatBanner.length > 0 ? h('div', { className: 'mkts-health' },
         h('div', { className: 'mkts-health-item mkts-hl-err' }, '官方内核 ' + (data.kernel || '未知') + ' 与以下功能包不兼容（迁移：安装兼容新版；回滚：恢复安装前状态）：'),
         compatBanner.map((p) => h('div', { className: 'mkts-update-row', key: p.id },
           h('span', null, p.name + '（v' + p.version + '）'), ' ',
@@ -985,9 +994,8 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
             onClick: () => { if (window.confirm('回滚到安装「' + p.name + '」之前的状态？')) runOp('pack.rollback', { id: p.id }, '回滚 ' + p.id) } }, '回滚'),
         )),
       ) : null,
-      data.error ? h('div', { className: 'mkts-err' }, '功能包 CLI 不可用：' + data.error + '（请确认本客户端在桌面壳内运行）') : null,
-      h('div', { className: 'mkts-sec' }, '已安装功能包', h('small', null, String((data.packs || []).length) + ' 个')),
-      data.phase === 'ready' && (data.packs || []).length === 0
+      data.error ? null : h('div', { className: 'mkts-sec' }, '已安装功能包', h('small', null, String((data.packs || []).length) + ' 个')),
+      data.error ? null : data.phase === 'ready' && (data.packs || []).length === 0
         ? h('div', { className: 'mkts-hint' }, '还没有安装功能包：在下方「导入 .dshpack」本地安装，或到「功能包市场」浏览安装。')
         : (data.packs || []).map((p) => h('div', { className: 'mkts-item', key: p.id },
             h('div', { className: 'mkts-avatar' }, (p.name || '?').slice(0, 1)),
@@ -1006,8 +1014,8 @@ window.__ModuleLoader__.load({ id: 'dsh-unified-market', factory: (require) => {
                 onClick: () => { if (window.confirm('卸载功能包「' + p.name + '」？（仅移除该包装配的插件/预设/技能，其余数据不动）')) runOp('pack.uninstall', { id: p.id }, '卸载 ' + p.id) } }, '卸载'),
             ),
           )),
-      h('div', { className: 'mkts-sec' }, '导入 / 安装'),
-      h('div', { className: 'mkts-cmdrow' },
+      data.error ? null : h('div', { className: 'mkts-sec' }, '导入 / 安装'),
+      data.error ? null : h('div', { className: 'mkts-cmdrow' },
         h('button', { className: 'mkts-cmdbtn mkts-cmdbtn-primary', disabled: running, onClick: () => pickFile('install', null) }, '导入 .dshpack 安装'),
         h('input', { ref: fileRef, type: 'file', accept: '.dshpack,application/zip', style: { display: 'none' }, onChange: onFile }),
       ),
