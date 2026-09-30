@@ -95,7 +95,10 @@ const bridgeTree = extractKeyTree(bridge, '(window as any).dshDesktop =');
 //   B. 已接回组 —— 随插件接回恢复的 EAC 面，锁定「接回的不得回退」；
 // 未接回的能力（menu / floatWindow / pluginWizard / balance* / recovery 等）
 // 显式列为「不得出现」，防止以接回为名把 v6 收敛成果整体回退。
-const ALWAYS_PRESENT = ['protocolVersion', 'locale', 'plugins', 'updates', 'windowControls', 'boot'];
+const ALWAYS_PRESENT = ['protocolVersion', 'locale', 'plugins', 'updates', 'windowControls', 'boot',
+  // SYNC-001：官方 DesktopKeyboardApi —— dsh-client-shortcuts 检测到
+  // data-platform 即硬依赖 keyboard（client.js:1854-1855），缺一即 throw。
+  'keyboard'];
 const RESTORED_BY_TASK_3_3 = ['pluginManager', 'guard', 'fileDrop', 'getPathForFile',
   'getInfo', 'revertFiles', 'openPath', 'openExternal'];
 // 依据 metaone01 2026-09-19 的裁决（按 ADR 0006）：
@@ -126,6 +129,112 @@ test('bridge keeps the introspection escape hatch for shell pages', () => {
   for (const k of ['_call', '_onReady']) {
     assert.ok(k in bridgeTree, `bridge introspection key missing: ${k}`);
   }
+});
+
+test('SYNC-001: data-platform marked and keyboard namespace locked to the official contract', () => {
+  // 强耦合实测（dsh-client-shortcuts/lib/client.js）：
+  //   :721-724  <html data-platform> 存在即 runtime='desktop'（否则 'web'）；
+  //   :1854-1855  desktop 态 keyboard===undefined → throw "Desktop keyboard
+  //   bridge unavailable"。两者必须同批在桥上就位，缺一官方 shortcuts 硬崩。
+  assert.match(bridge, /setAttribute\(['"]data-platform['"]/,
+    'bridge must mark <html data-platform>（官方 markDocumentPlatform 同语义）');
+  // 官方 DesktopKeyboardApi（native.d.ts）只暴露 subscribe / closeWindow ——
+  // 键集精确锁定，防止实现漂移出非契约面。
+  assert.deepEqual([...bridgeTree.keyboard].sort(), ['closeWindow', 'subscribe'],
+    `keyboard namespace drift: ${bridgeTree.keyboard.join(',')}`);
+});
+
+test('SYNC-001: keyboard bridge works on the official shortcuts probe path', async () => {
+  // 等价 WebView2 注入序列：桥在 document-start 跑，页面上下文只提供最小 DOM。
+  const attrs: Record<string, string> = {};
+  const windowKeydowns: Array<(e: unknown) => void> = [];
+  const calls: Array<{ method: string; params: any }> = [];
+  const window: any = {
+    addEventListener(type: string, fn: (e: unknown) => void) { if (type === 'keydown') windowKeydowns.push(fn); },
+    removeEventListener(type: string, fn: (e: unknown) => void) {
+      const i = windowKeydowns.indexOf(fn);
+      if (i >= 0) windowKeydowns.splice(i, 1);
+    },
+    __DSH_WS_RPC__: () => ({
+      onNotify() {},
+      send() {},
+      call: (method: string, params: any) => { calls.push({ method, params }); return Promise.resolve({ ok: true }); },
+    }),
+  };
+  const document: any = {
+    readyState: 'loading',
+    documentElement: { setAttribute: (k: string, v: string) => { attrs[k] = v; } },
+    addEventListener() {},
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document,
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+    setTimeout() {},
+  });
+
+  // data-platform：document-start 即标记，值域 'windows'（client.js detectEnvironment
+  // 以 /win/i 归一化 → platform='windows'，与官方 shortcuts 期望一致）。
+  assert.equal(attrs['data-platform'], 'windows');
+
+  // subscribe：返回 disposer，首订即挂 keydown 捕获（官方 preload-app.ts:19-36
+  // 的 ipcRenderer.on 形态）。
+  assert.equal(typeof window.dshDesktop.keyboard.subscribe, 'function');
+  assert.equal(typeof window.dshDesktop.keyboard.closeWindow, 'function');
+  const received: any[] = [];
+  const dispose = window.dshDesktop.keyboard.subscribe((input: unknown) => received.push(input));
+  assert.equal(typeof dispose, 'function');
+  assert.equal(windowKeydowns.length, 1, 'keydown capture must be armed on first subscribe');
+
+  // 主文档按键 → kind='keyboard'（DesktopShortcutInput 官方形态，secondCode
+  // 按官方主进程行为仅 chord 命中才出现，单键不含该键）。deepStrictEqual 会
+  // 对 vm realm 的对象原型做引用比较 —— 先 JSON 归一到宿主 realm 再比。
+  windowKeydowns[0]({ code: 'KeyK', ctrlKey: true, altKey: false, shiftKey: false, metaKey: false, repeat: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(received[0])), {
+    revision: 'eac-shortcut-revision-0',
+    kind: 'keyboard',
+    frameName: '',
+    code: 'KeyK',
+    control: true,
+    alt: false,
+    shift: false,
+    meta: false,
+    repeat: false,
+  });
+
+  // iframe 分支：activeElement 命中官方匹配集（preload-app.ts:21-24）→
+  // kind='iframe' + frameName=element.name。
+  document.activeElement = {
+    isConnected: true,
+    matches: (sel: string) => sel === 'iframe[data-sidebar-browser-frame], iframe[data-html-preview]',
+    name: 'preview-frame',
+  };
+  windowKeydowns[0]({ code: 'KeyW', ctrlKey: true, altKey: false, shiftKey: false, metaKey: false, repeat: false });
+  assert.equal(received[1].kind, 'iframe');
+  assert.equal(received[1].frameName, 'preview-frame');
+
+  // webview 分支（preload-app.ts:27-30）：frameName 取 name 属性。
+  document.activeElement = {
+    isConnected: true,
+    matches: (sel: string) => sel === 'webview[data-sidebar-browser-frame]',
+    getAttribute: (k: string) => (k === 'name' ? 'browser-lease-1' : null),
+  };
+  windowKeydowns[0]({ code: 'Escape', ctrlKey: false, altKey: false, shiftKey: false, metaKey: false, repeat: true });
+  assert.equal(received[2].kind, 'webview');
+  assert.equal(received[2].frameName, 'browser-lease-1');
+  assert.equal(received[2].repeat, true);
+
+  // disposer：退订后不再投递，最后一个退订卸下捕获。
+  dispose();
+  assert.equal(windowKeydowns.length, 0, 'keydown capture must be released after last unsubscribe');
+
+  // closeWindow：官方契约 Promise<void>；EAC 无修订校验，revision 透传
+  // win.close 帧（L1 记录）。
+  await window.dshDesktop.keyboard.closeWindow('rev-1');
+  const close = calls.find((c) => c.method === 'win.close');
+  assert.ok(close, 'closeWindow must route through win.close');
+  assert.equal(close.params.revision, 'rev-1');
 });
 
 test('rc.2 settings update consumer can initialize with the desktop bridge', async () => {

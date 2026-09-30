@@ -19,6 +19,47 @@
   var BAR_ID = '__dsh_desktop_chrome__';
   var BAR_HEIGHT = 36;
 
+  // ---------------------------------------------------------------------------
+  // data-platform（SYNC-001 · 官方 markDocumentPlatform 同语义）
+  //
+  // 官方 preload-platform.ts:10-17 在 <html> 标 process.platform，客户端
+  // dsh-client-shortcuts 的 detectEnvironment（client.js:721-724）见到该属性即判
+  // runtime='desktop'，缺失走 web 分支（桌面键位等能力全部失效）—— 这是官方
+  // client 包读取的桌面壳标记。Tauri 桥运行在页面层、无 process，用
+  // navigator.platform（WebView2 在 Windows 恒 'Win32'）+ userAgent 复核判定。
+  // 局限：UA 可被伪造误判，但本属性由壳在 document-start 注入、先于页面脚本，
+  // 页面自身没有伪造窗口期；对 shortcuts 仅影响平台专属默认键位。
+  //
+  // 取值域：'windows' | 'macos' | 'linux'（SYNC-001 任务卡指定，与
+  // detectEnvironment 的三个归一化分支对齐）。注：官方内核实际标的是
+  // process.platform（'win32'/'darwin'/'linux'），本值域对 shortcuts 等价
+  //（client.js 用 /win/i、/darwin|mac|.../ 归一化）；但 ui-layout/dockkit 的
+  // CSS 按 `data-platform='darwin'` 出 macOS 专属规则 —— 未来接 macOS 壳时
+  // darwin 一支应改标 'darwin' 而非 'macos'。取值必须先于 setAttribute 完成
+  //（markDocumentPlatform 内部先算 value 再标记）。
+  // ---------------------------------------------------------------------------
+  function detectShellPlatform(): 'windows' | 'macos' | 'linux' {
+    var platform = '';
+    var ua = '';
+    try { platform = String(navigator.platform || ''); } catch (e) { /* 桥单测 vm 无 navigator */ }
+    try { ua = String(navigator.userAgent || ''); } catch (e) { /* 同上 */ }
+    if (/win/iu.test(platform) || /Windows NT/iu.test(ua)) return 'windows';
+    if (/mac|iphone|ipad|darwin/iu.test(platform) || /Macintosh|Mac OS X/iu.test(ua)) return 'macos';
+    return 'linux';
+  }
+
+  function markDocumentPlatform(): void {
+    var value = detectShellPlatform();
+    var root = document.documentElement as HTMLElement | null;
+    if (!root) {
+      // 官方同款防御：初始化脚本可能先于文档根存在执行，延迟到 DOM ready。
+      document.addEventListener('DOMContentLoaded', function () { markDocumentPlatform(); }, { once: true });
+      return;
+    }
+    root.setAttribute('data-platform', value);
+  }
+  markDocumentPlatform();
+
   // 回环 WS JSON-RPC 客户端（单源：assets/ws-jsonrpc-client.js，Rust 壳在
   // initialization_script 序列中先注入本桥）。connect/queue/call/重连逻辑
   // 只存在于单源文件；这里只做钩子接线与语义别名。
@@ -46,7 +87,9 @@
   //
   // 面收敛依据（ADR 0006 v5）：只保留「官方保留的接口」——
   //   1. 官方 dshDesktop 契约（对照内核 apps/desktop/src/ipc.ts 的
-  //      DshDesktopApi：protocolVersion / locale / plugins / updates）；
+  //      DshDesktopApi：protocolVersion / keyboard / locale / plugins / updates；
+  //      keyboard 为 SYNC-001 接回 —— 官方 shortcuts 包检测到 data-platform
+  //      即硬依赖它）；
   //      其中 plugins.* 与 updates.* 的能力随最简本体剥出，按官方返回形态
   //      给出空实现（list → []，check → idle），接回时替换实现体即可。
   //   2. 壳最小控制面：windowControls（窗口控制，主窗 decorations(false)
@@ -60,9 +103,128 @@
     return Promise.reject(new Error('capability "' + capability + '" is not bundled in the v6 minimal core'));
   }
 
+  // ---------------------------------------------------------------------------
+  // keyboard（SYNC-001 · 官方 DesktopKeyboardApi，native.d.ts 逐字段对齐）
+  //
+  // 强耦合背景：dsh-client-shortcuts 检测到 data-platform 即 runtime='desktop'
+  // 并立即取 window.dshDesktop?.keyboard（client.js:1854-1855），缺失即
+  // throw "Desktop keyboard bridge unavailable" —— data-platform 与 keyboard
+  // 必须同批落地，缺一官方 shortcuts 包硬崩。
+  //
+  // 物理键捕获选型（SYNC-001 任务卡方案甲 · JS 层）：WebView2 无 Electron 的
+  // before-input-event；方案乙（L1 accelerator）需 Win32 键盘钩子并在壳层自建
+  // 键位解析与推送通道，改动面大、与页面聚焦态（本地控件优先消费）耦合困难。
+  // 改为页面层 window keydown 捕获监听（capture 态、只观察上报、绝不
+  // preventDefault/stopPropagation），就地组装官方 DesktopShortcutInput 分发
+  // 给 subscribe 的 listener。官方客户端在 desktop 态的 DOM keydown 只喂 fixed
+  // 动作（installKeyboard 的 native=true 分支，client.js:736），可配置键位一律
+  // 走原生推送 —— 两通道不重复分发，与官方 Electron 形态一致。
+  //
+  // 已知缺口：跨文档 guest（侧边栏浏览器框 iframe/webview）聚焦时按键不冒泡
+  // 到顶层 window；'iframe'/'webview' 分支按官方 preload-app.ts:21-31 的
+  // activeElement 匹配集组装形态，但捕获依赖顶层 keydown 到达。完整对齐官方
+  // 主进程级捕获需 L1 接管，留给后续 SYNC 任务。
+  // ---------------------------------------------------------------------------
+
+  // ShortcutRevision 运行时是 Branded<string>（编译期品牌，值即字符串）。EAC
+  // 无快捷键配置修订存储（官方由主进程 persistence 发布 revision，原生输入与
+  // 关窗指令携带同一值供客户端对账），给稳定占位串。官方 installNativeKeyboard
+  //（client.js:896）会丢弃 revision 与其快照不一致的输入 —— 占位阶段原生输入
+  // 只抵达 listener 闸门、不进入键位分发，功能对齐留给 dshDesktop.shortcuts
+  // 接回任务。
+  var SHORTCUT_REVISION_PLACEHOLDER = 'eac-shortcut-revision-0';
+  var keyboardListeners: ((input: unknown) => void)[] = [];
+  var keyboardCaptureInstalled = false;
+
+  function emitShortcutInput(input: unknown): void {
+    for (var i = 0; i < keyboardListeners.length; i++) {
+      var listener = keyboardListeners[i];
+      if (typeof listener !== 'function') continue;
+      try { listener(input); } catch (e) { /* listener 异常不断桥 */ }
+    }
+  }
+
+  // 官方 DesktopShortcutInput 组装（native.d.ts）：{ revision, kind, frameName,
+  // code, secondCode?, control, alt, shift, meta, repeat }。secondCode 是双键
+  // chord（如 Ctrl+K,C），单次 keydown 无从产生，按官方主进程行为省略
+  //（keyboard.ts:202 仅 chord 命中时附带）。iframe/webview 分支与官方
+  // preload-app.ts:21-31 同一匹配集：activeElement 命中侧边栏浏览器宿主元素
+  // 即改发嵌入形态 + frameName；frameName 为空即丢弃（官方语义：无名的嵌入
+  // 宿主无法回验所有权，宁可不分发）。
+  function assembleShortcutInput(event: KeyboardEvent): Record<string, unknown> | null {
+    var code = event.code;
+    var control = !!event.ctrlKey;
+    var alt = !!event.altKey;
+    var shift = !!event.shiftKey;
+    var meta = !!event.metaKey;
+    var repeat = !!event.repeat;
+    var revision = SHORTCUT_REVISION_PLACEHOLDER;
+    var active = document.activeElement as Element | null;
+    if (active && typeof active.matches === 'function' && active.isConnected) {
+      // webview 分支先判（webview 宿主元素不是 HTMLIFrameElement）。
+      if (active.matches('webview[data-sidebar-browser-frame]')) {
+        var webviewName = active.getAttribute('name') || '';
+        if (!webviewName) return null;
+        return { revision: revision, kind: 'webview', frameName: webviewName, code: code, control: control, alt: alt, shift: shift, meta: meta, repeat: repeat };
+      }
+      if (active.matches('iframe[data-sidebar-browser-frame], iframe[data-html-preview]')) {
+        var frameName = (active as HTMLIFrameElement).name || '';
+        if (!frameName) return null;
+        return { revision: revision, kind: 'iframe', frameName: frameName, code: code, control: control, alt: alt, shift: shift, meta: meta, repeat: repeat };
+      }
+    }
+    return { revision: revision, kind: 'keyboard', frameName: '', code: code, control: control, alt: alt, shift: shift, meta: meta, repeat: repeat };
+  }
+
+  function onKeydownCapture(event: KeyboardEvent): void {
+    var input = assembleShortcutInput(event);
+    if (input === null) return;
+    emitShortcutInput(input);
+  }
+
+  // 惰性安装：首个 listener 订阅才挂捕获，最后一个退订即卸 —— 打字是热路径，
+  // 无消费者时不应每个按键都组装输入对象。
+  function ensureKeyboardCapture(): void {
+    if (keyboardCaptureInstalled) return;
+    keyboardCaptureInstalled = true;
+    // capture 态只保证早于页面冒泡监听观察，不拦截：本地控件（xterm/输入框）
+    // 先处理属正常，本桥不做任何 consume。
+    window.addEventListener('keydown', onKeydownCapture, true);
+  }
+
+  function releaseKeyboardCapture(): void {
+    if (!keyboardCaptureInstalled) return;
+    keyboardCaptureInstalled = false;
+    window.removeEventListener('keydown', onKeydownCapture, true);
+  }
+
   (window as any).dshDesktop = {
     // ---- 官方 dshDesktop 契约 ----
     protocolVersion: 1,
+    // SYNC-001：官方 DesktopKeyboardApi（内核 ipc.ts:74 + dsh-client-shortcuts
+    // native.d.ts）。官方 shortcuts 包检测到 data-platform 即硬依赖本面
+    //（client.js:1854-1855），缺失立即 throw —— 实现体见上方 keyboard 区。
+    keyboard: {
+      // 物理键按下推送（DesktopShortcutInput），返回 disposer —— 形态对齐官方
+      // preload-app.ts:19-36（ipcRenderer.on/off 的桥层等价物）。
+      subscribe: function (listener: (input: unknown) => void): () => void {
+        keyboardListeners.push(listener);
+        ensureKeyboardCapture();
+        return function () {
+          var i = keyboardListeners.indexOf(listener);
+          if (i >= 0) keyboardListeners.splice(i, 1);
+          if (keyboardListeners.length === 0) releaseKeyboardCapture();
+        };
+      },
+      // 官方语义（keyboard.ts:97-102）：主进程校验 revision 仍当前、窗口聚焦、
+      // 未录键、未遮挡才关窗。EAC 无快捷键配置修订存储可校验 —— 按任务卡简化
+      // 为「收到即关」，revision 原样透传在 win.close 帧上由 L1 记录；与官方
+      // 的差异（无 revision 对账、无聚焦前置条件）留给 shortcuts 接回任务对齐。
+      closeWindow: function (revision: unknown): Promise<void> {
+        return call('win.close', { reason: 'shortcuts.closeWindow', revision: revision })
+          .then(function () { /* Promise<void>：不把 win.close 的 ok 回包外泄 */ });
+      },
+    },
     locale: function () {
       try { return Promise.resolve(String((navigator && navigator.language) || 'zh-CN')); }
       catch (e) { return Promise.resolve('zh-CN'); }

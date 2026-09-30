@@ -1190,6 +1190,14 @@ async fn handle_shell_method(
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.close" => {
+            // SYNC-001：keyboard.closeWindow(revision) 复用本通道。EAC 无快捷键
+            // 配置修订存储，不做官方 keyboard.ts:97-102 的「revision 仍当前才
+            // 关窗」校验 —— 收到的 revision 仅在此记录，便于排查与未来对账。
+            if let Some(rev) = params.get("revision") {
+                if !rev.is_null() {
+                    eprintln!("[shell] win.close (shortcuts revision: {})", rev);
+                }
+            }
             // 退出策略（= Electron exitAction）：minimize→隐藏；quit→退出；
             // ask→弹出独立退出选择窗口。
             apply_exit_policy(app, true).await;
