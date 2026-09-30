@@ -31,6 +31,7 @@
 //     win.maximized（通知推送）
 //     menu.action 的纯壳动作（reload / devtools / fullscreen / quit / open-browser）
 //     log.page-error（send，壳层记录）
+//     directory.pick（SYNC-004，原生目录选择对话框 → 绝对路径 | null）
 //   其余 → sidecar（chrome.init / service.restart / boot.* / P3 渐进收编面）。
 
 use std::collections::HashMap;
@@ -1666,6 +1667,87 @@ async fn sidecar_exit_action(_app: &tauri::AppHandle) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// 原生目录选择（SYNC-004 · __DSH_DIRECTORY_PICKER__.pick 的 L1 能力源）
+//
+// 官方语义（apps/desktop/src/directory-picker.ts:12,24）：主进程
+// dialog.showOpenDialog(properties=['openDirectory','createDirectory'])，经
+// preload（preload-app.ts:75-77）以 ipcRenderer.invoke(DESKTOP_IPC.directoryPick)
+// 暴露为 window.__DSH_DIRECTORY_PICKER__.pick(): Promise<string | null> ——
+// 用户选定 → 目录绝对路径字符串；取消 → null。消费者
+// dsh-client-ui-directory-picker-native/lib/client.js:63 优先取本桥，缺失才
+// 回退 Web 浏览式选目录（ctx.uiWorkspace.pickDirectory()）。
+//
+// 实现选型（任务卡方案优先级）：tauri-plugin-dialog（官方 dialog 插件，内部
+// 即 rfd 0.16 的 IFileDialog 封装）—— 不引第二套原生对话框栈。与官方选项的
+// 映射：openDirectory → FileDialogBuilder::pick_folder（IFileDialog 的
+// FOS_PICKFOLDERS 文件夹模式）；createDirectory → 该模式自带「新建文件夹」
+// 按钮（IFileDialog 文件夹模式默认提供，无需独立开关）。差异：官方传了
+// 父窗口（应用内模态），本壳弹顶层对话框（非模态）—— 本壳主窗是无装饰
+// 自绘标题栏窗，模态阻塞主窗会连自绘关闭钮一起失效，权衡后不设父窗。
+//
+// 线程模型（任务卡硬约束：绝不阻塞主线程）：禁用 blocking_pick_folder ——
+// 它内部 run_on_main_thread + 通道等待，在异步/主线程上下文会 panic。
+// 这里用异步 pick_folder(回调) + oneshot channel：插件在主线程事件循环上
+// 只做「调度」（desktop.rs:172-182），IFileDialog 在独立线程模态运行并以
+// 回调回传 FilePath，主线程与 WS 任务全程不被卡；WS 连接任务在
+// handle_conn 里 await oneshot（tokio 异步等待，非忙等），等待期间出站
+// 通知（win.maximized / win.host-paths 等）照常送达页面。
+//
+// 隔离验证钩子（任务卡「L1 注入钩子模拟两态」条款，仿 SYNC-003 的
+// DSH_HOST_PATHS_STAGE 先例）：自动化环境（Edge headless + CDP）无法点击
+// 原生对话框，故提供环境变量驱动的两态模拟 —— 只在显式设置时生效，
+// 默认（未设置）恒走真实原生对话框，生产路径零影响：
+//   DSH_DIRECTORY_PICK_STAGE=<目录> → 不弹框，校验该目录真实存在后模拟
+//                                     「用户选定它」（绝无伪造：路径必须
+//                                     是真实存在的目录）；
+//   DSH_DIRECTORY_PICK_CANCEL=1     → 不弹框，模拟「用户取消」（null）。
+// 两者同设时 STAGE 优先。L1 日志显式标注 (stage)，与真实轨迹可区分。
+// ---------------------------------------------------------------------------
+
+/// directory.pick 的 L1 实现：Some(绝对路径) = 用户选定；None = 取消/失败。
+/// 由 handle_shell_method 的 "directory.pick" 分支 await。
+async fn pick_directory(app: &tauri::AppHandle) -> Option<String> {
+    // —— 隔离验证钩子（见上方注释；未设置环境变量时完全惰性）——
+    if let Ok(stage) = std::env::var("DSH_DIRECTORY_PICK_STAGE") {
+        let dir = stage.trim().to_string();
+        // 绝不伪造：必须是真实存在的目录，否则按取消语义返回 None 并告警。
+        let is_real_dir = std::fs::metadata(&dir).map(|m| m.is_dir()).unwrap_or(false);
+        if !is_real_dir {
+            eprintln!(
+                "[shell] directory.pick (stage): staged path is not an existing directory: {}",
+                dir
+            );
+            return None;
+        }
+        eprintln!("[shell] directory.pick (stage): simulated pick -> {}", dir);
+        return Some(dir);
+    }
+    if std::env::var("DSH_DIRECTORY_PICK_CANCEL").as_deref() == Ok("1") {
+        eprintln!("[shell] directory.pick (stage): simulated cancel -> null");
+        return None;
+    }
+
+    // —— 真实原生对话框（tauri-plugin-dialog · 异步回调 + oneshot 回传）——
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = oneshot::channel::<Option<String>>();
+    eprintln!("[shell] directory.pick: native folder dialog open (awaiting user)");
+    app.dialog().file().pick_folder(move |picked| {
+        // 回调在插件的工作线程上执行（desktop.rs pick_folder），不占主线程。
+        let resolved = picked
+            .as_ref()
+            .and_then(|p| p.as_path())
+            .map(|p| p.to_string_lossy().into_owned());
+        match &resolved {
+            Some(path) => println!("[shell] directory.pick: picked {}", path),
+            None => println!("[shell] directory.pick: cancelled by user"),
+        }
+        // 对话框关闭即回传；接收端（WS 任务）若已消失则发送失败被忽略。
+        let _ = tx.send(resolved);
+    });
+    rx.await.ok().flatten()
+}
+
 /// 壳层方法拦截：返回 Some(reply) = 已处理并给出 JSON-RPC 完整回复；
 /// None = 已消费（send 型，无回复）；Err(()) = 非壳层方法 → 转发 sidecar。
 async fn handle_shell_method(
@@ -1884,6 +1966,19 @@ async fn handle_shell_method(
                 }
             }
             Ok(None) // send 型
+        }
+        // SYNC-004：官方 __DSH_DIRECTORY_PICKER__ 面（preload-app.ts:75-77）。
+        // 官方 invoke(DESKTOP_IPC.directoryPick) → Promise<string | null>：
+        // 用户选定 → 目录绝对路径字符串；取消 → null。回包 result 直接承载
+        // 该标量（string | null），桥侧原样透传给消费者（见 bridge.ts）。
+        // await pick_directory 是 tokio 异步等待（oneshot），不阻塞任何线程；
+        // 等待期间本连接的后续入站帧排队，出站通知照常送达（见 pick_directory 注释）。
+        "directory.pick" => {
+            let picked = pick_directory(app).await;
+            Ok(Some(reply(match picked {
+                Some(path) => serde_json::json!(path),
+                None => serde_json::Value::Null,
+            })))
         }
         _ => Err(()),
     }
@@ -2883,6 +2978,10 @@ fn main() {
     });
 
     tauri::Builder::default()
+        // SYNC-004：dialog 插件（原生目录选择能力源，见 pick_directory 注释）。
+        // 仅用 Rust 侧 API（app.dialog()）；WebView 侧 plugin:dialog|* 命令无
+        // capability 授权，页面不可绕过桥直达 —— 行为面与注册前一致。
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 二次启动：聚焦已有主窗（= Electron second-instance 行为）。
             use tauri::Manager;

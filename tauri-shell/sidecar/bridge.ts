@@ -20,6 +20,9 @@
 //   __DSH_HOST_PATHS__ — SYNC-003，官方 HostPathsBridge（preload-app.ts:78-83，
 //     拖放/粘贴/选取文件的真实磁盘路径 → composer @path 引用；WebView2 能力
 //     边界与匹配语义见下方实现区注释）
+//   __DSH_DIRECTORY_PICKER__ — SYNC-004，官方 DirectoryPickerBridge
+//     （preload-app.ts:75-77，原生目录选择对话框 → 绝对路径 | null；
+//     实现区注释见下方 __DSH_DIRECTORY_PICKER__ 节）
 
 (function () {
   var BAR_ID = '__dsh_desktop_chrome__';
@@ -462,6 +465,41 @@
         return entry.path;
       }
       return '';
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // __DSH_DIRECTORY_PICKER__（SYNC-004 · 官方 DirectoryPickerBridge，
+  // preload-app.ts:75-77 逐字段对齐）
+  //
+  // 官方形态：pick() = ipcRenderer.invoke(DESKTOP_IPC.directoryPick) →
+  // Promise<string | null>。主进程（directory-picker.ts:12,24）弹原生目录
+  // 选择对话框 dialog.showOpenDialog(['openDirectory','createDirectory'])：
+  // 用户选定 → 目录绝对路径字符串；取消 → null。消费者
+  // dsh-client-ui-directory-picker-native/lib/client.js:63 —— 桥存在即走
+  // desktop.pick()（原生分支），缺失才回退 Web 浏览式选目录
+  //（ctx.uiWorkspace.pickDirectory()，<input webkitdirectory> 形态）。
+  // 任务硬约束：本桥绝不用 Web <input type=file webkitdirectory> 冒充 ——
+  // 原生对话框语义由 L1 的 tauri-plugin-dialog（IFileDialog 文件夹模式，
+  // 自带「新建文件夹」）实现，见 main.rs pick_directory 注释。
+  //
+  // 通道映射：pick() 经 WS call('directory.pick', {})，L1 本地拦截（Rust L1
+  // 与 locale.bootstrap 同一拦截点）。回包 result 直接是 string | null 标量
+  //（官方 invoke 返回形态）；桥侧只做防御性归一 —— 字符串原样透传（绝对
+  // 路径不做任何改写），null/非字符串一律归 null（= 官方「取消」语义，
+  // 消费者据此走 onCancel）。不 try/catch 降级：调用失败（WS 断开等）按
+  // 官方 invoke 失败语义向上 reject，消费者走 onError。
+  //
+  // 超时：call 缺省 30s 对「等用户在原生对话框里选目录」必然不够 —— 用户
+  // 浏览目录超过 30s 会被误判超时（官方 invoke 无超时）。这里放宽到 30 分钟
+  // 安全阀：正常交互（含离开座位）远不到该量级；超时后 promise reject，
+  // L1 的在途回复因 id 已出表被客户端忽略，不留悬挂状态。
+  // ---------------------------------------------------------------------------
+  (window as any).__DSH_DIRECTORY_PICKER__ = {
+    pick: function (): Promise<string | null> {
+      return call('directory.pick', {}, 30 * 60 * 1000).then(function (r: any) {
+        return typeof r === 'string' && r !== '' ? r : null;
+      });
     },
   };
 

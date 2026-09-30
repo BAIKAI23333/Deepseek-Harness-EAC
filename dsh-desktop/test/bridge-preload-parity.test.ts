@@ -377,6 +377,75 @@ test('SYNC-003: __DSH_HOST_PATHS__ locked to the official HostPaths contract', a
     'valid frames after malformed ones must still stage (unicode path intact)');
 });
 
+test('SYNC-004: __DSH_DIRECTORY_PICKER__ locked to the official DirectoryPicker contract', async () => {
+  // 官方 DirectoryPickerBridge（preload-app.ts:75-77）只暴露 pick ——
+  // ipcRenderer.invoke(DESKTOP_IPC.directoryPick) → Promise<string | null>。
+  // 主进程（directory-picker.ts:12,24）弹原生目录选择对话框
+  //（['openDirectory','createDirectory']）：用户选定 → 目录绝对路径字符串；
+  // 取消 → null。与 __DSH_LOCALE__ 同层挂在 window 上，键集精确锁定防漂移。
+  // 消费者 dsh-client-ui-directory-picker-native/lib/client.js:63：桥存在走
+  // 原生分支，缺失回退 Web 浏览式选目录；禁用 <input webkitdirectory> 冒充。
+  assert.match(bridge, /\(window as any\)\.__DSH_DIRECTORY_PICKER__ = \{/,
+    'bridge must expose window.__DSH_DIRECTORY_PICKER__（官方 preload-app.ts:75-77 同名同层）');
+
+  const calls: Array<{ method: string; params: any; timeout?: number }> = [];
+  let pickReply: any = null;
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({
+      onNotify() {},
+      send() {},
+      call(method: string, params: any, timeoutMs?: number) {
+        calls.push({ method, params, timeout: timeoutMs });
+        return Promise.resolve(pickReply);
+      },
+    }),
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document: { readyState: 'loading', documentElement: { setAttribute() {} }, addEventListener() {} },
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+  });
+
+  const picker = window.__DSH_DIRECTORY_PICKER__;
+  assert.deepEqual(Object.keys(picker), ['pick'],
+    `DirectoryPicker key drift: ${Object.keys(picker).join(',')}`);
+  assert.equal(typeof picker.pick, 'function');
+
+  // pick() 返回 Promise（官方 ipcRenderer.invoke 形态；vm realm 的 Promise
+  // 与宿主原型不同，instanceof 不可用 —— 用 thenable 鸭子判定），
+  // 经 WS call('directory.pick')，载荷 {}。
+  pickReply = 'D:\\材料\\工作区';
+  const pending = picker.pick();
+  assert.equal(typeof pending.then, 'function', 'pick() must return a Promise');
+  const routed = calls.find((c) => c.method === 'directory.pick');
+  assert.ok(routed, 'pick() must route through directory.pick');
+  assert.deepEqual(JSON.parse(JSON.stringify(routed.params)), {});
+  // 用户在原生对话框里浏览目录可远超 call 缺省 30s：pick() 必须放宽超时
+  //（官方 invoke 无超时；这里放宽到分钟级安全阀），否则选目录被误判超时。
+  assert.equal(typeof routed.timeout, 'number');
+  assert.ok(routed.timeout! >= 60_000,
+    `pick() must not inherit the 30s default call timeout (got ${routed.timeout}ms)`);
+
+  // 用户选定 → 回包 result 即目录绝对路径，桥原样透传（中文路径保真）。
+  assert.equal(await pending, 'D:\\材料\\工作区');
+
+  // 用户取消 → 壳回 null，桥返 null（官方「取消」语义，消费者走 onCancel）。
+  pickReply = null;
+  assert.equal(await picker.pick(), null);
+  pickReply = 'C:\\proj';
+  assert.equal(await picker.pick(), 'C:\\proj');
+
+  // 防御归一：非字符串（空串/数字/对象）一律归 null，不外泄畸形路径。
+  pickReply = '';
+  assert.equal(await picker.pick(), null);
+  pickReply = 42;
+  assert.equal(await picker.pick(), null);
+  pickReply = { path: 'C:\\proj' };
+  assert.equal(await picker.pick(), null);
+});
+
 test('rc.2 settings update consumer can initialize with the desktop bridge', async () => {
   const window: any = {
     addEventListener() {},

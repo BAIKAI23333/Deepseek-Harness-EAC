@@ -10,6 +10,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-plugin-single-instance = "2"
+# SYNC-004（__DSH_DIRECTORY_PICKER__）：官方原生目录选择对话框
+#（dialog.showOpenDialog(['openDirectory','createDirectory']) 的 EAC 等价物）。
+# 仅用其 Rust 侧 FileDialogBuilder.pick_folder；WebView 侧的 plugin:dialog|*
+# IPC 命令面未授权（无 capability 声明），页面不可绕过桥直达。
+# 钉版 2.7.3：2.8.0 起硬要求 tauri ^2.12，会把锁定的 tauri 2.11.5 / wry
+# 0.55 / tao 0.35 整棵 WebView 栈顶上去（视口自愈等敏感行为随之漂移）；
+# 本任务只加目录选择能力，不动既有 WebView 运行时。
+tauri-plugin-dialog = "=2.7.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "net", "macros", "io-util", "process", "sync", "time"] }
