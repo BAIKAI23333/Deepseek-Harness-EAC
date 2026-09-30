@@ -132,6 +132,12 @@
       "patched": true
     },
     {
+      "id": "file-drop-eac",
+      "path": "dsh-desktop/assets/plugins/dsh-file-drop-eac",
+      "patched": false,
+      "state": "retired"
+    },
+    {
       "id": "float-window",
       "path": "dsh-desktop/assets/plugins/dsh-float-window",
       "patched": true
@@ -177,6 +183,12 @@
       "patched": true
     },
     {
+      "id": "plugin-manager",
+      "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
+      "patched": true,
+      "state": "retired"
+    },
+    {
       "id": "plugin-shield",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-shield",
       "patched": false
@@ -207,9 +219,21 @@
       "patched": true
     },
     {
+      "id": "skin-switch",
+      "path": "dsh-desktop/assets/plugins/dsh-skin-switch",
+      "patched": false,
+      "state": "retired"
+    },
+    {
       "id": "soul-md",
       "path": "dsh-desktop/assets/plugins/dsh-soul-md",
       "patched": true
+    },
+    {
+      "id": "terminal",
+      "path": "dsh-desktop/assets/plugins/dsh-terminal",
+      "patched": true,
+      "state": "retired"
     },
     {
       "id": "think-zh-expand-eac",

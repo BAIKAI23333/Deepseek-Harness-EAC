@@ -59,15 +59,30 @@ test('legacy skin choice hook is removed from the sync contract and the sidecar 
   assert.doesNotMatch(sidecarServer, /applyLegacySkinChoice\s*[(:]/);
 });
 
-test('offline ledgers no longer carry skin-switch', () => {
+test('offline ledgers no longer carry skin-switch (history keeps a retired baseline row)', () => {
   for (const file of [
     '.sync/plugins.json',
     '.sync/plugins.lock.json',
     '.sync/plugin-distribution.json',
-    '.sync/plugin-inventory-history.json',
   ]) {
     assert.doesNotMatch(read(...file.split('/') as [string, string]), /skin-switch/, `${file} 不得再有 skin-switch`);
   }
+  // ISO-004 / ADR 0008 §5：资产移出当前 inventory 后「不得删除对应历史行」——
+  // skin-switch 只以 state=retired 的基线行留在历史账本（id/path/patched 取自
+  // 删除它的提交，不新造细节），分发集合与随包清单里都不得再出现。
+  const history = json<{ plugins: { id: string; path: string; patched: boolean; state?: string }[] }>(
+    '.sync', 'plugin-inventory-history.json',
+  );
+  assert.deepEqual(
+    history.plugins.find((p) => p.id === 'skin-switch'),
+    {
+      id: 'skin-switch',
+      path: 'dsh-desktop/assets/plugins/dsh-skin-switch',
+      patched: false,
+      state: 'retired',
+    },
+    'skin-switch 必须以退役基线行留在历史账本（而不是从账本里消失）',
+  );
   const policies = json<{ pluginDistribution: { expectedCounts: Record<string, number> } }>('.sync', 'policies.json');
   const distribution = json<{ plugins: { id: string; distributionClass: string }[] }>(
     '.sync', 'plugin-distribution.json',
@@ -75,8 +90,8 @@ test('offline ledgers no longer carry skin-switch', () => {
   const builtinCount = distribution.plugins.filter((p) => p.distributionClass === 'builtin').length;
   assert.equal(policies.pluginDistribution.expectedCounts.builtin, builtinCount,
     'policies.expectedCounts.builtin 必须与 plugin-distribution 的 builtin 数一致');
-  assert.equal(builtinCount, 12,
-    '12 个内置插件（皮肤平台 14 包已外迁、plugin-manager/terminal/file-drop-eac 已退役）');
+  assert.equal(builtinCount, 10,
+    '10 个内置插件 = dsh-desktop/assets/plugins 实物（皮肤平台 14 包已外迁、plugin-manager/terminal/file-drop-eac 已退役；balance/plugin-wizard 实物不存在，ISO-004 改判 recommended/external）');
   // lock 的 manifestRevision 与被编辑后的 .sync/plugins.json 逐字节对应
   //（与 scripts/plugin-sync.mjs buildLock 的 sha256File 口径一致）。
   const lock = json<{ manifestRevision: string }>('.sync', 'plugins.lock.json');
@@ -114,11 +129,14 @@ test('staging drops the retired plugin but preserves the ADR 0010 manager fallba
   const stagedDirs = (arrayMatch![1].match(/'([^']+)'/g) || []).map((s) => s.slice(1, -1));
   assert.equal(stagedDirs.includes('dsh-skin-switch'), false, '退役插件不得再随包装配');
   // EAC-CORE-SHELL-01：皮肤平台（loader + 13 款皮肤）已外迁，装配清单收敛为
-  // 阶段 1-3 的 13 个内置插件（不含任何皮肤/加载器）。
+  // 阶段 1-3 的内置插件（不含任何皮肤/加载器）。
   assert.equal(stagedDirs.includes('dsh-ui-skin-loader'), false, '皮肤加载器不得再随包装配（已外迁）');
   assert.equal(stagedDirs.includes('dsh-terminal'), false, '与内核同名的 terminal 不得再随包装配');
   assert.equal(stagedDirs.includes('dsh-plugin-manager'), false, '与内核同名的 plugin-manager 不得再随包装配');
-  assert.equal(stagedDirs.length, 10, '装配清单应为 10 个内置插件（皮肤平台已外迁 + 3 个同名/内置重叠插件已退役）');
+  // ISO-003：eac-core-bridge 的端点生产者缺失（DSH_EAC_BRIDGE_URL/TOKEN 零写入方）
+  // → 退役出装配清单（资产目录保留，等进程隔离接回）。
+  assert.equal(stagedDirs.includes('dsh-eac-core-bridge'), false, 'ISO-003：Core Bridge 不得再随包装配');
+  assert.equal(stagedDirs.length, 9, '装配清单应为 9 个内置插件（皮肤平台已外迁 + 3 个同名/内置重叠插件已退役 + ISO-003 core-bridge 退役）');
   // ADR 0010：壳层 ui-skin manager 钉版产物与 boot/recovery 回退资源必须随包。
   assert.match(stageScript, /ui-skin-manager/);
   assert.match(stageScript, /pinned UI skin manager artifacts staged/);

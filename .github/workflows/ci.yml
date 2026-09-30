@@ -94,6 +94,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      # 账本门禁（ISO-004）：随包实物 ↔ SOURCES.json ↔ .sync 分发账本/历史账本
+      # 的一致性不再静默 —— 任一悬空 path、假 bundled 声明、历史行缺失或
+      # lock/注册表漂移都在这里红灯（工作目录 = dsh-desktop，路径自解析）。
+      - name: Plugin source ledger (SOURCES.json ↔ 实物)
+        run: node scripts/plugin-ledger.mjs
+
+      - name: Plugin sync ledger (manifest / distribution / lock / registry)
+        run: node scripts/plugin-sync.mjs validate
+
       - name: Run unit and contract tests
         run: npm test
 
