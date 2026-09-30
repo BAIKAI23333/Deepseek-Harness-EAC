@@ -303,6 +303,80 @@ test('SYNC-002: __DSH_LOCALE__ bridge locked to the official LocaleBridge contra
   assert.deepEqual(JSON.parse(JSON.stringify(changed.params)), { locale: 'zh' });
 });
 
+test('SYNC-003: __DSH_HOST_PATHS__ locked to the official HostPaths contract', async () => {
+  // 官方 HostPathsBridge（preload-app.ts:78-83）只暴露 pathFor —— 拖放/粘贴/
+  // 选取的有真实路径文件 → 绝对路径（composer 生成 @path 引用，消费者
+  // client.js:18290），无真实路径（粘贴字节流）→ ''（上传兜底）。与
+  // __DSH_LOCALE__ 同层挂在 window 上，键集精确锁定防实现漂移。
+  assert.match(bridge, /\(window as any\)\.__DSH_HOST_PATHS__ = \{/,
+    'bridge must expose window.__DSH_HOST_PATHS__（官方 preload-app.ts:78-83 同名同层）');
+  // 官方契约声明锚点：pathFor 的语义注释（无路径返 ''）必须随实现存在。
+  assert.match(bridge, /win\.host-paths/, 'bridge must consume the L1 staged-path frame');
+  assert.match(bridge, /pathFor: function \(file: File\): string/,
+    'pathFor must keep the official signature pathFor(file: File) => string');
+
+  let notifyDispatch: (method: string, params: any) => void = () => {};
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({
+      send() {},
+      call: async () => ({}),
+      onNotify(fn: (method: string, params: any) => void) { notifyDispatch = fn; },
+    }),
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document: { readyState: 'loading', documentElement: { setAttribute() {} }, addEventListener() {} },
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+  });
+
+  const hostPaths = window.__DSH_HOST_PATHS__;
+  assert.deepEqual(Object.keys(hostPaths), ['pathFor'],
+    `HostPaths key drift: ${Object.keys(hostPaths).join(',')}`);
+  assert.equal(typeof hostPaths.pathFor, 'function');
+
+  // 尚无 L1 暂存：任何 File 都必须返回 ''（不伪造路径）。
+  assert.equal(hostPaths.pathFor({ name: 'notes.txt', size: 5 }), '');
+
+  // L1 win.host-paths 暂存（真实枚举形态：path/name/size/isDir，main.rs
+  // DragQueryFileW 产物）→ name+size 精确匹配返回真实绝对路径。
+  notifyDispatch('win.host-paths', { files: [
+    { path: 'C:\\proj\\notes.txt', name: 'notes.txt', size: 5, isDir: false },
+    { path: 'C:\\proj\\assets', name: 'assets', size: 4096, isDir: true },
+  ] });
+  assert.equal(hostPaths.pathFor({ name: 'notes.txt', size: 5, type: 'text/plain' }),
+    'C:\\proj\\notes.txt', 'name+size hit must answer the real absolute path');
+  // 目录条目：isDir → 仅按 name 匹配（目录 size 无意义）。
+  assert.equal(hostPaths.pathFor({ name: 'assets', size: 0, type: '' }), 'C:\\proj\\assets');
+
+  // 官方语义核心：无真实路径的文件（new File(['x'],'a.txt') 形态，粘贴的
+  // 字节流/截图）→ ''，绝不返回伪造路径。
+  assert.equal(hostPaths.pathFor({ name: 'a.txt', size: 1 }), '');
+  // 同名不同 size（不同文件）：不命中。
+  assert.equal(hostPaths.pathFor({ name: 'notes.txt', size: 999 }), '');
+  // 非 File 形态入参：一律 ''。
+  assert.equal(hostPaths.pathFor(null), '');
+  assert.equal(hostPaths.pathFor(undefined), '');
+  assert.equal(hostPaths.pathFor({ size: 5 }), '');
+  assert.equal(hostPaths.pathFor('C:\\proj\\notes.txt'), '');
+
+  // 剪贴板变化：L1 推空表清场 → 同一 File 不再返回路径（字节流截图上板）。
+  notifyDispatch('win.host-paths', { files: [] });
+  assert.equal(hostPaths.pathFor({ name: 'notes.txt', size: 5 }), '');
+
+  // 畸形帧不炸桥（后续合法帧照常生效）。
+  notifyDispatch('win.host-paths', null);
+  notifyDispatch('win.host-paths', {});
+  notifyDispatch('win.host-paths', { files: [{ path: '', name: 'x.txt', size: 1 }] });
+  notifyDispatch('win.maximized', { maximized: true });
+  notifyDispatch('win.host-paths', { files: [
+    { path: 'D:\\材料\\报告.md', name: '报告.md', size: 12, isDir: false },
+  ] });
+  assert.equal(hostPaths.pathFor({ name: '报告.md', size: 12 }), 'D:\\材料\\报告.md',
+    'valid frames after malformed ones must still stage (unicode path intact)');
+});
+
 test('rc.2 settings update consumer can initialize with the desktop bridge', async () => {
   const window: any = {
     addEventListener() {},

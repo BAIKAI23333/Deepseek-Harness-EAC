@@ -862,6 +862,299 @@ fn rebuild_tray_menu(app: &tauri::AppHandle) {
 const TRAY_ID: &str = "dsh-main-tray";
 
 // ---------------------------------------------------------------------------
+// __DSH_HOST_PATHS__ 路径暂存（SYNC-003 · 官方 webUtils.getPathForFile 等价能力）
+//
+// 调研结论（bridge.ts 同款长注释，证据在任务自证材料）：WebView2 页面层的
+// File 无真实路径（Chromium 没有 Electron 的 File.path patch），宿主层拿到
+// 「粘贴的真实文件」的唯一无损通道是系统剪贴板 CF_HDROP —— 资源管理器复制的
+// 文件以 CF_HDROP 落板，WebView2 页面 paste 事件的 clipboardData.files 正由它
+// 生成（File 的 name/size 与此处枚举一致）。而「拖放」的真实路径只能在
+// WebView2 之前接管 OLE 拖放（SetAllowExternalDrop(false) + 自注册 IDropTarget）
+// 才能拿到，接管 = 页面原生 HTML5 拖放整体失效（页面收不到 dragover/drop，
+// wry 对非文件拖拽无事件不可合成），本壳特意 disable_drag_drop_handler 保住
+// 页面拖放 —— 故拖放路径本版不接管，桥侧 pathFor 对拖放文件返回 ''（走上传，
+// 与现状一致），任务卡「已知局限」条款。
+//
+// 机制：常驻剪贴板监听线程（消息专用窗 HWND_MESSAGE +
+// AddClipboardFormatListener）在 WM_CLIPBOARDUPDATE 时读 CF_HDROP
+//（DragQueryFileW，wry 同款两段式取长路径）并取元数据（name/size/is_dir），
+// 快照存 HOST_PATH_FILES 并经 shell_notify 广播 win.host-paths 通知帧；桥
+//（bridge.ts）暂存后由 __DSH_HOST_PATHS__.pathFor 按 name+size 匹配返回绝对
+// 路径。剪贴板不再含文件时推送空表清场（字节流截图上板 → 旧路径失效 →
+// pathFor 返 ''，官方语义）。绝无伪造路径：表项只来自 DragQueryFileW 真实枚举。
+//
+// 局限：仅 Windows（CF_HDROP 为 Windows 剪贴板格式；macOS/Linux 文件粘贴格式
+// 不同，未实现时无帧推送 → 桥侧无暂存 → pathFor 返 ''，行为与现状一致）。
+// 新 WS 连接建立时补推当前快照（页面重载不丢已暂存剪贴板内容）。
+// ---------------------------------------------------------------------------
+
+/// 一条真实路径条目（win.host-paths 帧元素；字段与 bridge.ts 的匹配算法对齐）。
+#[cfg(windows)]
+#[derive(Clone, Debug, serde::Serialize)]
+struct HostPathEntry {
+    path: String,
+    name: String,
+    size: u64,
+    is_dir: bool,
+}
+
+/// 最近一次剪贴板文件快照（win.host-paths 帧的权威源；剪贴板变化即整体替换）。
+#[cfg(windows)]
+static HOST_PATH_FILES: RwLock<Vec<HostPathEntry>> = RwLock::new(Vec::new());
+
+/// 新 WS 连接补推当前快照（页面重载/重连不丢已暂存内容；空快照不推 ——
+/// 页面 pathFor 对未知文件本就落 ''）。
+#[cfg(windows)]
+fn host_paths_snapshot_frame() -> Option<String> {
+    let files = HOST_PATH_FILES.read().ok()?;
+    if files.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&serde_json::json!({
+        "method": "win.host-paths",
+        "params": { "files": &*files }
+    }))
+    .ok()
+}
+
+#[cfg(not(windows))]
+fn host_paths_snapshot_frame() -> Option<String> {
+    None
+}
+
+/// 隔离验证钩子（SYNC-003 任务卡「L1 事件注入」条款）：环境变量
+/// DSH_HOST_PATHS_STAGE 预置真实文件/目录路径（分号分隔），启动时经与剪贴板
+/// 监听同一条 publish_host_path_entries 链路（快照 + WS 广播 + 新连接补推）
+/// 暂存。用途：无法操作系统剪贴板的自动化验证环境（远程会话/策略锁剪贴板）
+/// 下，仍可对 L1→WS→桥→pathFor 全链路做真实路径验证。硬约束不变：路径必须
+/// 真实存在（fs::metadata 逐条校验，不存在的跳过并告警）—— 绝不产生伪造路径。
+/// 默认（未设置环境变量）完全惰性，生产路径零影响。
+#[cfg(windows)]
+fn stage_host_paths_from_env() {
+    let Some(raw) = std::env::var_os("DSH_HOST_PATHS_STAGE") else {
+        return;
+    };
+    let mut entries: Vec<HostPathEntry> = Vec::new();
+    for part in raw.to_string_lossy().split(';') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(p) else {
+            eprintln!("[shell] host-paths stage: skip nonexistent path: {}", p);
+            continue;
+        };
+        let name = std::path::Path::new(p)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.to_string());
+        entries.push(HostPathEntry {
+            path: p.to_string(),
+            name,
+            size: meta.len(),
+            is_dir: meta.is_dir(),
+        });
+    }
+    if entries.is_empty() {
+        return;
+    }
+    eprintln!(
+        "[shell] host-paths stage: {} real path(s) from DSH_HOST_PATHS_STAGE",
+        entries.len()
+    );
+    publish_host_path_entries(entries);
+}
+
+#[cfg(not(windows))]
+fn stage_host_paths_from_env() {}
+
+/// 快照落库 + WS 广播。每次剪贴板内容变化都推送（含空表清场）。
+#[cfg(windows)]
+fn publish_host_path_entries(entries: Vec<HostPathEntry>) {
+    let empty = entries.is_empty();
+    if let Ok(mut slot) = HOST_PATH_FILES.write() {
+        let had = !slot.is_empty();
+        *slot = entries.clone();
+        if empty && had {
+            eprintln!("[shell] host-paths: clipboard holds no files, staged paths cleared");
+        }
+    }
+    if !empty {
+        eprintln!("[shell] host-paths: staged {} clipboard file(s)", entries.len());
+    }
+    let _ = shell_notify().send(serde_json::json!({
+        "method": "win.host-paths",
+        "params": { "files": entries }
+    }));
+}
+
+// windows-sys 未启用 Win32_System_DataExchange feature —— 剪贴板监听只需 5 个
+// user32 函数，按 windows-sys 同款签名就地声明 FFI，避免为它们改动构建清单
+//（Cargo.toml）。CF_HDROP / WM_CLIPBOARDUPDATE 为 winuser.h 文档常量。
+#[cfg(windows)]
+mod clipboard_ffi {
+    /// RegisterClipboardFormat 预定义剪贴板格式：文件列表（winuser.h：CF_HDROP=15）。
+    pub const CF_HDROP: u32 = 15;
+    /// 剪贴板内容变化通知消息（winuser.h：WM_CLIPBOARDUPDATE=0x031D）。
+    pub const WM_CLIPBOARDUPDATE: u32 = 0x031D;
+
+    #[link(name = "user32")]
+    extern "system" {
+        pub fn OpenClipboard(hwndnewowner: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+        pub fn CloseClipboard() -> windows_sys::core::BOOL;
+        pub fn GetClipboardData(uformat: u32) -> windows_sys::Win32::Foundation::HANDLE;
+        pub fn AddClipboardFormatListener(hwnd: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+        pub fn RemoveClipboardFormatListener(hwnd: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+    }
+}
+
+/// 读当前剪贴板 CF_HDROP → 路径 + 元数据。无文件/读取失败返回 None（调用方
+/// 区分「确认无文件」(Some(空)) 与「瞬态读不到」(None，保留旧快照)）。
+#[cfg(windows)]
+unsafe fn read_clipboard_host_paths() -> Option<Vec<HostPathEntry>> {
+    use clipboard_ffi::{CF_HDROP, CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+    // 剪贴板可能被其它进程短暂持有：有限重试打开（打开失败不动旧快照，
+    // 避免瞬态争用清掉页面已暂存的真实路径）。
+    let mut opened = false;
+    for _ in 0..3 {
+        if OpenClipboard(std::ptr::null_mut()) != 0 {
+            opened = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    if !opened {
+        return None;
+    }
+    let mut entries: Vec<HostPathEntry> = Vec::new();
+    let handle = GetClipboardData(CF_HDROP);
+    if !handle.is_null() {
+        let hdrop: HDROP = handle;
+        // ifile = 0xFFFFFFFF → 返回条目数；随后逐条「先取长度再取内容」
+        //（长路径可超 MAX_PATH，wry drag_drop.rs 同款两段式）。
+        let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, std::ptr::null_mut(), 0);
+        for i in 0..count {
+            let len = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0) as usize;
+            if len == 0 {
+                continue;
+            }
+            let mut buf = vec![0u16; len + 1];
+            let written = DragQueryFileW(hdrop, i, buf.as_mut_ptr(), (len + 1) as u32) as usize;
+            if written == 0 {
+                continue;
+            }
+            let path = String::from_utf16_lossy(&buf[..written]);
+            let meta = std::fs::metadata(&path);
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
+            entries.push(HostPathEntry {
+                path,
+                name,
+                // 文件损坏/已删时 size=0、is_dir=false：仍如实暂存路径（粘贴
+                // 时 Chromium 的 File 同样读不到内容，上传/引用语义由内核定）。
+                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                is_dir: meta.map(|m| m.is_dir()).unwrap_or(false),
+            });
+        }
+    }
+    let _ = CloseClipboard();
+    Some(entries)
+}
+
+/// 常驻剪贴板监听线程：消息专用窗（不进任务栏、无焦点）+
+/// AddClipboardFormatListener，独立线程自泵消息，不与 tauri 主事件循环耦合。
+/// 仅 Windows（见顶部注释局限条款）。
+#[cfg(windows)]
+fn spawn_clipboard_path_listener() {
+    let spawned = std::thread::Builder::new()
+        .name("dsh-clipboard-paths".to_string())
+        .spawn(|| unsafe { clipboard_listener_main() });
+    if spawned.is_err() {
+        eprintln!("[shell] clipboard path listener spawn failed");
+    }
+}
+
+#[cfg(windows)]
+unsafe fn clipboard_listener_main() {
+    use clipboard_ffi::{AddClipboardFormatListener, RemoveClipboardFormatListener, WM_CLIPBOARDUPDATE};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
+        TranslateMessage, MSG, WNDCLASSW, WM_DESTROY,
+    };
+
+    unsafe extern "system" fn clip_host_wndproc(
+        hwnd: windows_sys::Win32::Foundation::HWND,
+        msg: u32,
+        wparam: windows_sys::Win32::Foundation::WPARAM,
+        lparam: windows_sys::Win32::Foundation::LPARAM,
+    ) -> windows_sys::Win32::Foundation::LRESULT {
+        if msg == WM_CLIPBOARDUPDATE {
+            if let Some(entries) = read_clipboard_host_paths() {
+                publish_host_path_entries(entries);
+            }
+            return 0;
+        }
+        if msg == WM_DESTROY {
+            RemoveClipboardFormatListener(hwnd);
+            return 0;
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    let class_name: Vec<u16> = "dsh_eac_clip_host\0".encode_utf16().collect();
+    let mut wc: WNDCLASSW = std::mem::zeroed();
+    wc.lpfnWndProc = Some(clip_host_wndproc);
+    wc.hInstance = GetModuleHandleW(std::ptr::null());
+    wc.lpszClassName = class_name.as_ptr();
+    if RegisterClassW(&wc) == 0 {
+        eprintln!("[shell] clipboard listener RegisterClassW failed");
+        return;
+    }
+    // HWND_MESSAGE = (HWND)-3：消息专用窗。注册失败只降级（无路径暂存，
+    // 桥侧 pathFor 返 ''，与未实现平台行为一致），绝不阻塞壳启动。
+    let hwnd_message = -3isize as windows_sys::Win32::Foundation::HWND;
+    let hwnd = CreateWindowExW(
+        0,
+        class_name.as_ptr(),
+        std::ptr::null(),
+        0,
+        0,
+        0,
+        0,
+        0,
+        hwnd_message,
+        std::ptr::null_mut(),
+        wc.hInstance,
+        std::ptr::null(),
+    );
+    if hwnd.is_null() {
+        eprintln!("[shell] clipboard listener window create failed");
+        return;
+    }
+    if AddClipboardFormatListener(hwnd) == 0 {
+        eprintln!("[shell] AddClipboardFormatListener failed");
+        return;
+    }
+    println!("[shell] clipboard path listener ready");
+    let mut msg: MSG = std::mem::zeroed();
+    loop {
+        // -1 = 错误（窗口销毁后即返回 -1 收摊），0 = WM_QUIT。
+        let r = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
+        if r <= 0 {
+            break;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
+
+
+// ---------------------------------------------------------------------------
 // 视口失同步自愈（issue：全屏窗口只有左侧 ~208px 条带被绘制、其余黑屏，
 // 页面按 166px 窄视口布局 —— 用户看到"侧边栏图标只剩一个"的冻结画面）。
 //
@@ -1976,6 +2269,12 @@ async fn handle_conn(
         None
     };
 
+    // SYNC-003：新连接补推当前剪贴板路径快照（页面重载/重连不丢已暂存内容；
+    // 空快照不推，页面 pathFor 对未知文件本就落 ''）。
+    if let Some(frame) = host_paths_snapshot_frame() {
+        let _ = out_tx.send(Message::Text(frame));
+    }
+
     while let Some(msg) = source.next().await {
         let msg = match msg {
             Ok(m) => m,
@@ -2602,6 +2901,14 @@ fn main() {
             use tauri::Manager;
 
             initialize_packaged_resource_root(app);
+
+            // SYNC-003：剪贴板路径监听（__DSH_HOST_PATHS__ 暂存源）。失败只
+            // 降级（无帧推送 → 桥侧 pathFor 返 ''），不阻塞壳启动。
+            #[cfg(windows)]
+            spawn_clipboard_path_listener();
+            // SYNC-003 验证钩子（L1 事件注入，见函数注释）：仅当
+            // DSH_HOST_PATHS_STAGE 设置时生效。
+            stage_host_paths_from_env();
 
             BRIDGE_ONCE.call_once(|| {
                 let st = BridgeState {

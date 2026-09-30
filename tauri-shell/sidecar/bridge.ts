@@ -14,6 +14,12 @@
 //
 // 接口面收敛（ADR 0006 v5）：只保留官方 dshDesktop 契约 + 窗口控制 + boot；
 // EAC 自造面全部移除，被剥能力接回见 ADR 0006「插口契约」节。
+//
+// 官方并列面（与 dshDesktop 同层挂在 window 上）：
+//   __DSH_LOCALE__   — SYNC-002，官方 LocaleBridge（preload-app.ts:102-105）
+//   __DSH_HOST_PATHS__ — SYNC-003，官方 HostPathsBridge（preload-app.ts:78-83，
+//     拖放/粘贴/选取文件的真实磁盘路径 → composer @path 引用；WebView2 能力
+//     边界与匹配语义见下方实现区注释）
 
 (function () {
   var BAR_ID = '__dsh_desktop_chrome__';
@@ -373,6 +379,89 @@
     },
     onChange: function (locale: string): void {
       send('locale.changed', { locale: locale });
+    },
+  };
+
+  // ---------------------------------------------------------------------------
+  // __DSH_HOST_PATHS__（SYNC-003 · 官方 HostPathsBridge，preload-app.ts:78-83 逐
+  // 字段对齐）
+  //
+  // 官方形态：pathFor(file) = Electron webUtils.getPathForFile(file)。composer
+  // 把「拖放/粘贴/选取的、有真实磁盘路径的文件」标成 @path 引用而非上传
+  //（消费者 dsh-client-ui-conversation/lib/client.js:18290：path 非空且（目录
+  // 或非图片）→ @path 引用；path 为空 → 上传；粘贴的字节流（截图）无真实路径
+  // 必须返回 ''，官方注释原文语义）。
+  //
+  // WebView2 能力边界（SYNC-003 调研结论，证据见任务自证材料）：
+  //   * 页面层：Chromium 的 File 没有 path 属性（Electron 专有 patch），
+  //     DataTransfer/clipboardData 里的 File 只有 name/size/type —— 页面自身
+  //     无从得知真实路径（WebView2Feedback #501/#3615，均未发布页面层 API）。
+  //   * 宿主层：拿到「拖放」真实路径的唯一通道是在 WebView2 之前接管 OLE
+  //     拖放（wry DragDropController 同款：SetAllowExternalDrop(false) + 自注册
+  //     IDropTarget + CF_HDROP）。实测接管会让页面原生 HTML5 拖放整体失效
+  //    （页面收不到 dragover/drop；wry 对非文件拖拽恒回 DROPEFFECT_NONE 且
+  //     无事件，页内文字/图片拖拽无法恢复）—— 本壳 main.rs 特意
+  //     disable_drag_drop_handler 保住页面拖放，故拖放路径本版不接管。
+  //   * 选定方案（任务卡方案乙 · 剪贴板暂存）：资源管理器「复制」的文件以
+  //     CF_HDROP 落在系统剪贴板，WebView2 页面 paste 事件的 clipboardData.files
+  //     正是由它生成（File 的 name/size 与 L1 枚举一致）。L1 常驻剪贴板监听
+  //    （main.rs 消息专用窗 + AddClipboardFormatListener + DragQueryFileW），
+  //     内容变化即经 WS 广播 win.host-paths 通知帧（path/name/size/isDir 数组，
+  //     绝不含伪造路径）；本桥暂存「最近一次 L1 暂存」，pathFor 按 name+size
+  //     精确匹配返回真实绝对路径。
+  //
+  // 已知局限（SYNC-007/后续任务处置）：
+  //   - 拖放（drop）：''（按上传处理，与现状一致；见上「接管代价」）；
+  //   - 文件选取（picker）：WebView2 无自定义文件对话框路径 API，''；
+  //   - 粘贴（paste）：已恢复 —— 复制文件粘贴 → @path；粘贴字节流 → ''；
+  //   - 页面重载/重连期间 L1 会补推当前快照（main.rs 新 WS 连接推送），
+  //     补推缺失时 pathFor 退化为 ''（走上传，不悬空）。
+  //
+  // 匹配语义：以「最近一次 win.host-paths 帧」为当前集（剪贴板内容变化即整体
+  // 替换，含 L1 推空清场 —— 字节流截图上板后旧文件路径随之失效）；name 精确
+  // 匹配 + size 精确匹配（目录 size 无意义，isDir 时仅按 name 匹配）；不消费
+  // 表项（同一剪贴板内容可重复粘贴）；入参非 File 形态/无命中一律 ''。
+  // ---------------------------------------------------------------------------
+  interface HostPathEntry { path: string; name: string; size: number; isDir: boolean; }
+  var hostPathEntries: HostPathEntry[] = [];
+  onNotify(function (method: string, params: any): void {
+    try {
+      if (method !== 'win.host-paths') return;
+      var files = params && params.files;
+      if (!Array.isArray(files)) return;
+      var next: HostPathEntry[] = [];
+      for (var i = 0; i < files.length; i++) {
+        var e = files[i] || {};
+        // 只收 L1 真实枚举形态：path 非空字符串 + name 字符串；size 缺失按
+        // -1 处理（永不可能与真实 File.size 匹配 → 恒 ''，不伪造）。
+        if (typeof e.path === 'string' && e.path !== '' && typeof e.name === 'string' && e.name !== '') {
+          next.push({
+            path: e.path,
+            name: e.name,
+            size: typeof e.size === 'number' && Number.isFinite(e.size) ? e.size : -1,
+            isDir: e.isDir === true,
+          });
+        }
+      }
+      hostPathEntries = next;
+    } catch (e) { /* 通知帧畸形不炸桥 */ }
+  });
+  (window as any).__DSH_HOST_PATHS__ = {
+    // 官方签名（preload-app.ts:83）：pathFor: (file: File) => string。
+    // 实现按 name/size 鸭子匹配（vm 单测可喂纯对象；Chromium File 两者皆实）。
+    pathFor: function (file: File): string {
+      var f = file as unknown as { name?: unknown; size?: unknown } | null | undefined;
+      if (!f || typeof f.name !== 'string' || typeof f.size !== 'number') return '';
+      for (var i = 0; i < hostPathEntries.length; i++) {
+        var entry = hostPathEntries[i];
+        if (!entry) continue;
+        if (entry.name !== f.name) continue;
+        // 目录条目不做 size 对账（metadata.len() 对目录无意义）；文件条目
+        // name+size 双匹配 —— size 相同的同名文件才可能命中，杜绝伪造。
+        if (!entry.isDir && entry.size !== f.size) continue;
+        return entry.path;
+      }
+      return '';
     },
   };
 
