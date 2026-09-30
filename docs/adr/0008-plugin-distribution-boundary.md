@@ -3,6 +3,15 @@
 日期：2026-09-16
 状态：已接受
 
+> **计数批注（2026-09-30，控制包 `工程控制/EAC-ISOLATION-SYNC-02`，ISO-001 初记，ISO-004 复核更新）**
+>
+> 本文声明的分发集合 `16 builtin / 14 recommended / 19 external = 49` 已随账本收敛
+> 不再权威。经 ISO-004 收敛后，`.sync/plugin-distribution.json` 实测为
+> **10 builtin / 15 recommended / 20 external = 45**：4 个插件退役（`dsh-skin-switch`、
+> `dsh-plugin-manager`、`dsh-terminal`、`dsh-file-drop-eac`），且 `balance` 由
+> builtin 改归 recommended、`plugin-wizard` 由 builtin 改归 external。**分发集合以账本
+> `.sync/plugin-distribution.json` 为准**（`plugin-sync.mjs validate` 强校验）。
+
 ## 背景
 
 当前 `.sync/plugins.json` 是仓库随包资产的库存账本，覆盖 49 个插件、10 个皮肤和
