@@ -316,6 +316,22 @@ mod shell_tests {
         assert!(died.contains("data-state=\"idle\""));
         assert!(died.contains("setAttribute('data-state','running')"));
         assert!(died.contains("setAttribute('data-state','error')"));
+
+        // 回归锁（启动页 `\` 乱码）：script 注入之前的 HTML 段不得含任何反斜杠
+        // —— 模板行连接写成 `\\` 时，字面 `\` + 换行 + 缩进会原样进入响应体，
+        // 标签之间的 `\` 成为可见文本节点（散落的 "\" 乱码）。
+        let loading_html = loading.split("<script>").next().unwrap_or("");
+        assert!(
+            !loading_html.contains('\\'),
+            "stray backslash in loading page HTML"
+        );
+        let died_html = died.split("<script>").next().unwrap_or("");
+        assert!(
+            !died_html.contains('\\'),
+            "stray backslash in died page HTML"
+        );
+        // died 页脚本大括号配平：retry 函数体必须以 `});}` 收口后紧跟 </script>。
+        assert!(died.contains("});}</script>"));
     }
 
     #[test]
@@ -2059,14 +2075,17 @@ const UI_SKIN_LINKS: &str = concat!(
 
 fn loading_page() -> String {
     format!(
-        "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>Deepseek Harness EAC</title>{UI_SKIN_LINKS}</head>\\
-         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"loading\">\\
-         <main data-control-name=\"system.default.shell-page\" data-state=\"loading\">\\
-         <section data-control-name=\"system.default.shell-content\">\\
-         <div data-control-name=\"system.default.shell-title\">Deepseek Harness EAC</div>\\
-         <div data-control-name=\"system.default.shell-status\">{}</div>\\
-         <div data-control-name=\"system.default.loading-spinner\" data-state=\"loading animating\" aria-label=\"Loading\"></div>\\
-         </section></main>\\
+        // 行连接必须是单反斜杠（Rust 字符串续行，吞掉换行与缩进）。
+        // 写成 `\\` 会把「字面反斜杠 + 换行 + 缩进」原样洗进 HTML —— 启动页
+        // 上散落的 `\` 乱码即源于此（标签之间的 `\` 成为可见文本节点）。
+        "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>Deepseek Harness EAC</title>{UI_SKIN_LINKS}</head>\
+         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"loading\">\
+         <main data-control-name=\"system.default.shell-page\" data-state=\"loading\">\
+         <section data-control-name=\"system.default.shell-content\">\
+         <div data-control-name=\"system.default.shell-title\">Deepseek Harness EAC</div>\
+         <div data-control-name=\"system.default.shell-status\">{}</div>\
+         <div data-control-name=\"system.default.loading-spinner\" data-state=\"loading animating\" aria-label=\"Loading\"></div>\
+         </section></main>\
          <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script></body></html>",
         ui_text("正在启动服务…", "Starting services..."), ws_port(), BRIDGE_JS
     )
@@ -2079,21 +2098,23 @@ fn died_page(log_path: &str, code: &str) -> String {
             .replace('>', "&gt;")
     };
     format!(
-        "<!doctype html><html class=\"eac-shell\" lang={0}><head><meta charset=utf-8><title>{1}</title>{UI_SKIN_LINKS}</head>\\
-         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"error\">\\
-         <main data-control-name=\"system.default.shell-page\" data-state=\"error\">\\
-         <section data-control-name=\"system.default.shell-content\">\\
-         <div data-control-name=\"system.default.shell-title\">{2}</div>\\
-         <div data-control-name=\"system.default.shell-status\">{3} {4}</div>\\
-         <div data-control-name=\"system.default.shell-log-path\">{5}</div>\\
-         <div data-control-name=\"system.default.shell-actions\">\\
-         <button data-control-name=\"system.default.restart-button\" data-state=\"idle\" onclick=\"retry()\">{6}</button>\\
-         </div></section></main>\\
-         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{7}/ws';{8}\\
-         function retry(){{\\
-           var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\\
-           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\\
-             .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\\
+        // 同 loading_page：单反斜杠续行；`\\` 会把字面 `\` 洗进 HTML/JS，
+        // HTML 里成为可见乱码，`<script>` 里更是直接 JS SyntaxError（重试按钮失效）。
+        "<!doctype html><html class=\"eac-shell\" lang={0}><head><meta charset=utf-8><title>{1}</title>{UI_SKIN_LINKS}</head>\
+         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"error\">\
+         <main data-control-name=\"system.default.shell-page\" data-state=\"error\">\
+         <section data-control-name=\"system.default.shell-content\">\
+         <div data-control-name=\"system.default.shell-title\">{2}</div>\
+         <div data-control-name=\"system.default.shell-status\">{3} {4}</div>\
+         <div data-control-name=\"system.default.shell-log-path\">{5}</div>\
+         <div data-control-name=\"system.default.shell-actions\">\
+         <button data-control-name=\"system.default.restart-button\" data-state=\"idle\" onclick=\"retry()\">{6}</button>\
+         </div></section></main>\
+         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{7}/ws';{8}\
+         function retry(){{\
+           var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\
+           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\
+             .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\
          }}</script></body></html>",
         ui_text("zh-CN", "en"),
         ui_text("服务已停止", "Service stopped"),
@@ -2345,11 +2366,12 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (died_page(&log, &code), "text/html; charset=utf-8")
     } else {
         let page = format!(
-            "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>DSH EAC Shell</title>{UI_SKIN_LINKS}</head>\\
-             <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"idle\">\\
-             <main data-control-name=\"system.default.shell-page\"><section data-control-name=\"system.default.shell-content\">\\
-             <h3 data-control-name=\"system.default.shell-title\">DSH EAC — Tauri ShellHost</h3>\\
-             <pre data-control-name=\"system.default.shell-status\" id=out>connecting…</pre></section></main>\\
+            // 同 loading_page：单反斜杠续行（`\\` 会把字面 `\` 洗进 HTML）。
+            "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>DSH EAC Shell</title>{UI_SKIN_LINKS}</head>\
+             <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"idle\">\
+             <main data-control-name=\"system.default.shell-page\"><section data-control-name=\"system.default.shell-content\">\
+             <h3 data-control-name=\"system.default.shell-title\">DSH EAC — Tauri ShellHost</h3>\
+             <pre data-control-name=\"system.default.shell-status\" id=out>connecting…</pre></section></main>\
              <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script></body></html>",
             ws_port(), BRIDGE_JS
         );
