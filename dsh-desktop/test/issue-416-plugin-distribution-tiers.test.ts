@@ -27,7 +27,9 @@ const { expectedRegistryText } = await import('../scripts/plugin-sync.mjs');
 
 const opsSource = read('dsh-desktop', 'lib', 'desktop', 'plugin-ops.ts');
 const syncSource = read('dsh-desktop', 'lib', 'desktop', 'companion-sync.ts');
-const clientSource = read('dsh-desktop', 'assets', 'plugins', 'dsh-plugin-manager', 'lib', 'client.js');
+// EAC-CORE-SHELL-01：EAC 版 dsh-plugin-manager 已退役（与内核同名遮蔽）。
+// 分级 UI 契约改锚在保留的行模型源（plugin-manager-state.ts）上。
+const rowModelSource = read('dsh-desktop', 'plugin-manager-state.ts');
 const marketHost = read('dsh-desktop', 'assets', 'plugins', 'dsh-unified-market', 'lib', 'host.js');
 
 const classes = registry.PLUGIN_DISTRIBUTION_CLASSES as Record<string, string>;
@@ -280,25 +282,25 @@ test('#416 回归：不同 scope 的同名包不再互相塌成一行', () => {
 
 test('#416 回归：canonical 包名解析（已知包走台账 id，未知 scoped 规范化全名）', () => {
   const canonical = state.canonicalBundleId as (name: string) => string;
-  assert.equal(canonical('@dsh-eac/skin-aurora'), 'dsh-eac-skin-aurora',
-    'EAC 皮肤包的行 id 不是去 scope 的短名（skin-aurora），而是台账 id');
-  assert.equal(canonical('@dsh-eac/ui-skin-loader'), 'dsh-ui-skin-loader', 'loader 行 id 与包名不同名');
+  assert.equal(canonical('@deepseek-ai/dsh-balance'), 'balance',
+    '已登记 scoped 包的行 id 走台账 id，不是去 scope 的短名');
+  assert.equal(canonical('@deepseek-ai/dsh-file-changes'), 'file-changes', '已登记 scoped 包的行 id 走台账 id');
   assert.equal(canonical('@vlln/dsh-navbar'), 'dsh-navbar', '推荐包走台账 id');
   assert.equal(canonical('@deepseek-ai/dsh-web-app'), 'dsh-web-app', '内核骨架保持现有短名语义');
   assert.equal(canonical('@evil/dsh-navbar'), 'scoped-406576696c2f6473682d6e6176626172', '未登记 scoped 包使用无碰撞编码，绝不折成别人的 id');
   assert.equal(canonical('dsh-community-thing'), 'dsh-community-thing', '无 scope 包名即 id');
 });
 
-test('#416 回归：已知包（皮肤平台 / 推荐包）不被当成外部层规划', () => {
+test('#416 回归：已知包（内置 / 推荐包）不被当成外部层规划', () => {
   const plan = state.externalDefaultDisabledPlan({
-    bundles: ['@dsh-eac/ui-skin-loader', '@dsh-eac/skin-aurora', '@vlln/dsh-navbar', '@deepseek-ai/dsh-web-app'],
+    bundles: ['@deepseek-ai/dsh-balance', '@vlln/dsh-navbar', '@deepseek-ai/dsh-web-app'],
     isRegistered: () => false,
     distributionClasses: classes,
     builtinIds: registry.DISTRIBUTION_BUILTIN_PLUGIN_IDS,
     recommendedIds: registry.RECOMMENDED_PACK_PLUGIN_IDS,
     // 刻意不给 skipIds：canonical 分级必须自己立得住（跳过只靠分级表与内核白名单）
   }) as { id: string; name: string }[];
-  assert.deepEqual(plan, [], '皮肤平台 / 推荐包 / 内核骨架都不得进默认禁用清单');
+  assert.deepEqual(plan, [], '内置包 / 推荐包 / 内核骨架都不得进默认禁用清单');
 });
 
 test('#416 回归：注册表缺失时，companion 的 raw/bare/canonical 三种 id 都能排除', () => {
@@ -346,16 +348,13 @@ test('companion-sync applies the external default-disable plan through the exist
 // 5. UI 契约（source-level）
 // ---------------------------------------------------------------------------
 
-test('plugin-manager client groups and labels builtin/recommended/external', () => {
-  has(clientSource, /tierBuiltin:\s*"/, 'UI 必须提供内置分级标签');
-  has(clientSource, /tierRecommended:\s*"/, 'UI 必须提供推荐分级标签');
-  has(clientSource, /tierExternal:\s*"/, 'UI 必须提供外部分级标签');
-  has(clientSource, /distributionClass/, 'UI 行模型必须携带 distributionClass');
-  has(clientSource, /const tierOf = \(row\)/, 'UI 必须按分级推导分组');
-  has(clientSource, /const tierGroups = \{/, 'UI 必须按三层分级分组渲染');
-  has(clientSource, /tierBadge\(row\)/, '每行必须显示分级徽章');
-  has(clientSource, /L\.tierRecommendedNote[\s\S]{0,120}L\.packPrefix/, '推荐组必须标注推荐包 id');
-  has(clientSource, /chip\("builtin", L\.groupBuiltin/, '筛选项必须按分级给出计数');
+test('plugin row model labels builtin/recommended/external', () => {
+  has(rowModelSource, /TIER_LABELS/, '行模型必须提供三层分级标签');
+  has(rowModelSource, /builtin:\s*'[^']*'/, '必须提供内置分级标签');
+  has(rowModelSource, /recommended:\s*'[^']*'/, '必须提供推荐分级标签');
+  has(rowModelSource, /external:\s*'[^']*'/, '必须提供外部分级标签');
+  has(rowModelSource, /distributionClass/, '行模型必须携带 distributionClass');
+  has(rowModelSource, /tierLabel:/, '行模型必须暴露 tierLabel');
 });
 
 // ---------------------------------------------------------------------------

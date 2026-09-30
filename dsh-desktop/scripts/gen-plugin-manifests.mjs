@@ -17,7 +17,8 @@
  * 诚实性约束：facets 为最小占位（仅 host entry）、permissions 留空 = 尚未
  * 参与 std 协商，不编造能力声明；上游为 monorepo 时在 x-eac.sourceNote
  * 注明；eac-original 无上游基线，不写 patched/patchNote。皮肤不生成
- * （走 skin wiring，host facet 语义不实）。
+ * （走 skin wiring，host facet 语义不实）；EAC-CORE-SHELL-01 起皮肤平台
+ * 已从 main 线台账移除，故 `type !== 'plugin'` 过滤不再触及皮肤条目。
  *
  * 用法：node scripts/gen-plugin-manifests.mjs [--ids C001,C004] [--dry]
  */

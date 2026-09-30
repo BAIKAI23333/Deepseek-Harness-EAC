@@ -225,37 +225,13 @@ test('门禁半分离：host 面服务不得为 client inject 兜底（旧并集
   ]);
 });
 
-test('host 半静态 inject 进入扫描面（dsh-compact/index.js 与 loader/皮肤 host）', () => {
+test('host 半静态 inject 进入扫描面（dsh-compact/index.js）', () => {
   const byRel = new Map(pluginEntries.map((e) => [`${e.owner}/${e.rel}`, e]));
   const compact = byRel.get('dsh-compact/lib/index.js');
   assert.ok(compact, 'dsh-compact 的 host 半（lib/index.js）必须在扫描面');
   assert.equal(compact.half, 'host');
   for (const name of ['settings', 'webServer', 'agents', 'agentPresets']) {
     assert.ok(compact.injects.includes(name), `host 半 inject 必须采到 ${name}（inject=[…] 与 ctx.inject?.(…) 两种形态）`);
-  }
-  const loaderHost = byRel.get('dsh-ui-skin-loader/lib/index.js');
-  assert.ok(loaderHost, 'loader 的 host 半必须在扫描面');
-  assert.equal(loaderHost.half, 'host');
-  // loader / 皮肤 host 半只有动态登记形态：ctx.inject(["settings"], cb)。
-  assert.match(read('dsh-desktop', 'assets', 'plugins', 'dsh-ui-skin-loader', 'lib', 'index.js'), /\.inject\(\s*\[/,
-    'loader host 半确实用 ctx.inject([…]) 形态（采集规则必须覆盖它）');
-  const skins = [...byRel.keys()].filter((k) => /^dsh-eac-skin-.*\/lib\/index\.js$/.test(k));
-  assert.ok(skins.length >= 13, `13 款皮肤包的 host 半都必须在扫描面（实际 ${skins.length}）`);
-  // 皮肤 client 半（inject uiSkinLoader）同样必须在扫描面，否则真实树判定被掏空。
-  const skinClients = pluginEntries.filter((e) => e.half === 'client' && /^dsh-eac-skin-/.test(e.owner));
-  assert.equal(skinClients.length, skins.length, '每款皮肤包的 client 半都必须在扫描面');
-  assert.ok(skinClients.some((e) => e.injects.includes('uiSkinLoader')),
-    '皮肤 client 消费 loader 服务（uiSkinLoader）的 inject 必须被采集');
-  const dynamicHostInject = pluginEntries.filter(
-    (e) => e.half === 'host' && e.injects.includes('settings') && /^dsh-(ui-skin-loader|eac-skin-)/.test(e.owner),
-  );
-  assert.ok(dynamicHostInject.length >= 2,
-    `loader 与皮肤 host 的 ctx.inject(["settings"]) 必须被采集（实际 ${dynamicHostInject.map((e) => e.owner).join(', ')}）`);
-  // 插件自有的 client 注入常量（loader 的 CLIENT_INJECT）同样必须被采集。
-  const loaderClient = byRel.get('dsh-ui-skin-loader/lib/client.js');
-  assert.ok(loaderClient && loaderClient.half === 'client');
-  for (const name of ['slots', 'configForms', 'remote', 'theme', 'locale']) {
-    assert.ok(loaderClient.injects.includes(name), `loader client inject 必须采到 ${name}（CLIENT_INJECT 常量形态）`);
   }
 });
 
@@ -264,7 +240,7 @@ test('host 半静态 inject 进入扫描面（dsh-compact/index.js 与 loader/�
 // ---------------------------------------------------------------------------
 
 test('随包插件 inject 只消费本半（client/host）的服务面', () => {
-  assert.ok(pluginEntries.length >= 25, `随包插件入口扫描面不得为空（实际 ${pluginEntries.length}）`);
+  assert.ok(pluginEntries.length >= 20, `随包插件入口扫描面不得为空（实际 ${pluginEntries.length}）`);
   assert.ok(pluginEntries.some((e) => e.half === 'client' && e.injects.length > 0), 'client 半必须有被扫描到的 inject');
   const hostWithInject = pluginEntries.filter((e) => e.half === 'host' && e.injects.length > 0);
   assert.ok(hostWithInject.length > 0, 'host 半必须有被扫描到的 inject（否则 host 门禁形同虚设）');

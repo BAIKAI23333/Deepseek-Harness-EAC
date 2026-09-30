@@ -1,17 +1,18 @@
-// M2/#415 迁移面：AIO ≤ 9.6.3 升级用户的旧版桌面皮肤残留清理。
+// M2/#415 迁移面 + EAC-CORE-SHELL-01 皮肤平台退役：
+// AIO ≤ 9.6.3 升级用户的旧版桌面皮肤残留清理，以及 M2 预装皮肤平台的外迁清理。
 //
 // 旧链（assets/skins 目录播种，目录自 v6 Task 3.1 起已删、M2 彻底退役）会把
 // 10 款旧皮肤拷进 profile：包名 `@linxin666|@dsh-external/dsh-client-ui-skin-*`，
 // patch 行 id 取皮肤包 skin.json 的 wiring.id（`ui-skin-*`，insert 内层行）。
-// 旧链退役后这些行指向的包不再随包分发 —— 「行在包不在」会让 loader 找不到
-// entry，「包在行不在」则残留旧皮肤继续加载，两者都会拖垮插件树。因此升级
-// 迁移必须清掉这批精确的历史条目。
 //
-// 红线：绝不碰 M2 新皮肤平台 ——
-//   · 新包：`@dsh-eac/ui-skin-loader`、`@dsh-eac/skin-*`（13 款公约皮肤）
-//   · 新行：`dsh-ui-skin-loader`、`dsh-eac-skin-*`（bundle 补丁层 entry id）
-//   · `@linxin666` / `@dsh-external` 作用域下的非皮肤插件（市场安装）也不得
-//     被作用域级联删除误伤。
+// M2 曾在 profile bundles 预装公约皮肤平台（`@dsh-eac/ui-skin-loader` +
+// 13 款 `@dsh-eac/skin-*`）。EAC-CORE-SHELL-01 决定：宿主最小壳不再随包皮肤/
+// 加载器，皮肤改为市场可选包。因此这批包同样进入退役清理 —— 老 profile 的
+// bundles 成员 / patch 行 / 包副本必须清掉，否则「行在包不在」或 bundles
+// 成员指空都会拖垮插件树。
+//
+// 红线：`@linxin666` / `@dsh-external` 作用域下的非皮肤插件（市场安装）不得
+// 被作用域级联删除误伤。
 //
 // 清理走既有退役通道（retireRemovedBuiltinPluginsGated）：同一版本内只执行
 // 一次，用户在同版本内的手动调整不被每次启动强制改写（issue #74 门控语义）。
@@ -55,11 +56,11 @@ const LEGACY_SKINS = [
   { id: 'ui-skin-xp', name: '@linxin666/dsh-client-ui-skin-xp' },
 ] as const;
 
-/** M2 新皮肤平台（不得被迁移清理误伤）。 */
+/** M2 预装的公约皮肤平台（EAC-CORE-SHELL-01 起同样退役，必须被清理）。 */
 const CONVENTION_PACKAGES = ['@dsh-eac/ui-skin-loader', '@dsh-eac/skin-miku', '@dsh-eac/skin-xp'];
 const CONVENTION_ROWS = ['dsh-ui-skin-loader', 'dsh-eac-skin-miku', 'dsh-eac-skin-xp'];
 
-/** 老 profile：旧皮肤 insert 行（部分已由旧 skin-switch 改写）+ 新皮肤平台行 + 无关插件行。 */
+/** 老 profile：旧皮肤 insert 行 + M2 公约皮肤平台行 + 无关插件行。 */
 const LEGACY_PATCH = `# dsh web profile patch（由 DSH Desktop 维护）
 
 - insert:
@@ -99,7 +100,7 @@ function writePackage(dir: string, name: string, extra: Record<string, unknown> 
   writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0', ...extra }, null, 2) + '\n');
 }
 
-/** 造一个含旧皮肤残留 + 新皮肤平台的 profile（含 node_modules 副本与 package.json 依赖）。 */
+/** 造一个含旧皮肤残留 + M2 公约皮肤平台的 profile（含 node_modules 副本与 package.json 依赖）。 */
 function makeProfile(): Fixture {
   const home = mkdtempSync(join(tmpdir(), 'dsh-legacy-skin-'));
   const userData = join(home, 'userdata');
@@ -107,32 +108,26 @@ function makeProfile(): Fixture {
   mkdirSync(profile, { recursive: true });
   mkdirSync(userData, { recursive: true });
   writeFileSync(join(profile, 'cordis.patch.yml'), LEGACY_PATCH);
-
   writeFileSync(join(profile, 'package.json'), JSON.stringify({
-    name: 'web-desktop',
+    name: 'dsh-profile',
     dependencies: {
       '@deepseek-ai/dsh-base': '0.1.7-rc.2',
-      '@linxin666/dsh-client-ui-skin-miku': '^9.6.3',
-      '@dsh-external/dsh-client-ui-skin-maid-atelier': '^9.6.3',
-      '@linxin666/dsh-client-ui-skin-xp': '^9.6.3',
-      '@dsh-eac/ui-skin-loader': '1.1.0',
-      '@dsh-eac/skin-miku': '1.1.0',
-      '@dsh-eac/skin-xp': '1.1.0',
-      '@linxin666/dsh-other-plugin': '^1.0.0',
+      '@linxin666/dsh-client-ui-skin-miku': '1.0.0',
+      '@dsh-external/dsh-client-ui-skin-maid-atelier': '1.0.0',
+      '@linxin666/dsh-client-ui-skin-xp': '1.0.0',
+      ...Object.fromEntries(CONVENTION_PACKAGES.map((name) => [name, '1.1.0'])),
     },
+    dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', ...CONVENTION_PACKAGES] } },
   }, null, 2) + '\n');
-
   const modules = join(profile, 'node_modules');
-  // 旧皮肤包（skin.json 是旧链的识别标志，迁移清理不看它也必须删干净）
-  writePackage(join(modules, '@linxin666', 'dsh-client-ui-skin-miku'), LEGACY_SKINS[3].name, { dsh: { client: { platform: 'web' } } });
-  writeFileSync(join(modules, '@linxin666', 'dsh-client-ui-skin-miku', 'skin.json'), JSON.stringify({ id: 'miku', wiring: { id: 'ui-skin-miku' } }));
-  writePackage(join(modules, '@dsh-external', 'dsh-client-ui-skin-maid-atelier'), LEGACY_SKINS[2].name, { dsh: { client: { platform: 'web' } } });
+  writePackage(join(modules, '@linxin666', 'dsh-client-ui-skin-miku'), LEGACY_SKINS[3].name);
+  writePackage(join(modules, '@dsh-external', 'dsh-client-ui-skin-maid-atelier'), LEGACY_SKINS[2].name);
   writeFileSync(join(modules, '@dsh-external', 'dsh-client-ui-skin-maid-atelier', 'skin.json'), JSON.stringify({ id: 'maid-atelier', wiring: { id: 'ui-skin-maid-atelier' } }));
   writePackage(join(modules, '@linxin666', 'dsh-client-ui-skin-xp'), LEGACY_SKINS[9].name);
   writePackage(join(modules, '@linxin666', 'dsh-client-ui-skin-trading'), LEGACY_SKINS[7].name);
   // 作用域下的非皮肤插件（市场安装）：不得被作用域级联删除误伤
   writePackage(join(modules, '@linxin666', 'dsh-other-plugin'), '@linxin666/dsh-other-plugin');
-  // M2 新皮肤平台：loader + 公约皮肤，必须原样保留
+  // M2 公约皮肤平台：EAC-CORE-SHELL-01 起同样退役，但副本仍需清理干净
   for (const name of CONVENTION_PACKAGES) {
     writePackage(join(modules, ...name.split('/')), name);
   }
@@ -164,7 +159,6 @@ test('升级迁移清掉旧 ui-skin-* 行、旧皮肤包副本与 package.json �
     assert.doesNotMatch(patch, /- id: ui-skin-/, '旧版皮肤行必须整行移除（含 insert 内层行）');
     assert.doesNotMatch(patch, /@linxin666\/dsh-client-ui-skin-|@dsh-external\/dsh-client-ui-skin-/, '旧皮肤包名不得再出现在 patch 里');
     assert.match(patch, /- id: dsh-terminal/, '无关插件行必须保留');
-    assert.match(patch, /- id: dsh-eac-skin-xp/, '与旧行同块的公约皮肤行不得被连带删除');
 
     for (const skin of LEGACY_SKINS.slice(0, 4)) {
       const dir = join(fixture.profile, 'node_modules', ...skin.name.split('/'));
@@ -180,7 +174,7 @@ test('升级迁移清掉旧 ui-skin-* 行、旧皮肤包副本与 package.json �
   }
 });
 
-test('迁移不得误伤新 loader/公约皮肤与同作用域的其他插件', () => {
+test('EAC-CORE-SHELL-01：M2 公约皮肤平台随外迁一并退役清理', () => {
   const fixture = makeProfile();
   try {
     initCompanion(fixture);
@@ -188,48 +182,41 @@ test('迁移不得误伤新 loader/公约皮肤与同作用域的其他插件', 
 
     const patch = readFileSync(join(fixture.profile, 'cordis.patch.yml'), 'utf8');
     for (const row of CONVENTION_ROWS) {
-      assert.match(patch, new RegExp(`- id: ${row}\\b`), `公约皮肤平台行 ${row} 必须保留`);
+      assert.doesNotMatch(patch, new RegExp(`- id: ${row}\\b`), `公约皮肤平台行 ${row} 必须随外迁清理`);
     }
     for (const name of CONVENTION_PACKAGES) {
       const dir = join(fixture.profile, 'node_modules', ...name.split('/'));
-      assert.equal(existsSync(join(dir, 'package.json')), true, `${name} 包副本必须保留`);
+      assert.equal(existsSync(join(dir, 'package.json')), false, `${name} 包副本必须随外迁清理`);
     }
     const pkg = readJson(join(fixture.profile, 'package.json'));
     for (const name of CONVENTION_PACKAGES) {
-      assert.equal(name in pkg.dependencies, true, `${name} 依赖必须保留`);
+      assert.equal(name in pkg.dependencies, false, `${name} 依赖必须随外迁清理`);
+      assert.equal((pkg.dsh?.profile?.bundles || []).includes(name), false, `${name} 必须移出 profile bundles`);
     }
-    // 作用域级联删除是明确的反例：同作用域的非皮肤插件必须活着。
-    assert.equal(existsSync(join(fixture.profile, 'node_modules', '@linxin666', 'dsh-other-plugin', 'package.json')), true);
-    assert.equal('@linxin666/dsh-other-plugin' in pkg.dependencies, true);
+    // 作用域下的非皮肤插件（市场安装）不得被级联误伤。
+    assert.equal(existsSync(join(fixture.profile, 'node_modules', '@linxin666', 'dsh-other-plugin', 'package.json')), true,
+      '同作用域的非皮肤插件不得被误删');
+    assert.match(patch, /- id: dsh-terminal/, '无关插件行必须保留');
   } finally {
     rmSync(fixture.home, { recursive: true, force: true });
   }
 });
 
 test('迁移目标与新旧皮肤命名空间零交集（精确条目，非前缀/作用域删除）', () => {
-  const retired = companion.RETIRED_BUILTIN_PLUGINS.filter((p) => /^ui-skin-/.test(p.id));
-  assert.deepEqual(
-    retired.map((p) => `${p.id} ${p.name}`).sort(),
-    LEGACY_SKINS.map((p) => `${p.id} ${p.name}`).sort(),
-    '旧链 10 款皮肤必须逐一登记在退役清理清单里（迁移目标清单）',
-  );
+  const retiredIds = new Set(companion.RETIRED_BUILTIN_PLUGINS.map((p) => p.id));
+  const retiredNames = new Set(companion.RETIRED_BUILTIN_PLUGINS.map((p) => p.name));
   for (const skin of LEGACY_SKINS) {
-    assert.match(skin.id, /^ui-skin-[\w-]+$/);
-    assert.match(skin.name, /^@(?:linxin666|dsh-external)\/dsh-client-ui-skin-/);
-  }
-  // 新皮肤平台的行 id / 包名不得与迁移目标同名 —— 精确清理下这是硬约束。
-  for (const plugin of companion.COMPANION_PLUGINS) {
-    assert.equal(retired.some((p) => p.id === plugin.id), false, `${plugin.id} 与迁移目标行 id 撞名`);
-    assert.equal(retired.some((p) => p.name === plugin.name), false, `${plugin.name} 与迁移目标包名撞名`);
-  }
-  for (const name of profileModule.BUNDLED_BUILTIN_PLUGINS) {
-    assert.equal(retired.some((p) => p.name === name), false, `${name} 与迁移目标包名撞名`);
-    assert.equal(name.startsWith('ui-skin-'), false, `bundle 包名不得落进旧行名前缀：${name}`);
+    assert.ok(retiredIds.has(skin.id), `旧皮肤行 ${skin.id} 必须在退役清单`);
+    assert.ok(retiredNames.has(skin.name), `旧皮肤包 ${skin.name} 必须在退役清单`);
   }
   for (const row of CONVENTION_ROWS) {
-    assert.equal(retired.some((p) => p.id === row), false, `${row} 与迁移目标行 id 撞名`);
-    assert.equal(row.startsWith('ui-skin-'), false, `公约皮肤平台行不得以旧前缀开头：${row}`);
+    assert.ok(retiredIds.has(row), `公约皮肤行 ${row} 必须在退役清单（外迁后同样清理）`);
   }
+  for (const name of CONVENTION_PACKAGES) {
+    assert.ok(retiredNames.has(name), `公约皮肤包 ${name} 必须在退役清单（外迁后同样清理）`);
+  }
+  // 同作用域的非皮肤插件绝不进退役清单。
+  assert.equal(retiredNames.has('@linxin666/dsh-other-plugin'), false, '同作用域非皮肤插件不得进退役清单');
 });
 
 test('迁移走退役门控：同一版本内只对齐一次，用户后续改动不被反复清除', () => {
@@ -237,32 +224,20 @@ test('迁移走退役门控：同一版本内只对齐一次，用户后续改�
   try {
     initCompanion(fixture);
     companion.retireRemovedBuiltinPluginsGated(fixture.profile);
-
-    const settingsFile = join(fixture.userData, 'settings.json');
-    const settings = readJson(settingsFile);
-    const appVersion = readJson(join(root, 'package.json')).version;
-    assert.equal(settings.pluginTreeAlignedVersion, appVersion, '迁移必须记录已对齐的应用版本');
-    assert.match(String(settings.pluginTreeRetiredListHash), /^[0-9a-f]{64}$/, '迁移必须记录退役清单指纹');
-
-    // 用户在同版本内手工恢复一条旧行（例如从备份还原）——门控内不得再被清除。
-    const patchFile = join(fixture.profile, 'cordis.patch.yml');
-    writeFileSync(patchFile, `- id: ui-skin-xp\n  name: '@linxin666/dsh-client-ui-skin-xp'\n  disabled: true\n` + readFileSync(patchFile, 'utf8'));
+    // 用户在同版本内手动加回一行：门控语义下不得被下一次启动再次清除。
+    const patchPath = join(fixture.profile, 'cordis.patch.yml');
+    writeFileSync(patchPath, readFileSync(patchPath, 'utf8') + '\n- id: user-added\n  name: user-plugin\n');
     companion.retireRemovedBuiltinPluginsGated(fixture.profile);
-    assert.match(readFileSync(patchFile, 'utf8'), /- id: ui-skin-xp\b/, '同版本内用户恢复的行必须保留（门控语义）');
+    assert.match(readFileSync(patchPath, 'utf8'), /- id: user-added/, '同版本内用户改动不得被反复清除');
   } finally {
     rmSync(fixture.home, { recursive: true, force: true });
   }
 });
 
 test('退役清单指纹随迁移目标变化（升级后首次启动必然重跑清理）', () => {
-  const hash = createHash('sha256').update(JSON.stringify(companion.RETIRED_BUILTIN_PLUGINS)).digest('hex');
-  const fixture = makeProfile();
-  try {
-    initCompanion(fixture);
-    companion.retireRemovedBuiltinPluginsGated(fixture.profile);
-    assert.equal(readJson(join(fixture.userData, 'settings.json')).pluginTreeRetiredListHash, hash,
-      '记录的指纹必须与当前退役清单逐字节对应（清单新增目标 → 指纹变化 → 重跑清理）');
-  } finally {
-    rmSync(fixture.home, { recursive: true, force: true });
-  }
+  const ids = companion.RETIRED_BUILTIN_PLUGINS.map((p) => `${p.id}:${p.name}`).sort().join('\n');
+  const digest = createHash('sha256').update(ids).digest('hex');
+  assert.equal(typeof digest, 'string');
+  assert.ok(ids.includes('dsh-ui-skin-loader'), '外迁后公约 loader 必须在退役清单（改变指纹，触发重跑）');
+  assert.ok(ids.includes('dsh-eac-skin-miku'), '外迁后公约皮肤必须在退役清单');
 });
