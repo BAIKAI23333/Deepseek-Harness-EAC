@@ -43,6 +43,59 @@ try {
 type Mod = { init: (d: unknown) => void } & Record<string, unknown>;
 const mount = (name: string): Mod => require(LIB(name)) as Mod;
 
+// ---- 安装环境隔离（ADR 0004）：必须在任何读用户目录的业务模块之前完成 ----
+//
+// Rust L1 只注入产品数据根（DSH_EAC_DATA_ROOT）+ 通道（DSH_EAC_CHANNEL）；
+// 注册表/锁/清单/变量治理全部由 dsh-dpx 完成（本模块只做适配，不复制其逻辑）。
+//
+// 失败语义是 **fail closed**：初始化不了就退场，绝不回退宿主 `~/.dsh` ——
+// 那正是旧 profile 污染（旧插件 pending / 白屏）的根因。退场由壳层 reader
+// 广播 boot.server-died，走既有恢复/诊断链。
+const isolatedMode = Boolean(process.env.DSH_EAC_DATA_ROOT || process.env.DSH_EAC_DPX_ROOT);
+type EnsuredEnvironment = {
+  paths: { dshHome: string; root: string };
+  runtime: NodeJS.ProcessEnv;
+  legacyProfileDetected: boolean;
+  legacyDshHome: string;
+  name: string;
+  channel: string;
+  rootExistedBefore: boolean;
+};
+type EnvironmentModule = {
+  ensureEacEnvironment(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): EnsuredEnvironment;
+  applyRuntimeEnvironment(runtime: NodeJS.ProcessEnv, target?: NodeJS.ProcessEnv): void;
+  diagnoseEacEnvironment(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform): Record<string, unknown>;
+  removeEacEnvironment(
+    options?: { purge?: boolean; dryRun?: boolean },
+    env?: NodeJS.ProcessEnv,
+    platform?: NodeJS.Platform,
+  ): Record<string, unknown>;
+};
+// 隔离模块句柄：初始化后仍要留着 —— environment.status/remove 两个运维 RPC
+// 要调用同一个适配层，而不是各自再 require 一份（会出现两套事实源）。
+let environmentMod: EnvironmentModule | null = null;
+let ensuredEnvironment: EnsuredEnvironment | null = null;
+if (isolatedMode) {
+  environmentMod = require(LIB('environment')) as EnvironmentModule;
+  try {
+    ensuredEnvironment = environmentMod.ensureEacEnvironment();
+  } catch (error) {
+    // fail closed 的失败信息必须自证根因（哪一步、哪个路径），否则用户只看到
+    // 白屏。这里把 dpx 的原始错误与产品数据根/注册表一起打出来。
+    const detail = String((error instanceof Error && error.stack) || error);
+    say('[environment] dsh-dpx 环境初始化失败（fail closed，不回退宿主 ~/.dsh）: ' + detail);
+    say('[environment] 产品数据根=' + (process.env.DSH_EAC_DATA_ROOT || '(未注入)')
+      + ' 通道=' + (process.env.DSH_EAC_CHANNEL || '(默认)')
+      + ' 提示：可用 environment.status 诊断，或 environment.remove(purge) 清理后重装');
+    process.exit(2);
+  }
+  // 应用 dpx 的全量 runtime（含清掉会伪装成宿主配置的继承变量）。
+  environmentMod.applyRuntimeEnvironment(ensuredEnvironment.runtime, process.env);
+  say('[environment] 隔离已生效：name=' + ensuredEnvironment.name
+    + ' root=' + ensuredEnvironment.paths.root
+    + (ensuredEnvironment.rootExistedBefore ? '（复用既有环境实例）' : '（新建环境实例）'));
+}
+
 const procMod = mount('proc');
 const platformMod = mount('platform') as Mod & {
   createDesktopPlatform(): {
@@ -52,7 +105,10 @@ const platformMod = mount('platform') as Mod & {
 };
 const desktopPlatform = platformMod.createDesktopPlatform();
 const userDataDir = desktopPlatform.userDataDir();
-const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+const dshHome = ensuredEnvironment?.paths.dshHome || process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+if (ensuredEnvironment?.legacyProfileDetected) {
+  say('[environment] 检测到宿主机旧 .dsh/web-desktop profile：本次启动保持隔离，只做提示，不迁移、不删除、不覆盖');
+}
 const pathsMod = mount('runtime-paths');
 const profileMod = mount('profile');
 const runtimePatchesMod = mount('runtime-patches');
@@ -392,7 +448,106 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       // staticPort 拼静态预览 URL。静态预览服务随插件面剥出，故恒 0 ——
       // 客户端按既有契约回退宿主 /dsh-files/static/ 路由（非错误路径）。
       staticPort: 0,
+      // P1：把隔离身份随 boot.state 一起给出（壳栏/关于页/支持人员定位用）。
+      // 只暴露身份与路径，不在这里跑诊断 —— 诊断是 environment.status 的职责，
+      // 避免每次 boot.state 都起一个 dpx 子进程。
+      environment: isolatedMode && ensuredEnvironment
+        ? {
+          isolated: true,
+          name: ensuredEnvironment.name,
+          root: ensuredEnvironment.paths.root,
+          dshHome: ensuredEnvironment.paths.dshHome,
+          channel: ensuredEnvironment.channel,
+          rootExistedBefore: ensuredEnvironment.rootExistedBefore,
+          legacyProfileDetected: ensuredEnvironment.legacyProfileDetected,
+        }
+        : { isolated: false },
     };
+  },
+  // ---- 安装环境运维（P1：损坏环境可诊断 + 最小 repair/remove 能力）--------
+  //
+  // 边界（ADR 0004）：环境治理逻辑属于 dsh-dpx，这里只是**薄 RPC 适配**。
+  // 非隔离模式（显式 DSH_HOME 的开发启动）下所有方法都明确回 non-isolated，
+  // 而不是悄悄报一个空状态。
+  'environment.status': (): RpcResult => {
+    if (!isolatedMode || !environmentMod) {
+      return { ok: true, isolated: false, reason: 'non-isolated（未注入 DSH_EAC_DATA_ROOT/DSH_DPX_ROOT）' };
+    }
+    try {
+      const diagnosis = environmentMod.diagnoseEacEnvironment();
+      return {
+        ok: true,
+        isolated: true,
+        // 本次启动实际生效的环境（sidecar 真正在用的那个根）。
+        active: {
+          name: ensuredEnvironment?.name,
+          root: ensuredEnvironment?.paths.root,
+          dshHome: ensuredEnvironment?.paths.dshHome,
+          channel: ensuredEnvironment?.channel,
+          rootExistedBefore: ensuredEnvironment?.rootExistedBefore,
+        },
+        diagnosis,
+        legacyProfileDetected: ensuredEnvironment?.legacyProfileDetected === true,
+        legacyDshHome: ensuredEnvironment?.legacyDshHome,
+        // 单一结论字段：UI 不需要自己解读 problems 数组。
+        health: Array.isArray((diagnosis as { problems?: unknown[] }).problems)
+          && ((diagnosis as { problems?: unknown[] }).problems as unknown[]).length === 0
+          ? 'healthy' : 'damaged',
+      };
+    } catch (error) {
+      // 诊断本身失败（dpx 模块缺失等）= 隔离不可用，如实报告，不伪装 healthy。
+      return {
+        ok: false,
+        isolated: true,
+        health: 'unavailable',
+        error: String((error instanceof Error && error.message) || error),
+      };
+    }
+  },
+  // 移除本通道环境记录。purge=false 只摘记录（保留环境根数据）；purge=true
+  // 连环境根一起删。dryRun=true 只返回计划、不落盘。
+  //
+  // 安全（P1）：只有**已登记**环境可移除；未登记目录（哪怕非空）一律拒绝，
+  // 不迁移旧 .dsh、不复制凭据。删除是显式动作，默认路径仍是 fail-closed + 诊断。
+  'environment.remove': (p): RpcResult => {
+    if (!isolatedMode || !environmentMod) {
+      return { ok: false, error: 'non-isolated：未启用安装环境隔离，无可移除的隔离环境' };
+    }
+    try {
+      const result = environmentMod.removeEacEnvironment({
+        purge: !!(p && p.purge),
+        dryRun: !!(p && p.dryRun),
+      });
+      return { ok: true, ...result };
+    } catch (error) {
+      return { ok: false, error: String((error instanceof Error && error.message) || error) };
+    }
+  },
+  // 兼容 v5 的 `environment.repair` 命名：当前语义等价于「重新确保环境」（幂等），
+  // 真正的修复动作由 dpx 的 createEnvironment 完成（损坏注册表会 fail closed，
+  // 不静默重建 —— 重写注册表属于 dpx，不属于 EAC）。
+  'environment.repair': (): RpcResult => {
+    if (!isolatedMode || !environmentMod) {
+      return { ok: false, error: 'non-isolated：未启用安装环境隔离' };
+    }
+    try {
+      const ensured = environmentMod.ensureEacEnvironment();
+      return {
+        ok: true,
+        repaired: true,
+        root: ensured.paths.root,
+        dshHome: ensured.paths.dshHome,
+        rootExistedBefore: ensured.rootExistedBefore,
+        note: '环境已确保可用（dpx 幂等创建）；如需清理请使用 environment.remove',
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: String((error instanceof Error && error.message) || error),
+        hint: '环境无法通过幂等创建修复（注册表损坏/目录被占用）。可用 environment.status 诊断，'
+          + '或在确认数据可弃后用 environment.remove({ purge: true }) 清理后重装。',
+      };
+    }
   },
   // ---- 插件管理（v6 Task 3.3 接回）----------------------------------------
   // 仅供本机 Web UI 经 bridge 调用；Rust 壳不直接消费这些方法

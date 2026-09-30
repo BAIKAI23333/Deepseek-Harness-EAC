@@ -97,7 +97,9 @@ const bridgeTree = extractKeyTree(bridge, '(window as any).dshDesktop =');
 // 显式列为「不得出现」，防止以接回为名把 v6 收敛成果整体回退。
 const ALWAYS_PRESENT = ['protocolVersion', 'locale', 'plugins', 'updates', 'windowControls', 'boot'];
 const RESTORED_BY_TASK_3_3 = ['pluginManager', 'guard', 'fileDrop', 'getPathForFile',
-  'getInfo', 'revertFiles', 'openPath', 'openExternal'];
+  'getInfo', 'revertFiles', 'openPath', 'openExternal',
+  // P1（ADR 0004 运维闭环）：安装环境诊断/移除面，锁住不得回退。
+  'environment'];
 // 依据 metaone01 2026-09-19 的裁决（按 ADR 0006）：
 //  - balance 不作内置，转为推荐插件（Task 4 范围）；其 balance* RPC 面不接回；
 //  - plugin-wizard 因后续会与其它插件管理功能冲突，明确不接入。
