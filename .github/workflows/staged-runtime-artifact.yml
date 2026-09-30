@@ -42,9 +42,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 打包必须携带固定提交的 dsh-dpx JS API（ADR 0004）。
+          submodules: recursive
 
       - name: Verify native runner architecture
         run: node -e "if (process.arch !== '${{ matrix.arch }}') throw new Error('expected ${{ matrix.arch }}, got ' + process.arch)"
+
+      - name: Verify dsh-dpx submodule pin
+        working-directory: ${{ github.workspace }}
+        run: node tauri-shell/check-dpx-pin.mjs
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
