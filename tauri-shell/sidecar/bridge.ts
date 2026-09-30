@@ -23,10 +23,24 @@
 //   __DSH_DIRECTORY_PICKER__ — SYNC-004，官方 DirectoryPickerBridge
 //     （preload-app.ts:75-77，原生目录选择对话框 → 绝对路径 | null；
 //     实现区注释见下方 __DSH_DIRECTORY_PICKER__ 节）
+//   dshDesktop.browser — SYNC-006，官方 DesktopBrowserBridge（types.d.ts:16-23，
+//     侧栏浏览器租约 acquire/release/onOpenRequested；L1 持有真实 guest 子
+//     webview，<webview> 宿主元素适配 —— 实现区注释见下方 SYNC-006 节）
 
 (function () {
   var BAR_ID = '__dsh_desktop_chrome__';
   var BAR_HEIGHT = 36;
+
+  // SYNC-006：页面世代号（每次文档加载唯一）。WS 就绪时经 browser.page-hello
+  // 上报 L1，L1 回收世代不符的 guest（官方由 webContents destroyed 收敛页面
+  // 死亡后的孤儿租约，本壳以世代比对等价实现，见 main.rs 同名节）。
+  var pageGeneration = (function (): string {
+    try {
+      var c = (window as any).crypto;
+      if (c && typeof c.randomUUID === 'function') return String(c.randomUUID());
+    } catch (e) { /* vm 单测无 crypto */ }
+    return 'gen-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+  })();
 
   // ---------------------------------------------------------------------------
   // data-platform（SYNC-001 · 官方 markDocumentPlatform 同语义）
@@ -76,6 +90,9 @@
   var readyHooks: ((info: any) => void)[] = [];
   var rpc = (window as any).__DSH_WS_RPC__({
     onOpen: function () {
+      // SYNC-006：页面世代报到（fire-and-forget）。L1 以此回收旧文档的孤儿
+      // guest；同文档的 WS 重连世代不变 → 幂等。先于任何 browser.* 调用。
+      send('browser.page-hello', { generation: pageGeneration });
       call('boot.state', {}).then(function (info) {
         try { readyHooks.forEach(function (h) { h(info); }); } catch (e) { /* boot.state 不可用不致命 */ }
       }).catch(function () { /* boot.state 不可用不致命 */ });
@@ -474,6 +491,45 @@
     openPath: function (path: string) { return call('files.open', { path: path }); },
     // 外链打开：L1 拦截（ShellExecuteW）。
     openExternal: function (url: string) { return call('shell.open-external', { url: url }); },
+    // SYNC-006：官方 DesktopBrowserBridge（内核 ipc.ts:73 browser: +
+    // dsh-client-ui-sidebar-browser types.d.ts:16-23 逐字段对齐）。租约与
+    // guest 生命周期由 L1 持有（真实子 webview，绝不伪造）；<webview> 宿主
+    // 元素适配与消费者链见上方 SYNC-006 区注释。
+    browser: {
+      // acquire(workspace) → Promise<DesktopBrowserReservation{lease,partition}>。
+      // generation 随载荷上报（页面世代，L1 孤儿回收依据）。
+      acquire: function (workspace: string): Promise<{ lease: string; partition: string }> {
+        return call('browser.acquire', { workspace: workspace, generation: pageGeneration }).then(function (r: any) {
+          // 形态守门：官方 DesktopBrowserReservation = {lease, partition} 双
+          // 非空字符串；畸形回包 reject（绝不降级为伪造租约）。
+          if (!r || typeof r.lease !== 'string' || r.lease === ''
+            || typeof r.partition !== 'string' || r.partition === '') {
+            throw new Error('desktop browser: invalid reservation from shell');
+          }
+          return { lease: r.lease, partition: r.partition };
+        });
+      },
+      // release(lease) → Promise<void>：L1 销毁 guest 后 resolve（幂等，重复
+      // release / 未知 lease 不报错 —— 官方「guest 已销毁后返回」语义）。
+      release: function (lease: string): Promise<void> {
+        return call('browser.release', { lease: lease }).then(function () { /* Promise<void>：不外泄回包 */ });
+      },
+      // onOpenRequested(lease, listener) → disposer：guest 请求打开 http(s) 页
+      // （window.open/target=_blank）时经 browser.open-requested 帧投递 url；
+      // guest 自身恒被 L1 Deny，打开方式由消费者决定（官方同义）。
+      onOpenRequested: function (lease: string, listener: (url: string) => void): () => void {
+        var key = String(lease);
+        var list = browserOpenListeners[key] || (browserOpenListeners[key] = []);
+        list.push(listener);
+        return function () {
+          var arr = browserOpenListeners[key];
+          if (!arr) return;
+          var i = arr.indexOf(listener);
+          if (i >= 0) arr.splice(i, 1);
+          if (arr.length === 0) delete browserOpenListeners[key];
+        };
+      },
+    },
     // 桥内省（壳层页面与冒烟用；不属于对外契约）。
     _call: call,
     _send: send,
@@ -653,6 +709,343 @@
       });
     },
   };
+
+  // ---------------------------------------------------------------------------
+  // SYNC-006：dshDesktop.browser（官方 DesktopBrowserBridge，types.d.ts:16-23
+  // 逐字段对齐）+ <webview> 宿主元素适配
+  //
+  // 官方契约（权威类型 types.d.ts:4-23）：
+  //   DesktopBrowserLeaseId = Branded<string>（运行时即主进程签发的字符串）
+  //   DesktopBrowserReservation { readonly lease; readonly partition: string }
+  //   acquire(workspace: string): Promise<DesktopBrowserReservation>
+  //   release(lease): Promise<void>          // guest 销毁后 resolve
+  //   onOpenRequested(lease, listener): () => void
+  // lease/partition 的真实生命周期由 L1（main.rs「侧栏浏览器 guest 租约」节）
+  // 持有：acquire 即建主窗内子 webview（per-workspace data_directory 隔离，
+  // 固定 http(s) 隔离策略），release 即销毁 —— 绝不伪造租约。
+  //
+  // 消费者链（为什么必须有本面）：dsh-client-ui-sidebar-browser/lib/client.js:1597
+  //   const desktop = carrier?.protocolVersion === 1 ? carrier.browser : void 0;
+  //   keepMounted: desktop !== void 0      → 缺失即 false（切页卸载丢状态）
+  //   desktop === void 0 → createIframePage（web 载体，iframe 沙箱）
+  //   否则               → createElectronPage（Electron <webview> 载体）
+  //
+  // <webview> 适配（WebView2 无 webview 标签；customElements.define 拒绝无
+  // 连字符标签名，无法注册自定义元素）：拦截 document.createElement('webview')
+  //（仅该标签，其余原样透传），在 HTMLUnknownElement 上追加 Electron 同名 API
+  //（ElectronWebViewImpl 的消费面）并做双向翻译：
+  //   元素 → L1：browser.guest-attach（挂载，L1 回推 bootstrap dom-ready）/
+  //            browser.guest-bounds（rAF 跟随 getBoundingClientRect）/
+  //            browser.guest-cmd（goBack/goForward/reload/clearHistory）/
+  //            browser.guest-load-url（loadURL，http(s) 白名单在 L1 复核）
+  //   L1 → 元素：browser.guest-event（last-write-wins 缓存 url/title/loading/
+  //            canGoBack/canGoForward + 派发 dom-ready/did-navigate/
+  //            did-start-navigation/did-start-loading/did-stop-loading/
+  //            page-title-updated/did-fail-load 同名事件）/
+  //            browser.guest-destroyed（派发 destroyed）
+  // 可见性判定（原生子 webview 恒浮于页面内容之上，必须自证顶层可见才 show，
+  // 否则会盖住模态弹层）：bounds 有效 且 元素中心 elementFromPoint 命中元素
+  // 自身子树 —— display:none（keepMounted 切页）/ 被浮层覆盖 / 移出视口都判
+  // 不可见 → 推 w/h=0 让 L1 隐藏 guest（不销毁，状态保活）。回切即恢复。
+  //
+  // 已知局限（与 L1 侧一致，见 main.rs 同名节）：canGoBack/canGoForward 来自
+  // L1 导航深度计数；SPA pushState 不上报 URL；加载失败无真实错误码；guest
+  // 聚焦时物理键不冒泡到主窗（SYNC-001 keyboard 区已记录的缺口，本面不恶化）。
+  // ---------------------------------------------------------------------------
+  var browserOpenListeners: Record<string, ((url: string) => void)[]> = {};
+  // 全部已适配的 <webview> 元素（按 lease 线性分派；侧栏浏览器 tab 数量级）。
+  var webviewElements: any[] = [];
+  var guestMountObserver: any = null;
+
+  // 事件派生（vm 单测无 Event 构造器 → 退回普通对象；载荷键直接挂在事件上，
+  // 与 Electron 事件形态一致：event.isMainFrame / event.errorCode / ...）。
+  function dispatchGuestEvent(element: any, type: string, payload?: Record<string, unknown>): void {
+    var event: any;
+    try {
+      event = typeof Event === 'function' ? new Event(type) : { type: type };
+    } catch (e) { event = { type: type }; }
+    if (payload) {
+      for (var key in payload) {
+        if (Object.prototype.hasOwnProperty.call(payload, key)) {
+          try { event[key] = payload[key]; } catch (e) { /* 只读键忽略 */ }
+        }
+      }
+    }
+    try { element.dispatchEvent(event); } catch (e) { /* 元素异常不断桥 */ }
+  }
+
+  function guestsForLease(lease: unknown): any[] {
+    var out: any[] = [];
+    for (var i = 0; i < webviewElements.length; i++) {
+      var el = webviewElements[i];
+      try {
+        if (el && el.__dshGuestApi && el.getAttribute && el.getAttribute('name') === lease) out.push(el);
+      } catch (e) { /* 元素已死，跳过 */ }
+    }
+    return out;
+  }
+
+  // browser.guest-event 帧 → 缓存 + 同名 DOM 事件（官方 Electron 事件形态）。
+  function handleGuestEvent(params: any): void {
+    if (!params || typeof params.lease !== 'string' || typeof params.event !== 'string') return;
+    var lease = params.lease;
+    var targets = guestsForLease(lease);
+    if (targets.length === 0) return;
+    var payload: Record<string, unknown> = {};
+    if (typeof params.url === 'string') payload.url = params.url;
+    if (typeof params.title === 'string') payload.title = params.title;
+    var names: Record<string, Record<string, unknown>> = {
+      'did-start-navigation': { isMainFrame: true },
+      'did-navigate-in-page': { isMainFrame: true },
+      'page-title-updated': {},
+      'did-fail-load': {},
+    };
+    if (names[params.event]) {
+      var preset = names[params.event];
+      for (var k in preset) payload[k] = preset[k];
+    }
+    for (var i = 0; i < targets.length; i++) {
+      var el = targets[i];
+      // last-write-wins 缓存：帧内全量可观测态，getURL()/isLoading()/canGo*()
+      // 的同步读数来源（Electron 是同步 IPC 读数；本壳为最近一帧快照）。
+      try {
+        var state = el.__dshGuestState;
+        if (state) {
+          if (typeof params.url === 'string') state.url = params.url;
+          if (typeof params.title === 'string') state.title = params.title;
+          if (typeof params.loading === 'boolean') state.loading = params.loading;
+          if (typeof params.canGoBack === 'boolean') state.canGoBack = params.canGoBack;
+          if (typeof params.canGoForward === 'boolean') state.canGoForward = params.canGoForward;
+        }
+      } catch (e) { /* 缓存失败不阻断事件 */ }
+      var extra: Record<string, unknown> | undefined;
+      if (params.event === 'did-fail-load') {
+        extra = {
+          errorCode: typeof params.errorCode === 'number' ? params.errorCode : -1,
+          errorDescription: typeof params.errorDescription === 'string' ? params.errorDescription : '',
+          isMainFrame: true,
+        };
+      }
+      dispatchGuestEvent(el, params.event, extra);
+    }
+  }
+
+  // browser.guest-destroyed 帧 → 派发 destroyed（消费者 dropGuest → release
+  // 幂等）+ 停 bounds 跟踪。
+  function handleGuestDestroyed(params: any): void {
+    if (!params || typeof params.lease !== 'string') return;
+    var targets = guestsForLease(params.lease);
+    for (var i = 0; i < targets.length; i++) {
+      markGuestUnmounted(targets[i]);
+      dispatchGuestEvent(targets[i], 'destroyed');
+    }
+  }
+
+  onNotify(function (method: string, params: any): void {
+    try {
+      if (method === 'browser.guest-event') handleGuestEvent(params);
+      else if (method === 'browser.open-requested') {
+        var lease = params && typeof params.lease === 'string' ? params.lease : '';
+        var url = params && typeof params.url === 'string' ? params.url : '';
+        if (!lease || !url) return;
+        var list = browserOpenListeners[lease];
+        if (!list || list.length === 0) return; // 无监听者：丢弃（官方无消费者不投递）
+        var snapshot = list.slice();
+        for (var i = 0; i < snapshot.length; i++) {
+          var listener = snapshot[i];
+          if (typeof listener !== 'function') continue;
+          try { listener(url); } catch (e) { /* listener 异常不断桥 */ }
+        }
+      } else if (method === 'browser.guest-destroyed') handleGuestDestroyed(params);
+    } catch (e) { /* 通知帧畸形不炸桥 */ }
+  });
+
+  // —— bounds 跟踪：元素挂载期间每帧比对（量化 0.5px），变化才发帧 ——
+  var nextFrame = function (cb: () => void): void {
+    try {
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function () { cb(); });
+        return;
+      }
+    } catch (e) { /* vm 无 rAF */ }
+    try { window.setTimeout(cb, 16); } catch (e2) { /* vm 无 setTimeout：放弃 */ }
+  };
+
+  // 世代号失效模型：stop 时推进 epoch，已排队的 tick 自行退出（免于依赖
+  // cancelAnimationFrame 在各环境的可用性差异）。
+  function stopGuestBoundsTracking(element: any): void {
+    element.__dshBoundsTracking = false;
+    element.__dshBoundsEpoch = (element.__dshBoundsEpoch || 0) + 1;
+  }
+
+  function pushGuestBounds(lease: string, x: number, y: number, w: number, h: number): void {
+    send('browser.guest-bounds', { lease: lease, x: x, y: y, w: w, h: h });
+  }
+
+  function trackGuestBounds(element: any): void {
+    if (element.__dshBoundsTracking) return;
+    element.__dshBoundsTracking = true;
+    element.__dshBoundsEpoch = (element.__dshBoundsEpoch || 0) + 1;
+    var epoch = element.__dshBoundsEpoch;
+    var last = '';
+    var tick = function (): void {
+      if (!element.__dshBoundsTracking || epoch !== element.__dshBoundsEpoch) return;
+      var lease = '';
+      try { lease = element.getAttribute('name') || ''; } catch (e) { /* 元素已死 */ }
+      if (!lease || !element.isConnected) {
+        element.__dshBoundsTracking = false;
+        return;
+      }
+      var rect = element.getBoundingClientRect();
+      var visible = rect.width >= 1 && rect.height >= 1;
+      // 顶层可见自证（见节注释）：中心点命中必须落在元素子树内。
+      if (visible && typeof document.elementFromPoint === 'function') {
+        try {
+          var hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          if (!(hit === element || (hit && typeof element.contains === 'function' && element.contains(hit)))) visible = false;
+        } catch (e) { /* 判定失败按可见处理（有 bounds 即先显示） */ }
+      }
+      var frame = visible
+        ? (Math.round(rect.left * 2) / 2) + ',' + (Math.round(rect.top * 2) / 2) + ',' + (Math.round(rect.width * 2) / 2) + ',' + (Math.round(rect.height * 2) / 2)
+        : 'hidden';
+      if (frame !== last) {
+        last = frame;
+        if (visible) pushGuestBounds(lease, rect.left, rect.top, rect.width, rect.height);
+        else pushGuestBounds(lease, 0, 0, 0, 0);
+      }
+      nextFrame(tick);
+    };
+    nextFrame(tick);
+  }
+
+  // —— 挂载/卸载观测：present() 追加 / clear()·remove() 移除 ——
+  function markGuestMounted(element: any): void {
+    if (element.__dshMounted) return;
+    element.__dshMounted = true;
+    var lease = '';
+    try { lease = element.getAttribute('name') || ''; } catch (e) { /* 同上 */ }
+    if (!lease) return;
+    // L1 回推 bootstrap dom-ready（Electron 首个 dom-ready 的等价物；时序上
+    // 必然晚于消费者 addEventListener —— present() 在监听器装完后才调用）。
+    send('browser.guest-attach', { lease: lease });
+    trackGuestBounds(element);
+  }
+
+  function markGuestUnmounted(element: any): void {
+    if (!element.__dshMounted) return;
+    element.__dshMounted = false;
+    stopGuestBoundsTracking(element);
+    var lease = '';
+    try { lease = element.getAttribute('name') || ''; } catch (e) { /* 同上 */ }
+    if (lease) pushGuestBounds(lease, 0, 0, 0, 0);
+  }
+
+  function scanGuestMutations(added: NodeList | any[], removed: NodeList | any[]): void {
+    var check = function (node: any): void {
+      if (!node || node.nodeType !== 1) return;
+      if (node.__dshGuestApi) {
+        try { if (node.isConnected) markGuestMounted(node); else markGuestUnmounted(node); } catch (e) { /* 同上 */ }
+      }
+      if (node.querySelectorAll) {
+        var inner = node.querySelectorAll('webview');
+        for (var j = 0; j < inner.length; j++) {
+          var el = inner[j];
+          if (el && el.__dshGuestApi) {
+            try { if (el.isConnected) markGuestMounted(el); else markGuestUnmounted(el); } catch (e2) { /* 同上 */ }
+          }
+        }
+      }
+    };
+    for (var i = 0; i < added.length; i++) check((added as any)[i]);
+    for (var k = 0; k < removed.length; k++) check((removed as any)[k]);
+  }
+
+  function ensureGuestMountObserver(): void {
+    if (guestMountObserver !== null || typeof MutationObserver === 'undefined') return;
+    var target: any = null;
+    try { target = document.body || document.documentElement; } catch (e) { /* vm 无 document */ }
+    if (!target) {
+      // document-start 早期：文档根未解析完，推迟一拍重试。
+      try {
+        document.addEventListener('DOMContentLoaded', function () { guestMountObserver = null; ensureGuestMountObserver(); }, { once: true });
+      } catch (e2) { /* vm 无 addEventListener */ }
+      return;
+    }
+    try {
+      guestMountObserver = new MutationObserver(function (mutations: any[]): void {
+        for (var i = 0; i < mutations.length; i++) {
+          var m = mutations[i];
+          scanGuestMutations(m.addedNodes || [], m.removedNodes || []);
+        }
+      });
+      guestMountObserver.observe(target, { childList: true, subtree: true });
+    } catch (e) { guestMountObserver = null; }
+  }
+
+  // —— <webview> 元素适配（Electron 同名 API；ElectronWebViewImpl 消费面）——
+  function attachWebviewApi(element: any): void {
+    if (!element || element.__dshGuestApi) return;
+    element.__dshGuestApi = true;
+    // 同步读数缓存（L1 guest-event 帧 last-write-wins）。
+    element.__dshGuestState = { url: 'about:blank', title: '', loading: false, canGoBack: false, canGoForward: false };
+    webviewElements.push(element);
+    var leaseOf = function (): string {
+      try { return (element.getAttribute && element.getAttribute('name')) || ''; } catch (e) { return ''; }
+    };
+    var guard = function (): string {
+      var lease = leaseOf();
+      // 官方 createElement(reservation) 必设 name=lease；缺失说明消费者未走
+      // 预定流程 —— 拒绝而不是猜（绝不伪造租约操作）。
+      if (!lease) throw new Error('webview: missing guest lease (name attribute)');
+      return lease;
+    };
+    // Electron <webview>.loadURL(url): Promise<void>；路由 L1 后由事件链回报
+    // 状态。地址合法性（http(s)/非应用源）由 L1 复核，拒绝即 reject →
+    // 消费者 commandFailed → 页内错误卡片。
+    element.loadURL = function (url: unknown): Promise<void> {
+      var lease = guard();
+      return call('browser.guest-load-url', { lease: lease, url: String(url) })
+        .then(function () { /* Promise<void>：不外泄回包 */ });
+    };
+    // 以下为 fire-and-forget（Electron 同步形态；越界命令 L1 忽略）。
+    element.goBack = function (): void {
+      send('browser.guest-cmd', { lease: guard(), cmd: 'goBack' });
+    };
+    element.goForward = function (): void {
+      send('browser.guest-cmd', { lease: guard(), cmd: 'goForward' });
+    };
+    element.reload = function (): void {
+      send('browser.guest-cmd', { lease: guard(), cmd: 'reload' });
+    };
+    element.clearHistory = function (): void {
+      send('browser.guest-cmd', { lease: guard(), cmd: 'clearHistory' });
+    };
+    element.getURL = function (): string { return element.__dshGuestState.url; };
+    element.getTitle = function (): string { return element.__dshGuestState.title; };
+    element.isLoading = function (): boolean { return element.__dshGuestState.loading; };
+    element.canGoBack = function (): boolean { return element.__dshGuestState.canGoBack; };
+    element.canGoForward = function (): boolean { return element.__dshGuestState.canGoForward; };
+    // 元素可能在观察器就绪前已挂载（present 与 createElement 同批任务）：
+    // 立即补一次连接态检查。
+    ensureGuestMountObserver();
+    try { if (element.isConnected) markGuestMounted(element); } catch (e) { /* vm 无 isConnected */ }
+  }
+
+  (function installWebviewShim(): void {
+    var doc: any = typeof document === 'undefined' ? null : document;
+    if (!doc || typeof doc.createElement !== 'function') return;
+    var nativeCreateElement = doc.createElement;
+    // 只拦截 'webview'（消费者 ElectronWebViewImpl.createElement 的标签）。
+    // 元素本体保持 HTMLUnknownElement 原始形态（视觉/DOM 行为与未适配一致），
+    // 适配仅追加 API —— 拦截失败也退回原始元素，不留半适配态。
+    doc.createElement = function (tag: unknown, options?: unknown): any {
+      var element = nativeCreateElement.call(this, tag, options);
+      try {
+        if (typeof tag === 'string' && tag.toLowerCase() === 'webview') attachWebviewApi(element);
+      } catch (e) { /* 适配失败退回原始元素 */ }
+      return element;
+    };
+  })();
 
   // 页面异常 → 壳层日志。
   window.addEventListener('error', function (e) {

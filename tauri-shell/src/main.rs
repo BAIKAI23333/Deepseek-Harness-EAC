@@ -1748,6 +1748,416 @@ async fn pick_directory(app: &tauri::AppHandle) -> Option<String> {
     rx.await.ok().flatten()
 }
 
+// ---------------------------------------------------------------------------
+// 侧栏浏览器 guest 租约（SYNC-006 · dshDesktop.browser 的 L1 能力源）
+//
+// 官方契约（dsh-client-ui-sidebar-browser/lib/types/types.d.ts:16-23，逐字段）：
+//   acquire(workspace) → Promise<DesktopBrowserReservation{lease, partition}>
+//   release(lease)     → Promise<void>（guest 已销毁后才返回；幂等）
+//   onOpenRequested(lease, listener) → () => void（disposer）
+// 官方主进程（browser-guests.ts）持有 guest、执行固定隔离策略、租约制；guest
+// 的可见载体由渲染层 <webview> 标签（Electron 专有）呈现。WebView2 无 webview
+// 标签，本壳的等价物（任务卡两方案的落地形态，调研证据见任务自证材料）：
+//   L1（本文件）= 主窗内「子 webview」作为 guest：
+//     - Window::add_child(WebviewBuilder, pos, size) —— tauri 2.11.5 的多
+//       webview 能力，被 "unstable" feature 门控；tauri-runtime-wry 2.11.4 的
+//       unstable = []（空 feature），启用它不新增依赖、不动 Cargo.lock 的
+//       tauri 2.11.5 / wry 0.55.1 / tao 0.35.3 锁定版本。
+//     - guest 带 per-workspace data_directory（WebView2 用户数据目录）= 官方
+//       partition 的存储隔离语义：同 workspace → 同 partition（跨 acquire 持久，
+//       登录态/cookie 存活）；不同 workspace → 不同目录（互不可见）。
+//     - 固定隔离策略（on_navigation）：只放行 about:blank（初始页）与非应用
+//       自身源的 http(s)；其余一律取消（file:/data:/应用源等）。应用源与
+//       官方消费者文案 error.application-origin（「不能在嵌入浏览器中打开
+//       DSH 应用自身」）同一纪律。
+//   L1.5（bridge.ts，页面层）= <webview> 宿主元素适配：消费者
+//     （client.js ElectronWebViewImpl，:1332-1344）创建的 <webview> 是
+//     HTMLUnknownElement（customElements.define 拒绝无连字符标签名，无法做成
+//     自定义元素），桥在其上挂 Electron 同名 API（loadURL/goBack/canGoBack/
+//     getURL/...），并把 bounds/命令上报 L1、把 L1 事件翻译成 Electron 同名
+//     DOM 事件 —— 见 bridge.ts SYNC-006 节。
+//
+// 通道（handle_shell_method 拦截域，全部不经 sidecar）：
+//   call  browser.acquire         {workspace, generation} → {lease, partition}
+//   call  browser.release         {lease} → {ok:true}（幂等；销毁后广播
+//                                  browser.guest-destroyed）
+//   call  browser.guest-load-url  {lease, url} → {ok:true}（http(s) 白名单）
+//   call  browser.guests.state    {} → {guests:[…], webviewCount}（L1 内省面，
+//                                  不上桥面，语义同 sidecar 的 shortcuts.state；
+//                                  验证通道的「webview 消失」观测点）
+//   send  browser.guest-cmd       {lease, cmd: goBack|goForward|reload|clearHistory}
+//   send  browser.guest-bounds    {lease, x, y, w, h}（逻辑像素，页面视口系 =
+//                                 窗口客户区系；w/h<1 即隐藏 guest 不销毁 ——
+//                                 keepMounted 语义：切页隐藏保状态）
+//   send  browser.guest-attach    {lease}（宿主元素挂载 → 回推 bootstrap
+//                                  dom-ready；Electron 首个 dom-ready 的等价物）
+//   send  browser.page-hello      {generation}（页面世代：主文档重载/导航重建
+//                                  后，旧文档的租约已无人持有 —— 官方由
+//                                  webContents destroyed 收敛，本壳以世代比对
+//                                  等价回收，防孤儿 guest 泄漏）
+//   通知帧（shell_notify 广播，仅主窗页面消费；guest 无桥注入）：
+//   browser.guest-event    {lease, event, url, title, loading, canGoBack,
+//                           canGoForward, …事件载荷}（shim 缓存源 + DOM 事件翻译）
+//   browser.open-requested {lease, url}（guest window.open/target=_blank 的
+//                           http(s) 请求；实际开窗恒 Deny —— 官方语义：URL 推给
+//                           消费者自行决定打开方式）
+//   browser.guest-destroyed {lease}
+//
+// 已知局限（如实记录，见任务自证材料）：
+//   1. canGoBack/canGoForward 来自 L1 导航深度计数（WebView2/wry 未暴露
+//      history 栈查询），清史语义由 clearHistory 命令近似；
+//   2. SPA pushState 导航不产生 NavigationStarting/ContentLoading → URL 不
+//      上报（Electron did-navigate-in-page 无对应事件源）；
+//   3. wry 的 NavigationCompleted 不区分成功/失败 → did-fail-load 无真实
+//      错误码来源，加载失败呈现为空白页而非错误卡片；
+//   4. 同一 workspace 并发第二个 guest 用 <partition>-<n> 目录（WebView2 每
+//      环境独占用户数据目录；基名目录留给稳态单 guest 保持久性）。
+// ---------------------------------------------------------------------------
+
+/// 租约/标签序号（lease 唯一性的第二因子，纳秒时间戳防跨进程撞号）。
+static GUEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 页面世代（browser.page-hello 上报；世代不符的 guest 在 hello 时回收）。
+static PAGE_GENERATION: OnceLock<RwLock<String>> = OnceLock::new();
+
+/// guest 登记：lease → 条目。回调（on_navigation 等运行在 WebView2 线程）与
+/// WS 任务共享；条目里的 Webview 句柄线程安全（dispatcher 模型）。
+struct GuestEntry {
+    #[allow(dead_code)]
+    label: String,
+    partition: String,
+    workspace: String,
+    generation: String,
+    /// 同 partition 并发 guest 的目录后缀（0 = 基名 <partition>）。
+    dir_suffix: u32,
+    /// 宿主元素是否声明了可见 bounds（guest 是否 show 中）。
+    visible: bool,
+    /// 导航深度计数（canGoBack/canGoForward 的近似来源）。
+    back_depth: u32,
+    max_depth: u32,
+    /// guest-cmd goBack/goForward 预置方向，下一次放行的 NavigationStarting 消费。
+    pending_dir: i8,
+    /// 最近一次放行导航的 URL / 文档标题 / 加载态（状态帧的缓存源）。
+    last_url: String,
+    last_title: String,
+    loading: bool,
+    webview: tauri::Webview,
+}
+
+static BROWSER_GUESTS: OnceLock<std::sync::Mutex<HashMap<String, GuestEntry>>> = OnceLock::new();
+
+fn browser_guests() -> &'static std::sync::Mutex<HashMap<String, GuestEntry>> {
+    BROWSER_GUESTS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// FNV-1a 64：workspace → 稳定 partition 目录名（跨进程/跨版本稳定，不引入
+/// 哈希依赖）。
+fn fnv1a64(data: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_3ce4_8422_2325;
+    for byte in data.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn browser_partition_for_workspace(workspace: &str) -> String {
+    format!("browser-guest-{:016x}", fnv1a64(workspace))
+}
+
+/// guest 用户数据目录：<app_data_dir>/browser-guests/<名称>。
+fn browser_guest_data_dir(app: &tauri::AppHandle, dir_name: &str) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|base| base.join("browser-guests").join(dir_name))
+}
+
+/// 应用自身源判定（隔离策略第二条款：guest 绝不承载内核 Web UI）。
+fn is_app_origin_url(url: &str) -> bool {
+    match (current_web_url(), tauri::Url::parse(url)) {
+        (Some(app_url), Ok(parsed)) => {
+            tauri::Url::parse(&app_url)
+                .map(|a| a.origin().ascii_serialization() == parsed.origin().ascii_serialization())
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// guest 隔离策略（唯一裁决点）：about:blank（初始页）+ 非应用源的 http(s)。
+fn guest_navigation_allowed(url: &str) -> bool {
+    if url == "about:blank" {
+        return true;
+    }
+    matches!(
+        tauri::Url::parse(url).map(|u| u.scheme().to_string()),
+        Ok(ref s) if s == "http" || s == "https"
+    ) && !is_app_origin_url(url)
+}
+
+/// 广播一帧到页面（所有 WS 连接；guest 无桥注入，实际只有主窗页面消费）。
+fn push_guest_frame(frame: Value) {
+    let _ = shell_notify().send(frame);
+}
+
+/// 销毁 guest（幂等）：不存在返回 false；存在 → 移除登记 + 关闭 webview +
+/// 广播 browser.guest-destroyed。close 走 dispatcher（线程安全），可在任意
+/// 任务线程调用。
+fn destroy_guest(lease: &str) -> bool {
+    let entry = browser_guests()
+        .lock()
+        .ok()
+        .and_then(|mut guests| guests.remove(lease));
+    let Some(entry) = entry else {
+        return false;
+    };
+    let _ = entry.webview.close();
+    push_guest_frame(serde_json::json!({
+        "method": "browser.guest-destroyed",
+        "params": { "lease": lease }
+    }));
+    eprintln!(
+        "[shell] browser guest destroyed: lease={} label={}",
+        lease, entry.label
+    );
+    true
+}
+
+/// browser.acquire 的 L1 实现：建租约 + 真实创建子 webview guest + 登记。
+/// 返回 Err(msg) = JSON-RPC error 回复文案。
+fn browser_acquire(app: &tauri::AppHandle, params: &Value) -> Result<Value, String> {
+    use tauri::Manager;
+    // 官方签名 acquire(workspace: string)：workspace = 已解析的存储账户
+    // （消费者 browserWorkspace 产出 "cwd:<path>" / "session:<id>"）。
+    let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+        Some(w) if !w.trim().is_empty() => w.to_string(),
+        _ => return Err("browser.acquire: workspace must be a non-empty string".into()),
+    };
+    let generation = params
+        .get("generation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    // guest 是主窗的子 webview：主窗必须存在。
+    let Some(window) = app.get_window("main") else {
+        return Err("browser.acquire: main window unavailable".into());
+    };
+
+    let partition = browser_partition_for_workspace(&workspace);
+    let seq = GUEST_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let lease = format!(
+        "dsh-browser-lease-{}-{}",
+        seq,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+    );
+    let label = format!("browser-guest-{}", seq);
+
+    // 目录后缀分配：同 partition 的存活 guest 各占一个后缀（WebView2 每
+    // 环境独占用户数据目录）；最低空闲后缀优先 —— 稳态单 guest 恒用基名
+    // 目录，跨 acquire 持久（登录态/cookie 存活）。
+    let dir_suffix = {
+        let guests = browser_guests()
+            .lock()
+            .map_err(|_| "browser.acquire: guest registry poisoned".to_string())?;
+        let mut n = 0u32;
+        while guests
+            .values()
+            .any(|g| g.partition == partition && g.dir_suffix == n)
+        {
+            n += 1;
+        }
+        n
+    };
+    let dir_name = if dir_suffix == 0 {
+        partition.clone()
+    } else {
+        format!("{}-{}", partition, dir_suffix)
+    };
+    let Some(data_dir) = browser_guest_data_dir(app, &dir_name) else {
+        return Err("browser.acquire: app data dir unavailable".into());
+    };
+
+    // 子 webview guest：初始 about:blank；hidden 等宿主元素给 bounds。
+    let lease_nav = lease.clone();
+    let lease_win = lease.clone();
+    let lease_load = lease.clone();
+    let lease_title = lease.clone();
+    let builder = tauri::webview::WebviewBuilder::new(
+        label.clone(),
+        tauri::WebviewUrl::External(tauri::Url::parse("about:blank").expect("static url")),
+    )
+    .data_directory(data_dir)
+    // 固定隔离策略（放行 = true）。about:blank 不计数/不发事件（非用户导航）。
+    .on_navigation(move |url| {
+        let allowed = guest_navigation_allowed(url.as_str());
+        if allowed && url.as_str() != "about:blank" {
+            let url_string = url.as_str().to_string();
+            if let Ok(mut guests) = browser_guests().lock() {
+                if let Some(entry) = guests.get_mut(&lease_nav) {
+                    match entry.pending_dir {
+                        -1 => {
+                            entry.back_depth = entry.back_depth.saturating_sub(1);
+                            entry.pending_dir = 0;
+                        }
+                        1 => {
+                            entry.back_depth += 1;
+                            if entry.max_depth < entry.back_depth {
+                                entry.max_depth = entry.back_depth;
+                            }
+                            entry.pending_dir = 0;
+                        }
+                        _ => {
+                            entry.back_depth += 1;
+                            // 新导航截断前进栈（浏览器同款语义）。
+                            entry.max_depth = entry.back_depth;
+                        }
+                    }
+                    entry.last_url = url_string.clone();
+                    entry.loading = true;
+                    push_guest_frame(serde_json::json!({
+                        "method": "browser.guest-event",
+                        "params": {
+                            "lease": lease_nav,
+                            "event": "did-start-navigation",
+                            "url": entry.last_url,
+                            "title": entry.last_title,
+                            "loading": true,
+                            "canGoBack": entry.back_depth > 1,
+                            "canGoForward": entry.back_depth < entry.max_depth,
+                            "isMainFrame": true,
+                        }
+                    }));
+                }
+            }
+        }
+        allowed
+    })
+    // 官方 onOpenRequested 的事件源（types.d.ts:10-14）：guest 请求开 http(s)
+    // 页 → 推给消费者；guest 自身永不弹原生窗（Deny），打开方式由消费者决定。
+    .on_new_window(move |url, _features| {
+        if guest_navigation_allowed(url.as_str()) && url.as_str() != "about:blank" {
+            push_guest_frame(serde_json::json!({
+                "method": "browser.open-requested",
+                "params": { "lease": lease_win, "url": url.as_str() }
+            }));
+        }
+        tauri::webview::NewWindowResponse::Deny
+    })
+    // wry/WebView2 映射：ContentLoading → Started（≈ 提交 + DOM 就绪），
+    // NavigationCompleted → Finished。
+    .on_page_load(move |_webview, payload| {
+        let url = payload.url().as_str().to_string();
+        match payload.event() {
+            tauri::webview::PageLoadEvent::Started => {
+                if url == "about:blank" {
+                    return;
+                }
+                // 提交点：did-navigate（Electron 同名事件，消费者 observe(true) 的
+                // 触发器）+ dom-ready（每文档一次）。
+                for event in ["did-navigate", "dom-ready"] {
+                    push_guest_frame(serde_json::json!({
+                        "method": "browser.guest-event",
+                        "params": { "lease": lease_load, "event": event, "url": url }
+                    }));
+                }
+            }
+            tauri::webview::PageLoadEvent::Finished => {
+                if url == "about:blank" {
+                    return;
+                }
+                push_guest_frame(serde_json::json!({
+                    "method": "browser.guest-event",
+                    "params": { "lease": lease_load, "event": "did-stop-loading", "loading": false }
+                }));
+            }
+        }
+    })
+    .on_document_title_changed(move |_webview, title| {
+        if let Ok(mut guests) = browser_guests().lock() {
+            if let Some(entry) = guests.get_mut(&lease_title) {
+                entry.last_title = title.clone();
+            }
+        }
+        push_guest_frame(serde_json::json!({
+            "method": "browser.guest-event",
+            "params": { "lease": lease_title, "event": "page-title-updated", "title": title }
+        }));
+    });
+
+    // 创建在主窗内（1×1 起步，等宿主元素 bounds；创建完成前占用主线程是
+    // tauri add_child 的既定语义 —— 与同步 IPC 命令同代价）。
+    let webview = window
+        .add_child(
+            builder,
+            tauri::LogicalPosition::new(0.0, 0.0),
+            tauri::LogicalSize::new(1.0, 1.0),
+        )
+        .map_err(|e| format!("browser.acquire: guest webview build failed: {}", e))?;
+    let _ = webview.hide();
+
+    let entry = GuestEntry {
+        label: label.clone(),
+        partition: partition.clone(),
+        workspace: workspace.clone(),
+        generation,
+        dir_suffix,
+        visible: false,
+        back_depth: 0,
+        max_depth: 0,
+        pending_dir: 0,
+        last_url: String::from("about:blank"),
+        last_title: String::new(),
+        loading: false,
+        webview,
+    };
+    if let Ok(mut guests) = browser_guests().lock() {
+        guests.insert(lease.clone(), entry);
+    }
+    eprintln!(
+        "[shell] browser.acquire: lease={} label={} partition={} workspace={}",
+        lease, label, partition, workspace
+    );
+    Ok(serde_json::json!({ "lease": lease, "partition": partition }))
+}
+
+/// browser.guests.state：L1 内省面（不上桥面；验证通道观测点）。
+fn browser_guests_state(app: &tauri::AppHandle) -> Value {
+    use tauri::Manager;
+    let guests = browser_guests()
+        .lock()
+        .map(|guests| {
+            guests
+                .iter()
+                .map(|(lease, g)| {
+                    serde_json::json!({
+                        "lease": lease,
+                        "label": g.label,
+                        "partition": g.partition,
+                        "workspace": g.workspace,
+                        "generation": g.generation,
+                        "visible": g.visible,
+                        "url": g.last_url,
+                        "title": g.last_title,
+                        "loading": g.loading,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    // 主窗内 webview 总数（主 webview + 存活 guest）——「webview 消失」的
+    // 直接观测点（release 后回落）。
+    let webview_count = app
+        .get_window("main")
+        .map(|w| w.webviews().len())
+        .unwrap_or(0);
+    serde_json::json!({ "guests": guests, "webviewCount": webview_count })
+}
+
 /// 壳层方法拦截：返回 Some(reply) = 已处理并给出 JSON-RPC 完整回复；
 /// None = 已消费（send 型，无回复）；Err(()) = 非壳层方法 → 转发 sidecar。
 async fn handle_shell_method(
@@ -1759,6 +2169,10 @@ async fn handle_shell_method(
     use tauri::Manager;
     let reply =
         |result: Value| serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}).to_string();
+    // JSON-RPC error 回复（形态与 sidecar 路径一致：ws-jsonrpc-client 以
+    // Error(message) reject，页面 Promise 走 catch）。
+    let reply_error =
+        |message: String| serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":message}}).to_string();
     match method {
         "win.minimize" => {
             if let Some(w) = app.get_webview_window("main") {
@@ -1980,6 +2394,191 @@ async fn handle_shell_method(
                 None => serde_json::Value::Null,
             })))
         }
+        // SYNC-006：官方 dshDesktop.browser 面（types.d.ts:16-23）的 L1 通道。
+        // 通道语义与隔离策略见文件顶部「侧栏浏览器 guest 租约」节注释。
+        "browser.acquire" => match browser_acquire(app, params) {
+            Ok(reservation) => Ok(Some(reply(reservation))),
+            Err(message) => Ok(Some(reply_error(message))),
+        },
+        // 官方语义：release(lease) 在 guest 销毁后返回；幂等（重复 release /
+        // 未知 lease → ok:true + destroyed:false，不报错 —— 消费者 dropGuest
+        // 与 destroyed 事件可能竞争双发）。
+        "browser.release" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply_error(
+                    "browser.release: lease must be a string".into(),
+                )));
+            };
+            let destroyed = destroy_guest(lease);
+            Ok(Some(reply(serde_json::json!({ "ok": true, "destroyed": destroyed }))))
+        }
+        // guest 导航（call 型）：隔离策略与 on_navigation 同一条纪律的另一入口
+        //（地址栏 loadURL）。navigate 走 Webview::navigate（提交后事件链由
+        // on_navigation / on_page_load 续上）。
+        "browser.guest-load-url" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: lease must be a string".into(),
+                )));
+            };
+            let Some(url) = params.get("url").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: url must be a string".into(),
+                )));
+            };
+            if !guest_navigation_allowed(url) || url == "about:blank" {
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: only http(s) URLs outside the app origin are allowed"
+                        .into(),
+                )));
+            }
+            let parsed = match tauri::Url::parse(url) {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    return Ok(Some(reply_error(
+                        "browser.guest-load-url: url failed to parse".into(),
+                    )))
+                }
+            };
+            let guests = browser_guests().lock().ok();
+            let Some(guests) = guests else {
+                return Ok(Some(reply_error("browser.guest-load-url: registry poisoned".into())));
+            };
+            let Some(entry) = guests.get(lease) else {
+                return Ok(Some(reply_error("browser.guest-load-url: unknown lease".into())));
+            };
+            match entry.webview.navigate(parsed) {
+                Ok(()) => Ok(Some(reply(serde_json::json!({ "ok": true })))),
+                Err(e) => Ok(Some(reply_error(format!("browser.guest-load-url: {}", e)))),
+            }
+        }
+        // guest 导航命令（send 型）。goBack/goForward 先对账深度计数（与 UI
+        // 按钮态同源），越界请求直接忽略；历史回退/前进经 guest 内
+        // history.back()/forward()（wry 未暴露原生 GoBack/GoForward）。
+        "browser.guest-cmd" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            let cmd = params.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+            let guests = browser_guests().lock().ok();
+            let Some(mut guests) = guests else { return Ok(None) };
+            let Some(entry) = guests.get_mut(lease) else { return Ok(None) };
+            match cmd {
+                "goBack" if entry.back_depth > 1 => {
+                    entry.pending_dir = -1;
+                    let _ = entry.webview.eval("history.back()");
+                }
+                "goForward" if entry.back_depth < entry.max_depth => {
+                    entry.pending_dir = 1;
+                    let _ = entry.webview.eval("history.forward()");
+                }
+                "reload" => {
+                    entry.loading = true;
+                    let _ = entry.webview.eval("location.reload()");
+                }
+                // 官方 observeReady 首文档后的 clearHistory：WebView2/wry 无
+                // history 栈清理 API —— 以深度计数归一近似（首个真实文档即为
+                // 历史起点，与官方「清掉 about:blank 起点」的语义一致）。
+                "clearHistory" => {
+                    entry.back_depth = 1;
+                    entry.max_depth = 1;
+                    entry.pending_dir = 0;
+                }
+                _ => { /* 未知/越界命令：忽略（不伪造成功） */ }
+            }
+            Ok(None)
+        }
+        // 宿主元素 bounds（send 型）：逻辑像素（页面视口系 = 窗口客户区系）。
+        // w/h<1 → 隐藏不销毁（keepMounted：切页保状态）；>0 → set_bounds + show。
+        "browser.guest-bounds" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            let num = |key: &str| params.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let (x, y, w, h) = (num("x"), num("y"), num("w"), num("h"));
+            let guests = browser_guests().lock().ok();
+            let Some(mut guests) = guests else { return Ok(None) };
+            let Some(entry) = guests.get_mut(lease) else { return Ok(None) };
+            if !w.is_finite() || !h.is_finite() || w < 1.0 || h < 1.0 {
+                if entry.visible {
+                    entry.visible = false;
+                    let _ = entry.webview.hide();
+                }
+            } else {
+                let rect = tauri::Rect {
+                    position: tauri::LogicalPosition::new(x, y).into(),
+                    size: tauri::LogicalSize::new(w, h).into(),
+                };
+                let _ = entry.webview.set_bounds(rect);
+                if !entry.visible {
+                    entry.visible = true;
+                    let _ = entry.webview.show();
+                }
+            }
+            Ok(None)
+        }
+        // 宿主元素挂载（send 型）：回推 bootstrap dom-ready —— Electron 的首个
+        // dom-ready（about:blank 文档）等价物。事件时序：消费者 attach 监听器
+        // 后才 present（挂载），此帧必然晚于监听器就绪；真实文档的 dom-ready
+        // 由 on_page_load 的 ContentLoading 续上。
+        "browser.guest-attach" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            if let Ok(guests) = browser_guests().lock() {
+                if let Some(entry) = guests.get(lease) {
+                    push_guest_frame(serde_json::json!({
+                        "method": "browser.guest-event",
+                        "params": {
+                            "lease": lease,
+                            "event": "dom-ready",
+                            "url": entry.last_url,
+                            "title": entry.last_title,
+                            "loading": entry.loading,
+                            "canGoBack": entry.back_depth > 1,
+                            "canGoForward": entry.back_depth < entry.max_depth,
+                        }
+                    }));
+                }
+            }
+            Ok(None)
+        }
+        // 页面世代（send 型）：新文档报到即回收旧世代 guest（官方由 webContents
+        // destroyed 收敛；本壳以世代比对等价，防页面重载孤儿泄漏）。
+        "browser.page-hello" => {
+            let Some(generation) = params.get("generation").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            if generation.is_empty() {
+                return Ok(None);
+            }
+            let changed = match PAGE_GENERATION.get_or_init(|| RwLock::new(String::new())).write()
+            {
+                Ok(mut slot) => {
+                    let changed = slot.as_str() != generation;
+                    *slot = generation.to_string();
+                    changed
+                }
+                Err(_) => false,
+            };
+            if changed {
+                let stale: Vec<String> = match browser_guests().lock() {
+                    Ok(guests) => guests
+                        .iter()
+                        .filter(|(_, g)| g.generation != generation)
+                        .map(|(lease, _)| lease.clone())
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                for lease in stale {
+                    eprintln!("[shell] browser page generation changed: reclaiming {}", lease);
+                    destroy_guest(&lease);
+                }
+            }
+            Ok(None)
+        }
+        // L1 内省面（不上桥面；验证通道观测点，语义同 sidecar 的 shortcuts.state）。
+        "browser.guests.state" => Ok(Some(reply(browser_guests_state(app)))),
         _ => Err(()),
     }
 }
@@ -2690,6 +3289,17 @@ fn shell_http_status(path: &str) -> u16 {
             };
         }
     }
+    // SYNC-006 验证钩子（仿 DSH_HOST_PATHS_STAGE / DSH_DIRECTORY_PICK_STAGE
+    // 先例）：仅当 DSH_BROWSER_PROBE=1 时放行 /browser-probe —— 一个不含桥的
+    // 极小页面，window.open 触发 guest 的 NewWindowRequested，供自动化验证
+    // onOpenRequested 事件链。默认（未设置）404，生产路径零影响。
+    if route == "/browser-probe" {
+        return if std::env::var("DSH_BROWSER_PROBE").as_deref() == Ok("1") {
+            200
+        } else {
+            404
+        };
+    }
     if route == "/" || route == "/inject/bridge.js" || route == "/loading" || route == "/died" {
         200
     } else if route
@@ -2735,6 +3345,19 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (BRIDGE_JS.to_string(), "application/javascript")
     } else if let Some(file) = path.split('?').next().unwrap_or("").strip_prefix("/skin/") {
         (ui_skin_asset(file), "text/css; charset=utf-8")
+    } else if path.starts_with("/browser-probe") {
+        // SYNC-006 验证钩子页（shell_http_status 已按 DSH_BROWSER_PROBE=1 门控）。
+        // 不含桥注入 —— 纯触发器：guest 加载本页后 window.open 一个 http(s)
+        // 地址，L1 的 on_new_window 捕获并广播 browser.open-requested（开窗本身
+        // 恒 Deny，不会真弹出页面）。
+        (
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>browser-probe</title></head>\
+             <body><h1>browser-probe</h1><script>\
+             setTimeout(function(){window.open('/loading?probe=onOpenRequested','_blank');},150);\
+             </script></body></html>"
+                .to_string(),
+            "text/html; charset=utf-8",
+        )
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/died") {

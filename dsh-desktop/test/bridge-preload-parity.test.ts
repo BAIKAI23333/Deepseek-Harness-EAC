@@ -669,3 +669,205 @@ test('SYNC-005: updates status/subscribe carry the real presentation stream', as
   // open：退役语义（原生更新主面未接回），保持 reject。
   await assert.rejects(updates.open(), /capability "client-update"/);
 });
+
+// ---------------------------------------------------------------------------
+// SYNC-006：dshDesktop.browser（官方 DesktopBrowserBridge）+ <webview> 宿主
+// 元素适配。权威类型：dsh-client-ui-sidebar-browser/lib/types/types.d.ts:4-23
+//（DesktopBrowserLeaseId / DesktopBrowserReservation / DesktopBrowserBridge）。
+// 消费者：lib/client.js:1597-1613 —— desktop !== void 0 即 keepMounted:true 并
+// 走 createElectronPage（<webview> 载体）；缺失走 web 载体 + keepMounted:false。
+// L1 侧真实 guest（主窗内子 webview + 租约制）见 tauri-shell/src/main.rs。
+// ---------------------------------------------------------------------------
+
+test('SYNC-006: browser namespace locked to the official DesktopBrowserBridge contract', () => {
+  // 官方 DesktopBrowserBridge（types.d.ts:16-23）只有 acquire / release /
+  // onOpenRequested 三个方法 —— 键集精确锁定，防止实现漂移出非契约面。
+  assert.match(bridge, /\bbrowser: \{/, 'bridge must expose window.dshDesktop.browser（官方 ipc.ts:73 同名同层）');
+  assert.deepEqual([...bridgeTree.browser].sort(), ['acquire', 'onOpenRequested', 'release'],
+    `browser namespace drift: ${bridgeTree.browser.join(',')}`);
+  // acquire 必须建真实租约形态守门（畸形回包 reject，绝不降级伪造 Reservation）。
+  assert.match(bridge, /invalid reservation from shell/,
+    'acquire must reject malformed shell replies instead of faking a reservation');
+});
+
+test('SYNC-006: browser bridge round-trips real leases, disposer semantics, and the webview adapter', async () => {
+  // 等价 WebView2 注入序列：notify 钩子全量捕获；send/call 全量记录。
+  const hooks: Array<(method: string, params: any) => void> = [];
+  const sends: Array<{ method: string; params: any }> = [];
+  const calls: Array<{ method: string; params: any }> = [];
+  let acquireReply: any = { lease: 'dsh-browser-lease-1-77', partition: 'browser-guest-0f1e2d3c4b5a6978' };
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({
+      onNotify(fn: (method: string, params: any) => void) { hooks.push(fn); },
+      send(method: string, params: any) { sends.push({ method, params }); },
+      call(method: string, params: any) {
+        calls.push({ method, params });
+        if (method === 'browser.acquire') return Promise.resolve(acquireReply);
+        return Promise.resolve({ ok: true, destroyed: true });
+      },
+    }),
+  };
+  // 最小 DOM：createElement 产出可编程元素（属性表 + 同步事件派发）。vm 无
+  // MutationObserver → 挂载观测不启动；事件分派不依赖挂载态（真实挂载链路由
+  // Tier1/Tier2 真实验证覆盖）。
+  const makeElement = (): any => {
+    const attrs: Record<string, string> = {};
+    const listeners: Record<string, Array<(e: any) => void>> = {};
+    return {
+      nodeType: 1,
+      connected: false,
+      get isConnected() { return this.connected; },
+      setAttribute(k: string, v: string) { attrs[k] = String(v); },
+      getAttribute(k: string) { return k in attrs ? attrs[k] : null; },
+      addEventListener(type: string, fn: (e: any) => void) { (listeners[type] || (listeners[type] = [])).push(fn); },
+      removeEventListener(type: string, fn: (e: any) => void) {
+        const arr = listeners[type] || [];
+        const i = arr.indexOf(fn);
+        if (i >= 0) arr.splice(i, 1);
+      },
+      dispatchEvent(e: any) {
+        for (const fn of listeners[e.type] || []) fn(e);
+        return true;
+      },
+      contains() { return false; },
+      getBoundingClientRect() { return { left: 0, top: 0, width: 0, height: 0 }; },
+    };
+  };
+  const document: any = {
+    readyState: 'loading',
+    documentElement: { setAttribute() {} },
+    addEventListener() {},
+    createElement() { return makeElement(); },
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document,
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+    setTimeout() {},
+  });
+  const dispatch = (method: string, params: any) => { for (const h of hooks) h(method, params); };
+  const dsh = window.dshDesktop;
+
+  // A. 键面与形态：官方 DesktopBrowserBridge 逐字段。
+  assert.deepEqual(Object.keys(dsh.browser).sort(), ['acquire', 'onOpenRequested', 'release'],
+    `runtime browser key drift: ${Object.keys(dsh.browser).join(',')}`);
+  assert.equal(typeof dsh.browser.acquire, 'function');
+  assert.equal(typeof dsh.browser.release, 'function');
+  assert.equal(typeof dsh.browser.onOpenRequested, 'function');
+
+  // B. 消费者判定等价断言（client.js:1597-1598 原文形态）：
+  //    desktop !== void 0 ⇒ keepMounted:true + createElectronPage（不走 web 载体）。
+  const carrier = window.dshDesktop;
+  const desktop = carrier?.protocolVersion === 1 ? carrier.browser : void 0;
+  assert.notEqual(desktop, undefined, 'consumer decision must select the desktop (<webview>) carrier');
+  // 官方消费者源码锚点：pinned 内核确实以本判定决定 keepMounted 与载体。
+  const consumer = readFileSync(join(root, 'node_modules', '@deepseek-ai',
+    'dsh-client-ui-sidebar-browser', 'lib', 'client.js'), 'utf8');
+  assert.match(consumer, /protocolVersion === 1 \? carrier\.browser : void 0/);
+  assert.match(consumer, /keepMounted: desktop !== void 0/);
+
+  // C. 页面世代：WS 就绪即报 browser.page-hello（L1 孤儿 guest 回收依据）。
+  //    vm 侧锁通道存在性；真实时序由 Tier1/Tier2 真实验证覆盖。
+  assert.match(bridge, /browser\.page-hello/, 'bridge must report page generation via browser.page-hello');
+
+  // D. acquire：官方签名 acquire(workspace) → Promise<DesktopBrowserReservation>；
+  //    路由 browser.acquire，载荷 {workspace, generation}（generation 非空）。
+  const pending = dsh.browser.acquire('cwd:D:\\材料\\工作区');
+  assert.equal(typeof pending.then, 'function', 'acquire() must return a Promise');
+  const reservation = await pending;
+  const acquireCall = calls.find((c) => c.method === 'browser.acquire');
+  assert.ok(acquireCall, 'acquire must route through browser.acquire');
+  assert.equal(acquireCall.params.workspace, 'cwd:D:\\材料\\工作区');
+  assert.equal(typeof acquireCall.params.generation, 'string');
+  assert.ok(acquireCall.params.generation.length >= 8, 'generation must be a non-trivial page token');
+  // 回包 → 官方 Reservation 形态（lease/partition 双非空字符串，原样透传）。
+  assert.deepEqual(JSON.parse(JSON.stringify(reservation)), {
+    lease: 'dsh-browser-lease-1-77',
+    partition: 'browser-guest-0f1e2d3c4b5a6978',
+  });
+
+  // E. 形态守门：壳回畸形（缺字段/空串/非串/null）→ reject，绝不伪造 Reservation。
+  acquireReply = {};
+  await assert.rejects(dsh.browser.acquire('cwd:x'), /invalid reservation from shell/);
+  acquireReply = { lease: '', partition: 'p' };
+  await assert.rejects(dsh.browser.acquire('cwd:x'), /invalid reservation from shell/);
+  acquireReply = { lease: 'l', partition: 42 };
+  await assert.rejects(dsh.browser.acquire('cwd:x'), /invalid reservation from shell/);
+  acquireReply = null;
+  await assert.rejects(dsh.browser.acquire('cwd:x'), /invalid reservation from shell/);
+
+  // F. release：官方 Promise<void>（resolve 值必须为 undefined，不外泄回包）；
+  //    路由 browser.release 载荷 {lease}。
+  const released = await dsh.browser.release('dsh-browser-lease-1-77');
+  assert.equal(released, undefined, 'release must resolve to void');
+  const releaseCall = calls.find((c) => c.method === 'browser.release');
+  assert.ok(releaseCall, 'release must route through browser.release');
+  assert.equal(releaseCall.params.lease, 'dsh-browser-lease-1-77');
+
+  // G. onOpenRequested：browser.open-requested 帧按 lease 投递 url；disposer
+  //    退订；异租约不串投（官方 DesktopBrowserOpenRequest {lease, url}）。
+  const gotUrls: string[] = [];
+  const otherUrls: string[] = [];
+  const disposeOpen = dsh.browser.onOpenRequested('dsh-browser-lease-1-77', (url: string) => gotUrls.push(url));
+  assert.equal(typeof disposeOpen, 'function', 'onOpenRequested must return a disposer');
+  dsh.browser.onOpenRequested('dsh-browser-lease-2-88', (url: string) => otherUrls.push(url));
+  dispatch('browser.open-requested', { lease: 'dsh-browser-lease-1-77', url: 'https://example.com/a' });
+  dispatch('browser.open-requested', { lease: 'dsh-browser-lease-2-88', url: 'https://example.com/b' });
+  assert.deepEqual(gotUrls, ['https://example.com/a'], 'open-requested must reach only its own lease listeners');
+  assert.deepEqual(otherUrls, ['https://example.com/b'], 'other leases must not receive cross-lease requests');
+  disposeOpen();
+  dispatch('browser.open-requested', { lease: 'dsh-browser-lease-1-77', url: 'https://example.com/c' });
+  assert.deepEqual(gotUrls, ['https://example.com/a'], 'disposer must unsubscribe the listener');
+  // 畸形帧不炸桥。
+  dispatch('browser.open-requested', null);
+  dispatch('browser.open-requested', { lease: '', url: 'https://x' });
+
+  // H. <webview> 适配：createElement('webview') → Electron 同名 API 挂齐；
+  //    未设 name（无租约）时命令拒绝（绝不伪造租约操作）。
+  const el = document.createElement('webview');
+  for (const fn of ['loadURL', 'goBack', 'goForward', 'reload', 'clearHistory', 'getURL', 'getTitle', 'isLoading', 'canGoBack', 'canGoForward']) {
+    assert.equal(typeof el[fn], 'function', `webview adapter must provide ${fn}`);
+  }
+  assert.equal(el.canGoBack(), false, 'fresh adapter must report neutral history state');
+  assert.equal(el.getURL(), 'about:blank', 'fresh adapter must report the bootstrap URL');
+  assert.throws(() => el.loadURL('https://example.com'), /missing guest lease/,
+    'commands without a lease (name attribute) must be refused');
+  assert.ok(!calls.some((c) => c.method === 'browser.guest-load-url'),
+    'lease-less loadURL must not reach L1');
+
+  // I. 设 name=lease 后：loadURL/goBack 路由 L1；guest-event 帧更新缓存并派发
+  //    Electron 同名事件；destroyed 帧派发 destroyed。
+  const events: string[] = [];
+  el.setAttribute('name', 'dsh-browser-lease-1-77');
+  el.addEventListener('dom-ready', () => events.push('dom-ready'));
+  el.addEventListener('did-navigate', () => events.push('did-navigate'));
+  el.addEventListener('destroyed', () => events.push('destroyed'));
+  const loadP = el.loadURL('https://example.com/');
+  assert.equal(typeof loadP.then, 'function', 'loadURL must return a Promise (Electron 形态)');
+  await loadP;
+  const loadCall = calls.find((c) => c.method === 'browser.guest-load-url');
+  assert.ok(loadCall, 'loadURL must route through browser.guest-load-url');
+  assert.deepEqual(JSON.parse(JSON.stringify(loadCall.params)),
+    { lease: 'dsh-browser-lease-1-77', url: 'https://example.com/' });
+  el.goBack();
+  const cmdCall = sends.find((s) => s.method === 'browser.guest-cmd');
+  assert.ok(cmdCall, 'goBack must route through browser.guest-cmd (send 帧)');
+  assert.deepEqual(JSON.parse(JSON.stringify(cmdCall.params)),
+    { lease: 'dsh-browser-lease-1-77', cmd: 'goBack' });
+
+  dispatch('browser.guest-event', { lease: 'dsh-browser-lease-1-77', event: 'dom-ready', url: 'about:blank' });
+  dispatch('browser.guest-event', { lease: 'dsh-browser-lease-1-77', event: 'did-navigate', url: 'https://example.com/', loading: true, canGoBack: true });
+  assert.deepEqual(events, ['dom-ready', 'did-navigate'], 'guest-event frames must dispatch the Electron event names');
+  assert.equal(el.getURL(), 'https://example.com/', 'getURL must read the L1-pushed URL');
+  assert.equal(el.isLoading(), true, 'isLoading must read the L1-pushed loading state');
+  assert.equal(el.canGoBack(), true, 'canGoBack must read the L1-pushed history state');
+  // 异租约事件不串扰本元素。
+  dispatch('browser.guest-event', { lease: 'dsh-browser-lease-2-88', event: 'did-navigate', url: 'https://other.example/' });
+  assert.equal(el.getURL(), 'https://example.com/', 'other leases must not mutate this element cache');
+
+  dispatch('browser.guest-destroyed', { lease: 'dsh-browser-lease-1-77' });
+  assert.ok(events.includes('destroyed'), 'guest-destroyed frame must dispatch the destroyed event');
+});
+

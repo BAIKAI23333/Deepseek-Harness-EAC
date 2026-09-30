@@ -8,7 +8,12 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "devtools"] }
+# SYNC-006：多 webview 能力（Window::add_child / WebviewBuilder）被 "unstable"
+# feature 门控。该 feature 展开为 tauri-runtime-wry?/unstable，而
+# tauri-runtime-wry 2.11.4 的 unstable = []（空 feature）—— 启用它不新增
+# 依赖、不顶动 Cargo.lock 的 WebView 栈锁定版本（tauri 2.11.5 / wry 0.55.1 /
+# tao 0.35.3），只解锁既有依赖里的多 webview 代码路径。
+tauri = { version = "2", features = ["tray-icon", "devtools", "unstable"] }
 tauri-plugin-single-instance = "2"
 # SYNC-004（__DSH_DIRECTORY_PICKER__）：官方原生目录选择对话框
 #（dialog.showOpenDialog(['openDirectory','createDirectory']) 的 EAC 等价物）。
