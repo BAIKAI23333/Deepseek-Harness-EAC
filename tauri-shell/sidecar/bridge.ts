@@ -77,8 +77,14 @@
   var rpc = (window as any).__DSH_WS_RPC__({
     onOpen: function () {
       call('boot.state', {}).then(function (info) {
-        try { readyHooks.forEach(function (h) { h(info); }); } catch (e) { /* 页面回调异常不断桥 */ }
+        try { readyHooks.forEach(function (h) { h(info); }); } catch (e) { /* boot.state 不可用不致命 */ }
       }).catch(function () { /* boot.state 不可用不致命 */ });
+      // SYNC-005：拉当前快捷键快照（WS 通知帧不回放，重连/重载后 revision
+      // 必须重新同步 —— 否则原生输入带着旧/占位 revision，全部被客户端按
+      // revision 对账丢弃，快捷键失联）。sidecar 未就绪/旧壳时静默降级。
+      call('shortcuts.state', {}).then(function (snap: unknown) {
+        noteSnapshot(snap);
+      }).catch(function () { /* shortcuts 持久化不可用不致命（输入按未同步丢弃） */ });
     },
   });
   rpc.onNotify(function (method: string, params: any): void {
@@ -135,15 +141,39 @@
   // 主进程级捕获需 L1 接管，留给后续 SYNC 任务。
   // ---------------------------------------------------------------------------
 
-  // ShortcutRevision 运行时是 Branded<string>（编译期品牌，值即字符串）。EAC
-  // 无快捷键配置修订存储（官方由主进程 persistence 发布 revision，原生输入与
-  // 关窗指令携带同一值供客户端对账），给稳定占位串。官方 installNativeKeyboard
-  //（client.js:896）会丢弃 revision 与其快照不一致的输入 —— 占位阶段原生输入
-  // 只抵达 listener 闸门、不进入键位分发，功能对齐留给 dshDesktop.shortcuts
-  // 接回任务。
+  // ShortcutRevision 运行时是 Branded<string>（编译期品牌，值即字符串）。真实
+  // revision 由 sidecar 的官方 ShortcutPersistence（SYNC-005，
+  // @deepseek-ai/dsh-client-shortcuts/lib/protocol.js）在每次快照 accept 时生成，
+  // 经 'shortcuts.snapshot' 通知帧（及 get/edit 的快照字段）下发 —— noteSnapshot
+  // 按 sequence 门控缓存。官方 installNativeKeyboard（client.js:896）会丢弃
+  // revision 与其快照不一致的输入，因此原生输入必须携带缓存里的当前值；
+  // 快照尚未到达（WS 未同步/旧壳）时退回占位串（该输入将被客户端丢弃，
+  // 与官方「配置未就绪不分发」语义一致，绝不放行）。
   var SHORTCUT_REVISION_PLACEHOLDER = 'eac-shortcut-revision-0';
+  var shortcutRevision: string | null = null;
+  var shortcutSequence = -1;
+  var shortcutRecording = false;
   var keyboardListeners: ((input: unknown) => void)[] = [];
+  var shortcutListeners: ((snapshot: unknown) => void)[] = [];
   var keyboardCaptureInstalled = false;
+
+  // 快照收束（SYNC-005）：notify 帧 / get/edit 回包统一入口。形态校验（revision
+  // 字符串 + document 对象 + sequence 数字）挡住旧壳/畸形回包；sequence 门控
+  //（官方语义「clients discard out-of-order IPC replies」）挡住 WS 通知帧与
+  // 回包不同路到达造成的回退。
+  function noteSnapshot(snapshot: unknown): void {
+    var snap = snapshot as { revision?: unknown; sequence?: unknown; document?: unknown } | null;
+    if (!snap || typeof snap.revision !== 'string' || snap.revision === ''
+      || typeof snap.sequence !== 'number' || !snap.document || typeof snap.document !== 'object') return;
+    if (shortcutSequence >= 0 && (snap.sequence as number) < shortcutSequence) return;
+    shortcutSequence = snap.sequence as number;
+    shortcutRevision = snap.revision as string;
+    for (var i = 0; i < shortcutListeners.length; i++) {
+      var listener = shortcutListeners[i];
+      if (typeof listener !== 'function') continue;
+      try { listener(snapshot); } catch (e) { /* listener 异常不断桥 */ }
+    }
+  }
 
   function emitShortcutInput(input: unknown): void {
     for (var i = 0; i < keyboardListeners.length; i++) {
@@ -167,7 +197,9 @@
     var shift = !!event.shiftKey;
     var meta = !!event.metaKey;
     var repeat = !!event.repeat;
-    var revision = SHORTCUT_REVISION_PLACEHOLDER;
+    // SYNC-005：真实 revision（sidecar 官方 ShortcutPersistence 下发）；未同步
+    // 时占位串 —— 客户端按 revision 不匹配丢弃，等价官方「配置未就绪不分发」。
+    var revision = shortcutRevision !== null ? shortcutRevision : SHORTCUT_REVISION_PLACEHOLDER;
     var active = document.activeElement as Element | null;
     if (active && typeof active.matches === 'function' && active.isConnected) {
       // webview 分支先判（webview 宿主元素不是 HTMLIFrameElement）。
@@ -186,6 +218,10 @@
   }
 
   function onKeydownCapture(event: KeyboardEvent): void {
+    // SYNC-005 recording 门：官方语义（keyboard.ts:97-102 · recording(active)）
+    // —— 录制态暂停物理键拦截/原生输入分发（键位编辑器此时经 DOM 自收按键，
+    // 不应再触发已配置命令）。物理捕获监听就挂在本桥，同层暂停即官方同义。
+    if (shortcutRecording) return;
     var input = assembleShortcutInput(event);
     if (input === null) return;
     emitShortcutInput(input);
@@ -207,6 +243,52 @@
     window.removeEventListener('keydown', onKeydownCapture, true);
   }
 
+  // ---------------------------------------------------------------------------
+  // SYNC-005：dshDesktop.shortcuts（官方 DesktopShortcutsApi，persistence.d.ts
+  // 逐字段对齐）+ dshDesktop.updates 真事件源。
+  //
+  // shortcuts 通道映射：get/edit 经 WS call('shortcuts.get'/'shortcuts.edit')
+  // 交 sidecar 的官方 ShortcutPersistence（userData/keybindings.json 单写者、
+  // revision/sequence/冲突分类全部由内核协议实现保证 —— 见 server.ts SYNC-005
+  // 区注释）；快照变更由 sidecar notify('shortcuts.snapshot') 推送、本桥经
+  // noteSnapshot（sequence 门控）分发给 subscribe 监听者并联动 keyboard 的
+  // revision；recording 是页面层状态门（物理捕获监听就在本桥，同层暂停即
+  // 官方「录制态暂停物理键拦截」语义，无需绕行 WS）。
+  //
+  // updates 通道映射：status 经 call('updates.status')；sidecar 以真实更新链
+  // 落盘态（settings.pendingClientUpdate，client-update.js 写入）映射官方
+  // DesktopUpdatePresentation（映射依据见 server.ts updates 区注释，无流时
+  // 如实 idle）；subscribe 在 0→1/1→0 时 call('updates.subscribe'/
+  // 'updates.unsubscribe') 交 sidecar 启停文件变化监听，状态变化经
+  // notify('updates.presentation') 推送。open 保持退役 reject（既有锁定），
+  // check/install 无主面留 SYNC-007 处置。
+  // ---------------------------------------------------------------------------
+  var UPDATE_PHASES = ['idle', 'checking', 'available', 'downloading', 'verifying', 'installing', 'ready', 'error'];
+  var updateListeners: ((presentation: unknown) => void)[] = [];
+  var updateWatchers = 0;
+  // 通知帧/回包统一归一：phase 不在官方枚举内（旧壳/畸形）一律按 idle 呈现，
+  // 不把未知形态外泄给消费者（官方 DesktopUpdatePresentation 的 phase 是封闭
+  // 枚举；settings 消费者按枚举选文案）。
+  function normalizePresentation(p: unknown): unknown {
+    var presentation = p as { phase?: unknown } | null;
+    if (presentation && typeof presentation.phase === 'string'
+      && UPDATE_PHASES.indexOf(presentation.phase) >= 0) return presentation;
+    return { phase: 'idle' };
+  }
+  onNotify(function (method: string, params: any): void {
+    try {
+      if (method === 'shortcuts.snapshot') noteSnapshot(params);
+      else if (method === 'updates.presentation') {
+        var presentation = normalizePresentation(params);
+        for (var i = 0; i < updateListeners.length; i++) {
+          var listener = updateListeners[i];
+          if (typeof listener !== 'function') continue;
+          try { listener(presentation); } catch (e) { /* listener 异常不断桥 */ }
+        }
+      }
+    } catch (e) { /* 通知帧畸形不炸桥 */ }
+  });
+
   (window as any).dshDesktop = {
     // ---- 官方 dshDesktop 契约 ----
     protocolVersion: 1,
@@ -226,12 +308,56 @@
         };
       },
       // 官方语义（keyboard.ts:97-102）：主进程校验 revision 仍当前、窗口聚焦、
-      // 未录键、未遮挡才关窗。EAC 无快捷键配置修订存储可校验 —— 按任务卡简化
-      // 为「收到即关」，revision 原样透传在 win.close 帧上由 L1 记录；与官方
-      // 的差异（无 revision 对账、无聚焦前置条件）留给 shortcuts 接回任务对齐。
+      // 未录键、未遮挡才关窗。SYNC-005 起可对账 revision：缓存快照（sidecar
+      // 官方 ShortcutPersistence）已同步且与请求不符 → 静默不关（官方对账语义，
+      // 防过期快照的主人误关当前窗口）；快照未同步（旧壳/WS 未就绪）→ 透传
+      // 由 L1 记录（无对账基准时不擅自拒绝）。录制态同理不关（官方「未录键」
+      // 前置）。窗口聚焦前置在本桥结构上天然成立：物理捕获是页面层 keydown，
+      // 页面失焦时根本收不到触发输入；遮挡检测无对应观测量，仍是已知缺口。
       closeWindow: function (revision: unknown): Promise<void> {
+        if (shortcutRecording) return Promise.resolve();
+        if (shortcutRevision !== null && revision !== shortcutRevision) return Promise.resolve();
         return call('win.close', { reason: 'shortcuts.closeWindow', revision: revision })
           .then(function () { /* Promise<void>：不把 win.close 的 ok 回包外泄 */ });
+      },
+    },
+    // SYNC-005：官方 DesktopShortcutsApi（内核 ipc.ts:75 + dsh-client-shortcuts
+    // persistence.d.ts 逐字段对齐）。键面恰为 get/edit/subscribe/recording；
+    // 实现体见上方 SYNC-005 区注释（持久化与冲突分类在 sidecar 官方内核）。
+    shortcuts: {
+      // get(definitions) → ShortcutConfigSnapshot（含 revision/sequence/document/
+      // status/error/usingDefaults）。目录先经 sidecar 的
+      // parseShortcutDefinitions 校验（官方 IPC 入口语义：畸形即 reject，
+      // 消费者 failRead 落 'unreadable'），随后 setDefinitions + readCurrent。
+      get: function (definitions: unknown): Promise<unknown> {
+        return call('shortcuts.get', { definitions: definitions }).then(function (snap: unknown) {
+          noteSnapshot(snap);
+          return snap;
+        });
+      },
+      // edit(edit, revision) → ShortcutSaveResult（saved/stale/unreadable/
+      // write-failed/not-ready/conflict + issue/conflicts，由内核 persistence
+      // 分类）。回包里的最新快照同样走 noteSnapshot 联动 keyboard revision。
+      edit: function (edit: unknown, revision: unknown): Promise<unknown> {
+        return call('shortcuts.edit', { edit: edit, revision: revision }).then(function (result: any) {
+          if (result && typeof result === 'object' && result.snapshot) noteSnapshot(result.snapshot);
+          return result;
+        });
+      },
+      // recording(active)：录制态暂停物理键拦截（onKeydownCapture 入口门）。
+      // 官方 Promise<void>。
+      recording: function (active: boolean): Promise<void> {
+        shortcutRecording = !!active;
+        return Promise.resolve();
+      },
+      // subscribe(listener)：快照推送（'shortcuts.snapshot' 帧 / get/edit 回包
+      // / WS open 拉取，统一经 noteSnapshot 分发），返回 disposer。
+      subscribe: function (listener: (snapshot: unknown) => void): () => void {
+        shortcutListeners.push(listener);
+        return function () {
+          var i = shortcutListeners.indexOf(listener);
+          if (i >= 0) shortcutListeners.splice(i, 1);
+        };
       },
     },
     locale: function () {
@@ -245,12 +371,37 @@
       update: function () { return unavailable('plugin-install'); },
     },
     updates: {
-      // rc.2 设置页在激活时读取 status；保留旧方法供现有插件使用。
-      status: function () { return Promise.resolve({ phase: 'idle' }); },
+      // SYNC-005：真实更新态（sidecar 以真实更新链落盘待办映射官方
+      // DesktopUpdatePresentation，见 server.ts updates 区注释）。
+      status: function (): Promise<unknown> {
+        return call('updates.status', {}).then(function (p: unknown) {
+          return normalizePresentation(p);
+        });
+      },
+      // 退役语义（ADR 0006 · bridge-preload-parity.test.ts 锁定）：原生确认框
+      // 与更新主面未接回，保持 reject。check/install 无主面，留 SYNC-007。
       open: function () { return unavailable('client-update'); },
       check: function () { return Promise.resolve({ phase: 'idle' }); },
       install: function () { return unavailable('client-update'); },
-      subscribe: function () { return function () { /* 无更新事件源 */ }; },
+      // 订阅真实事件流：sidecar 监听 settings.json 变化（真实更新态来源），
+      // 变化经 notify('updates.presentation') 推送；0→1/1→0 交 sidecar 启停
+      // 监听。返回 disposer。
+      subscribe: function (listener: (presentation: unknown) => void): () => void {
+        updateListeners.push(listener);
+        updateWatchers += 1;
+        if (updateWatchers === 1) {
+          call('updates.subscribe', {}).catch(function () { /* 旧壳无此方法：仅无推送 */ });
+        }
+        return function () {
+          var i = updateListeners.indexOf(listener);
+          if (i >= 0) updateListeners.splice(i, 1);
+          updateWatchers -= 1;
+          if (updateWatchers <= 0) {
+            updateWatchers = 0;
+            call('updates.unsubscribe', {}).catch(function () { /* 同上 */ });
+          }
+        };
+      },
     },
     // ---- 壳最小控制面：窗口控制（自绘标题栏与 Rust L1 能力）----
     windowControls: {

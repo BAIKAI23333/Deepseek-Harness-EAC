@@ -14,6 +14,7 @@
 import path = require('node:path');
 import os = require('node:os');
 import fs = require('node:fs');
+import url = require('node:url');
 import readline = require('node:readline');
 
 // 资源根：开发态 tauri-shell/sidecar → 仓库根/dsh-desktop；
@@ -153,6 +154,202 @@ process.on('uncaughtException', (err) => {
   try { log('fatal', 'uncaughtException: ' + String((err && err.stack) || err)); } catch { /* 尽力而为 */ }
   process.exit(1);
 });
+
+// ---------------------------------------------------------------------------
+// SYNC-005：dshDesktop.shortcuts 持久化（官方 ShortcutPersistence 内核复用）
+//
+// 官方权威实现 = 内核包 @deepseek-ai/dsh-client-shortcuts 的 lib/protocol.js
+//（Electron 主进程同款单写者协调器：revision = 每次 accept 重新生成的 UUID、
+// sequence 单调递增供客户端丢弃乱序回包、edit 先对账 revision 再做冲突分类
+// 后写盘、读失败保留上次已接受文档并禁写）。本进程不重抄该逻辑，直接以
+// ShortcutStorage 适配器复用 —— 绝不臆造语义。
+//
+//   * 包定位：dsh-desktop/node_modules/@deepseek-ai/dsh-client-shortcuts。该包
+//     在生产依赖树内（@deepseek-ai/dsh → dsh-web-app → dsh-client-shortcuts，
+//     npm ls 实核），打包态 npm ci --omit=dev 保留 —— 开发/打包两态都可用。
+//   * ESM 导入：内核包 "type":"module"，而本文件被 tsc 编译成 commonjs，
+//     import() 会被 tsc 变换成 require()（require ESM 在旧 Node 下失败）。
+//     new Function 逃逸变换，保留宿主动态 import 语义（vendored node v24）。
+//   * runtime='desktop'：必须与页面 dsh-client-shortcuts detectEnvironment 的
+//     判定一致（data-platform 存在 → runtime='desktop'），否则
+//     editShortcutDocument 的 schemaVersion/profile 键与页面注册表错位。
+//   * platform：与页面 detectEnvironment 同源归一（win32→windows、darwin→macos、
+//     其余→linux）。
+//   * rereadBeforeWrite=true：文件适配器，写前重读 —— 外部改动（其它进程/
+//     手编）先进协调器再写，单写者语义不丢更新。
+//   * 落盘：userData/keybindings.json（官方路径 userData/keybindings.json）。
+//     userData 权威解析复用 lib/desktop/platform.ts 的 createDesktopPlatform
+//     （%APPDATA%/Deepseek Harness EAC —— 与 settings.json 同目录同源）。
+//     writeJsonAtomic（tmp+rename 原子换入）落盘格式 `JSON.stringify(v,null,2)
+//     +'\n'` 与官方 ShortcutPersistence.serialize 的产物逐字节一致。
+//
+// 推送：publish 回调 → notify('shortcuts.snapshot', snapshot) —— 无 id JSON-RPC
+// 通知帧，Rust L1（Sidecar::spawn_reader）广播给所有 WS 连接；页面桥
+//（bridge.ts noteSnapshot）按 sequence 门控缓存 revision 并分发给
+// shortcuts.subscribe 监听者。页面重载/重连后由桥在 WS open 时主动
+// call('shortcuts.state') 拉当前快照（L2 通知帧不回放）。
+// ---------------------------------------------------------------------------
+const importEsm = new Function('specifier', 'return import(specifier);') as (specifier: string) => Promise<Record<string, unknown>>;
+const SHORTCUT_PLATFORM: 'windows' | 'macos' | 'linux' =
+  process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux';
+const keybindingsFile = path.join(userDataDir, 'keybindings.json');
+// ShortcutPersistence / 快照在运行期经 ESM 默认命名空间取得（无 CJS 类型面），
+// 这里只声明实际用到的窄形态。
+interface ShortcutSnapshotLike {
+  revision: string;
+  sequence: number;
+  status: string;
+}
+interface ShortcutPersistenceLike {
+  setDefinitions(definitions: unknown): void;
+  readCurrent(): Promise<ShortcutSnapshotLike>;
+  edit(edit: unknown, revision: unknown): Promise<Record<string, unknown>>;
+}
+let shortcutPersistence: ShortcutPersistenceLike | null = null;
+let shortcutProtocol: {
+  parseShortcutDefinitions(value: unknown): unknown;
+  parseShortcutEdit(value: unknown): unknown;
+} | null = null;
+let shortcutsError: string | null = null;
+const shortcutsBoot: Promise<void> = (async (): Promise<void> => {
+  try {
+    const protocolUrl = url.pathToFileURL(path.join(
+      DSH_DESKTOP_ROOT, 'node_modules', '@deepseek-ai', 'dsh-client-shortcuts', 'lib', 'protocol.js',
+    )).href;
+    const protocol = await importEsm(protocolUrl) as {
+      ShortcutPersistence: new (
+        storage: { read(): string | null; write(raw: string): void },
+        runtime: 'desktop',
+        platform: 'windows' | 'macos' | 'linux',
+        rereadBeforeWrite: boolean,
+        publish: (snapshot: ShortcutSnapshotLike) => void,
+      ) => ShortcutPersistenceLike;
+      parseShortcutDefinitions(value: unknown): unknown;
+      parseShortcutEdit(value: unknown): unknown;
+    };
+    shortcutProtocol = protocol;
+    shortcutPersistence = new protocol.ShortcutPersistence(
+      {
+        // storage.read：原文（string）或 null=缺失；其余 IO 错误向上抛 ——
+        // 官方协调器据此归类 error='read'（保留上次已接受文档并禁写）。
+        read: (): string | null => {
+          try {
+            return fs.readFileSync(keybindingsFile, 'utf8');
+          } catch (e) {
+            if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            throw e;
+          }
+        },
+        // storage.write：raw 是官方 serialize 产物（`JSON.stringify(document,
+        // null, 2)+'\n'`）；parse 回对象交 writeJsonAtomic（同格式原子落盘）。
+        write: (raw: string): void => {
+          writeJsonAtomic(keybindingsFile, JSON.parse(raw));
+        },
+      },
+      'desktop',
+      SHORTCUT_PLATFORM,
+      true,
+      (snapshot) => { notify('shortcuts.snapshot', snapshot); },
+    );
+    // 启动即读盘：快照（含真实 revision）在首个消费者 get() 之前就绪，
+    // 页面桥 WS open 的 shortcuts.state 拉取即刻拿到真值。
+    await shortcutPersistence.readCurrent();
+    log('shortcuts', 'persistence ready: ' + keybindingsFile);
+  } catch (e) {
+    shortcutPersistence = null;
+    shortcutProtocol = null;
+    shortcutsError = String((e as Error).message || e);
+    log('shortcuts', 'persistence init failed（shortcuts 面按不可用降级）: ' + shortcutsError);
+  }
+})();
+async function ensureShortcuts(): Promise<void> {
+  await shortcutsBoot;
+  if (!shortcutPersistence || !shortcutProtocol) {
+    throw new Error('shortcuts persistence unavailable: ' + (shortcutsError || 'not initialized'));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SYNC-005：dshDesktop.updates 真事件源
+//
+// EAC 更新态来源调研（自证材料 #1）：
+//   * 真实客户端更新链 = dsh-desktop/lib/desktop/client-update.js —— EAC 封装
+//     自更新（checkLatest → 弹窗同意 → downloadRelease 进度 → 写入
+//     settings.pendingClientUpdate={version,path,source} → 用户确认重启 →
+//     client-updater.applyUpdate 替换 exe 并退出）。updater.js 是内核 overlay
+//     （agent dsh 二进制）更新，不是「客户端」更新链。
+//   * Tauri 壳（v6 最简本体，ADR 0006）未挂载 runClientUpdateFlow —— 检查/
+//     下载流程不在本进程运行，checking/available/downloading/verifying/
+//     installing 各 phase 当前没有任何真实写入点，不得伪造。
+//   * 真实可观测态 = userData/settings.json 的 pendingClientUpdate（真实落盘，
+//     由 client-update 下载完成后写入）：映射官方 phase='ready'（更新已就绪
+//     待装）。判定门与 offerPendingClientUpdate（client-update.js:200-217）
+//     逐条一致：文件仍存在 且 version > 当前应用版本；失效项按 idle。
+//   * 其余一律 phase='idle' —— 当前没有进行中/就绪的客户端更新，这是真实态
+//    （若 shell 层未来接回检查/下载流程（SYNC-007），在状态变化点改写
+//     presentation 即可，本映射表随之扩展）。
+//
+// 事件源：settings.json 的真实文件变化。首个 updates.subscribe 到来才启动
+// 3s 低频 stat 轮询（mtimeMs+size 变化 → 重算 presentation → 与上次推送不同
+// 才 notify('updates.presentation')）；末个退订即停轮询。推送/轮询都只读
+// 真实文件，绝不凭空生成进度。
+// ---------------------------------------------------------------------------
+const updaterMod = require(path.join(DSH_DESKTOP_ROOT, 'updater')) as {
+  compareVersions(a: string, b: string): number;
+};
+function computeUpdatePresentation(): { phase: 'idle' | 'ready'; version?: string } {
+  const s = loadSettings() as { pendingClientUpdate?: { version?: unknown; path?: unknown } };
+  const pending = s.pendingClientUpdate;
+  if (pending && typeof pending.version === 'string' && typeof pending.path === 'string' && pending.path !== '') {
+    // offerPendingClientUpdate 同款判定门（client-update.js:208-217）：
+    // 包文件消失或版本不比当前新 = 过期待办，清场按 idle。
+    try {
+      if (fs.existsSync(pending.path) && updaterMod.compareVersions(pending.version, pkgVersion) > 0) {
+        return { phase: 'ready', version: pending.version };
+      }
+    } catch { /* 文件判定失败按 idle（不伪造就绪） */ }
+  }
+  return { phase: 'idle' };
+}
+let updatesWatchers = 0;
+let updatesTimer: NodeJS.Timeout | null = null;
+let updatesStatKey = '';
+let lastUpdatePresentation = '';
+function statKey(file: string): string {
+  try {
+    const st = fs.statSync(file);
+    return st.mtimeMs + ':' + st.size;
+  } catch {
+    return 'missing';
+  }
+}
+function pushUpdatePresentation(force: boolean): void {
+  const p = computeUpdatePresentation();
+  const key = JSON.stringify(p);
+  if (force || key !== lastUpdatePresentation) {
+    lastUpdatePresentation = key;
+    notify('updates.presentation', p);
+  }
+}
+function startUpdatesPoll(): void {
+  if (updatesTimer) return;
+  updatesStatKey = statKey(settingsFile);
+  updatesTimer = setInterval(() => {
+    const key = statKey(settingsFile);
+    if (key !== updatesStatKey) {
+      updatesStatKey = key;
+      try { pushUpdatePresentation(false); } catch (e) {
+        log('updates', 'presentation push failed: ' + String((e as Error).message || e));
+      }
+    }
+  }, 3000);
+}
+function stopUpdatesPoll(): void {
+  if (updatesTimer) {
+    clearInterval(updatesTimer);
+    updatesTimer = null;
+  }
+}
 
 bootMod.init({
   log,
@@ -393,6 +590,53 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
       // 客户端按既有契约回退宿主 /dsh-files/static/ 路由（非错误路径）。
       staticPort: 0,
     };
+  },
+  // ---- SYNC-005：dshDesktop.shortcuts（官方 DesktopShortcutsApi 的主进程侧）----
+  // 页面桥键面 = get/edit/recording/subscribe（persistence.d.ts）；recording 的
+  // 物理键拦截暂停发生在页面层（捕获监听就在 bridge.ts），不经 sidecar。
+  // 'shortcuts.state' 是桥内省拉取（非官方契约方法）：页面重载/重连后 WS 通知
+  // 帧不回放，桥在 WS open 时主动拉当前快照 —— readCurrent 重读文件并按官方
+  // 语义轮转 revision/sequence（客户端按 sequence 丢弃乱序）。
+  'shortcuts.state': async (): Promise<RpcResult> => {
+    await ensureShortcuts();
+    return shortcutPersistence!.readCurrent() as unknown as RpcResult;
+  },
+  // 官方 get 语义（ipc.ts / client.js syncDefinitions）：先校验并安装可信目录
+  //（parseShortcutDefinitions 在 IPC 入口抛畸形 —— WS 错误向上 reject，客户端
+  // failRead 落 'unreadable'），再重读文件返回已接受快照。
+  'shortcuts.get': async (p): Promise<RpcResult> => {
+    await ensureShortcuts();
+    const definitions = shortcutProtocol!.parseShortcutDefinitions(p && p.definitions);
+    shortcutPersistence!.setDefinitions(definitions);
+    return shortcutPersistence!.readCurrent() as unknown as RpcResult;
+  },
+  // 官方 edit 语义：revision 对账（不匹配 → 'stale'）、冲突分类（'conflict' +
+  // issue/conflicts）、写盘成功 → 'saved'（ShortcutSaveResult 形态由内核
+  // persistence 保证）。edit 畸形由 parseShortcutEdit 抛出（官方 IPC 入口同款）。
+  'shortcuts.edit': async (p): Promise<RpcResult> => {
+    await ensureShortcuts();
+    const edit = shortcutProtocol!.parseShortcutEdit(p && p.edit);
+    return shortcutPersistence!.edit(edit, p ? p.revision : undefined) as unknown as RpcResult;
+  },
+  // ---- SYNC-005：dshDesktop.updates（真实状态 + 真实文件变化事件源）----
+  // status：settings.pendingClientUpdate（真实落盘待办）→ 'ready'+version，
+  // 否则 'idle'（检查/下载流程未挂载，checking/downloading 等无真实写入点，
+  // 不伪造 —— 映射依据见上方 updates 区注释）。
+  'updates.status': (): RpcResult => computeUpdatePresentation(),
+  // subscribe：登记远端订阅（首个订阅启动 settings.json 变化轮询），并立即
+  // 推送当前 presentation（页面重载后首个监听者即刻拿到真实态）。
+  'updates.subscribe': (): RpcResult => {
+    updatesWatchers += 1;
+    startUpdatesPoll();
+    const current = computeUpdatePresentation();
+    lastUpdatePresentation = JSON.stringify(current);
+    notify('updates.presentation', current);
+    return current;
+  },
+  'updates.unsubscribe': (): RpcResult => {
+    updatesWatchers = Math.max(0, updatesWatchers - 1);
+    if (updatesWatchers === 0) stopUpdatesPoll();
+    return { ok: true };
   },
   // ---- 插件管理（v6 Task 3.3 接回）----------------------------------------
   // 仅供本机 Web UI 经 bridge 调用；Rust 壳不直接消费这些方法

@@ -475,11 +475,197 @@ test('rc.2 settings update consumer can initialize with the desktop bridge', asy
   });
   const updates = window.dshDesktop.updates;
   const consumer = new Consumer(updates);
-  await Promise.resolve();
+  // SYNC-005：status 改为经 WS call（真实更新态）→ 桥侧归一，比旧恒 idle 桩多
+  // 一层微任务 —— 宏任务 setTimeout(0) 等回包链跑完再断言（open 拒绝与 check
+  // 形态的锁定不变）。
+  await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(consumer.store.getSnapshot().presentation.phase, 'idle');
   assert.equal(consumer.store.getSnapshot().failed, false);
   assert.equal(typeof updates.open, 'function');
   await assert.rejects(updates.open(), /capability "client-update"/);
   assert.equal((await updates.check()).phase, 'idle');
   consumer.dispose();
+});
+
+test('SYNC-005: shortcuts namespace locked to the official DesktopShortcutsApi contract', () => {
+  // 官方 DesktopShortcutsApi（dsh-client-shortcuts persistence.d.ts:29-34）只有
+  // get/edit/subscribe/recording 四个方法 —— 键集精确锁定，防止实现漂移出非
+  // 契约面（sidecar 内省用的 shortcuts.state 不上桥面）。
+  assert.match(bridge, /\bshortcuts: \{/, 'bridge must expose window.dshDesktop.shortcuts（官方 ipc.ts:75 同名同层）');
+  assert.deepEqual([...bridgeTree.shortcuts].sort(), ['edit', 'get', 'recording', 'subscribe'],
+    `shortcuts namespace drift: ${bridgeTree.shortcuts.join(',')}`);
+  // updates 键面不漂移：真实 status/subscribe（SYNC-005）+ 退役 open + 无主面
+  // check/install（SYNC-007 处置）。
+  assert.deepEqual([...bridgeTree.updates].sort(), ['check', 'install', 'open', 'status', 'subscribe'],
+    `updates namespace drift: ${bridgeTree.updates.join(',')}`);
+  // updates.open 退役语义锁定（不得改回任何实现形态）。
+  assert.match(bridge, /open: function \(\) \{ return unavailable\('client-update'\); \}/,
+    'updates.open must stay retired (unavailable reject)');
+});
+
+test('SYNC-005: shortcuts bridge round-trips snapshots and links the keyboard revision', async () => {
+  // 等价 WebView2 注入序列：notify 钩子全量捕获（桥会注册多个钩子），WS 回包
+  // 按方法分发。
+  const hooks: Array<(method: string, params: any) => void> = [];
+  const windowKeydowns: Array<(e: unknown) => void> = [];
+  const calls: Array<{ method: string; params: any }> = [];
+  const snapA = { revision: 'rev-a', sequence: 2, document: { schemaVersion: 1, profiles: {} }, status: 'ready', error: null, usingDefaults: false };
+  const snapB = { revision: 'rev-b', sequence: 3, document: { schemaVersion: 2, profiles: { 'desktop:windows': { 'a.b': { code: 'KeyM', modifiers: ['primary'] } } } }, status: 'ready', error: null, usingDefaults: false };
+  const replies: Record<string, unknown> = {
+    'shortcuts.get': snapA,
+    'shortcuts.edit': { status: 'saved', snapshot: snapB },
+    'updates.status': {},
+  };
+  const window: any = {
+    addEventListener(type: string, fn: (e: unknown) => void) { if (type === 'keydown') windowKeydowns.push(fn); },
+    removeEventListener() {},
+    __DSH_WS_RPC__: () => ({
+      onNotify(fn: (method: string, params: any) => void) { hooks.push(fn); },
+      send() {},
+      call: (method: string, params: any) => { calls.push({ method, params }); return Promise.resolve(replies[method]); },
+    }),
+  };
+  const document: any = {
+    readyState: 'loading',
+    documentElement: { setAttribute() {} },
+    addEventListener() {},
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document,
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+    setTimeout() {},
+  });
+  const dispatch = (method: string, params: any) => { for (const h of hooks) h(method, params); };
+  const keydown = () => windowKeydowns[0]({ code: 'KeyK', ctrlKey: true, altKey: false, shiftKey: false, metaKey: false, repeat: false });
+  const dsh = window.dshDesktop;
+  const keyInputs: any[] = [];
+  dsh.keyboard.subscribe((input: unknown) => keyInputs.push(input));
+
+  // get：官方签名 get(definitions) → 快照回包；路由 'shortcuts.get' 载荷带
+  // definitions；回包快照即当前 revision —— 随后的原生输入必须携带它
+  //（installNativeKeyboard 丢弃 revision 不匹配的输入，client.js:896）。
+  const definitions = [{ id: 'a.b', defaults: { 'desktop:windows': { code: 'KeyN', modifiers: ['primary'] } } }];
+  assert.equal(typeof dsh.shortcuts.get, 'function');
+  assert.equal(typeof dsh.shortcuts.edit, 'function');
+  assert.equal(typeof dsh.shortcuts.subscribe, 'function');
+  assert.equal(typeof dsh.shortcuts.recording, 'function');
+  const got = await dsh.shortcuts.get(definitions);
+  assert.deepEqual(JSON.parse(JSON.stringify(got)), snapA);
+  const getCall = calls.find((c) => c.method === 'shortcuts.get');
+  assert.ok(getCall, 'get must route through shortcuts.get');
+  // vm realm 的对象原型与宿主不同（deepStrictEqual 做引用比较）—— 先 JSON 归一
+  // 再比（与 SYNC-001 测试同款处理）。
+  assert.deepEqual(JSON.parse(JSON.stringify(getCall.params)), { definitions });
+  keydown();
+  assert.equal(keyInputs[0].revision, 'rev-a', 'keyboard input must carry the synced snapshot revision');
+
+  // edit：官方签名 edit(edit, revision) → ShortcutSaveResult；路由载荷带
+  // edit + revision；回包快照联动 revision 递进。
+  const edit = { type: 'set', id: 'a.b', binding: { code: 'KeyM', modifiers: ['primary'] } };
+  const saved = await dsh.shortcuts.edit(edit, 'rev-a');
+  assert.deepEqual(JSON.parse(JSON.stringify(saved)), { status: 'saved', snapshot: snapB });
+  const editCall = calls.find((c) => c.method === 'shortcuts.edit');
+  assert.ok(editCall, 'edit must route through shortcuts.edit');
+  assert.deepEqual(JSON.parse(JSON.stringify(editCall.params)), { edit, revision: 'rev-a' });
+  keydown();
+  assert.equal(keyInputs[1].revision, 'rev-b', 'keyboard input must follow the edit result snapshot');
+
+  // recording：官方「录制态暂停物理键拦截」—— 门是页面层状态（物理捕获就在
+  // 本桥），录制中不分发、结束恢复。
+  await dsh.shortcuts.recording(true);
+  keydown();
+  assert.equal(keyInputs.length, 2, 'no native input while recording');
+  await dsh.shortcuts.recording(false);
+  keydown();
+  assert.equal(keyInputs.length, 3, 'native input resumes after recording ends');
+
+  // subscribe：'shortcuts.snapshot' 推送帧分发；sequence 门控丢弃乱序旧帧
+  //（官方语义「clients discard out-of-order IPC replies」—— 当前序列已是
+  // edit 回包的 3，seq 1/2 的旧帧一律不入）。
+  const snapshots: any[] = [];
+  const dispose = dsh.shortcuts.subscribe((snap: unknown) => snapshots.push(snap));
+  assert.equal(typeof dispose, 'function');
+  dispatch('shortcuts.snapshot', { revision: 'rev-stale', sequence: 1, document: { schemaVersion: 1, profiles: {} }, status: 'ready', error: null, usingDefaults: true });
+  dispatch('shortcuts.snapshot', snapA);
+  assert.equal(snapshots.length, 0, 'out-of-order snapshot (lower sequence) must be discarded');
+  assert.equal(keyInputs[2].revision, 'rev-b', 'stale frame must not roll the keyboard revision back');
+  const snapC = { revision: 'rev-c', sequence: 4, document: { schemaVersion: 1, profiles: {} }, status: 'ready', error: null, usingDefaults: true };
+  dispatch('shortcuts.snapshot', snapC);
+  assert.equal(snapshots.length, 1, 'fresh snapshot frame must reach subscribers');
+  keydown();
+  assert.equal(keyInputs[3].revision, 'rev-c', 'fresh frame must update the keyboard revision');
+  dispose();
+  dispatch('shortcuts.snapshot', snapB);
+  assert.equal(snapshots.length, 1, 'disposer must unsubscribe');
+
+  // closeWindow：SYNC-005 起 revision 对账（官方 keyboard.ts:97-102）—— 缓存
+  // 快照与请求不符 → 不发关窗；匹配 → win.close 携带 revision。
+  await dsh.keyboard.closeWindow('rev-mismatch');
+  assert.ok(!calls.some((c) => c.method === 'win.close'), 'stale revision must not close the window');
+  await dsh.keyboard.closeWindow('rev-c');
+  const close = calls.find((c) => c.method === 'win.close');
+  assert.ok(close, 'current revision must close the window');
+  assert.equal(close.params.revision, 'rev-c');
+});
+
+test('SYNC-005: updates status/subscribe carry the real presentation stream', async () => {
+  const hooks: Array<(method: string, params: any) => void> = [];
+  const calls: Array<{ method: string; params: any }> = [];
+  let statusReply: unknown = {};
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({
+      onNotify(fn: (method: string, params: any) => void) { hooks.push(fn); },
+      send() {},
+      call: (method: string, params: any) => {
+        calls.push({ method, params });
+        if (method === 'updates.status') return Promise.resolve(statusReply);
+        return Promise.resolve({ ok: true });
+      },
+    }),
+  };
+  const document: any = { readyState: 'loading', documentElement: { setAttribute() {} }, addEventListener() {} };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document,
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+  });
+  const dispatch = (method: string, params: any) => { for (const h of hooks) h(method, params); };
+  const updates = window.dshDesktop.updates;
+
+  // status：空回包（旧壳/异常）→ 归一为官方 idle 形态，不外泄未知形态；
+  // 真实回包（sidecar 依据 settings.pendingClientUpdate 映射的 ready 态）→
+  // 原样透传（phase 封闭枚举内）。
+  const idle = await updates.status();
+  assert.deepEqual(JSON.parse(JSON.stringify(idle)), { phase: 'idle' });
+  const statusCall = calls.find((c) => c.method === 'updates.status');
+  assert.ok(statusCall, 'status must route through updates.status');
+  statusReply = { phase: 'ready', version: '9.9.9' };
+  assert.deepEqual(JSON.parse(JSON.stringify(await updates.status())), { phase: 'ready', version: '9.9.9' });
+  statusReply = { phase: 'bogus' };
+  assert.deepEqual(JSON.parse(JSON.stringify(await updates.status())), { phase: 'idle' },
+    'unknown phase must be normalized to idle');
+
+  // subscribe：0→1 交 sidecar 启动真实文件变化监听；presentation 推送帧分发；
+  // 畸形 phase 归一；退订 1→0 停监听。
+  const received: any[] = [];
+  const dispose = updates.subscribe((presentation: unknown) => received.push(presentation));
+  assert.equal(typeof dispose, 'function');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(calls.some((c) => c.method === 'updates.subscribe'), 'first subscriber must arm the sidecar watcher');
+  dispatch('updates.presentation', { phase: 'available', version: '9.9.9' });
+  dispatch('updates.presentation', { phase: 'nope' });
+  assert.deepEqual(JSON.parse(JSON.stringify(received)), [
+    { phase: 'available', version: '9.9.9' },
+    { phase: 'idle' },
+  ], 'presentation frames must stream to subscribers (bogus phase normalized)');
+  dispose();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.ok(calls.some((c) => c.method === 'updates.unsubscribe'), 'last unsubscribe must stop the sidecar watcher');
+
+  // open：退役语义（原生更新主面未接回），保持 reject。
+  await assert.rejects(updates.open(), /capability "client-update"/);
 });
