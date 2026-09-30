@@ -920,42 +920,6 @@
       "owner": "desktop-plugins"
     },
     {
-      "id": "file-drop-eac",
-      "kind": "plugin",
-      "path": "dsh-desktop/assets/plugins/dsh-file-drop-eac",
-      "packageName": "dsh-file-drop-eac",
-      "class": "internal",
-      "source": {
-        "kind": "internal",
-        "name": "dsh-file-drop-eac",
-        "reason": "maintained in this repository; no external source is declared"
-      },
-      "request": {
-        "mode": "exact",
-        "version": "0.1.2"
-      },
-      "sync": {
-        "mode": "manual",
-        "patches": [],
-        "preservePaths": []
-      },
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "validation": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "commands": []
-      },
-      "license": {
-        "expected": "MIT",
-        "reviewOnChange": true
-      },
-      "owner": "desktop-plugins"
-    },
-    {
       "id": "float-window",
       "kind": "plugin",
       "path": "dsh-desktop/assets/plugins/dsh-float-window",
@@ -1292,42 +1256,6 @@
       "owner": "desktop-plugins"
     },
     {
-      "id": "plugin-manager",
-      "kind": "plugin",
-      "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
-      "packageName": "@deepseek-ai/dsh-plugin-manager",
-      "class": "internal",
-      "source": {
-        "kind": "internal",
-        "name": "@deepseek-ai/dsh-plugin-manager",
-        "reason": "maintained in this repository; no external source is declared"
-      },
-      "request": {
-        "mode": "exact",
-        "version": "0.1.0"
-      },
-      "sync": {
-        "mode": "manual",
-        "patches": [],
-        "preservePaths": []
-      },
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "validation": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "commands": []
-      },
-      "license": {
-        "expected": "MIT",
-        "reviewOnChange": true
-      },
-      "owner": "desktop-plugins"
-    },
-    {
       "id": "plugin-shield",
       "kind": "plugin",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-shield",
@@ -1572,42 +1500,6 @@
       "validation": {
         "entrypoints": [
           "index.js"
-        ],
-        "commands": []
-      },
-      "license": {
-        "expected": "MIT",
-        "reviewOnChange": true
-      },
-      "owner": "desktop-plugins"
-    },
-    {
-      "id": "terminal",
-      "kind": "plugin",
-      "path": "dsh-desktop/assets/plugins/dsh-terminal",
-      "packageName": "@deepseek-ai/dsh-terminal",
-      "class": "internal",
-      "source": {
-        "kind": "internal",
-        "name": "@deepseek-ai/dsh-terminal",
-        "reason": "maintained in this repository; no external source is declared"
-      },
-      "request": {
-        "mode": "exact",
-        "version": "0.1.0"
-      },
-      "sync": {
-        "mode": "manual",
-        "patches": [],
-        "preservePaths": []
-      },
-      "runtimeUpdate": {
-        "allowed": false,
-        "defaultAction": "prompt"
-      },
-      "validation": {
-        "entrypoints": [
-          "lib/index.js"
         ],
         "commands": []
       },

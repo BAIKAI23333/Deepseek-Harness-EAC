@@ -2,7 +2,7 @@
 // GENERATED FILE — do not edit by hand.
 // Sources: .sync/plugins.json, plugin-distribution.json, and recommended pack registry (run generate-plugin-registry.mjs).
 // plugin-sync:update-sources {"better-sidebar":{"npm":"dsh-better-sidebar"},"computer-user":{"npm":"computer-user"},"dsh-navbar":{"npm":"@vlln/dsh-navbar"},"dsh-pet":{"npm":"dsh-pet"},"dsh-session-manager":{"npm":"dsh-session-manager"},"dsh-undo":{"github":"lire1131/dsh-undo-savepoint"},"mobile-fix":{"npm":"dsh-web-mobile-fix"},"offpeak":{"npm":"dsh-offpeak"},"picturereader":{"npm":"picturereader"},"soul-md":{"npm":"dsh-soul-md"},"think-zh-expand-eac":{"github":"jing-hy/dsh-think-zh-expand-eac"},"unified-market":{"npm":"dsh-unified-market"}}
-// plugin-sync:distribution {"builtinPluginIds":["balance","client-file-changes","compact","eac-core-bridge","eac-locale-compat","easy-setup","file-changes","file-drop-eac","plugin-manager","plugin-shield","plugin-wizard","settings-scroll-fix","terminal","unified-market","viewport-lock"],"recommendedPluginIds":["better-sidebar","change-review","composer-dynamic-island","conversation-tweaks","dock-settings","dsh-navbar","dsh-raw-html","dsh-session-manager","message-rewind","mobile-fix","offpeak","picturereader","prompt-custom","soul-md"],"recommendedPackId":"dev.dsh-eac.desktop-recommended","pluginClasses":{"agent-teams":"external","balance":"builtin","better-sidebar":"recommended","change-review":"recommended","client-file-changes":"builtin","compact":"builtin","composer-dynamic-island":"recommended","computer-user":"external","conversation-tweaks":"recommended","dock-settings":"recommended","dsh-dafeiyu":"external","dsh-feature-toggles":"external","dsh-navbar":"recommended","dsh-pet":"external","dsh-pet-settings":"external","dsh-phone":"external","dsh-raw-html":"recommended","dsh-session-manager":"recommended","dsh-stt":"external","dsh-undo":"external","dsh-webui-prompt-optimizer":"external","dsh-whale-widget":"external","eac-core-bridge":"builtin","eac-locale-compat":"builtin","easy-setup":"builtin","file-changes":"builtin","file-drop-eac":"builtin","float-window":"external","font-custom":"external","image-paste":"external","meow-smooth":"external","message-rewind":"recommended","mobile-fix":"recommended","offpeak":"recommended","openclaw-bridge":"external","picturereader":"recommended","plugin-manager":"builtin","plugin-shield":"builtin","plugin-wizard":"builtin","prompt-custom":"recommended","settings-groups":"external","settings-scroll-fix":"builtin","side-session":"external","soul-md":"recommended","terminal":"builtin","think-zh-expand-eac":"external","unified-market":"builtin","viewport-lock":"builtin"}}
+// plugin-sync:distribution {"builtinPluginIds":["balance","client-file-changes","compact","eac-core-bridge","eac-locale-compat","easy-setup","file-changes","plugin-shield","plugin-wizard","settings-scroll-fix","unified-market","viewport-lock"],"recommendedPluginIds":["better-sidebar","change-review","composer-dynamic-island","conversation-tweaks","dock-settings","dsh-navbar","dsh-raw-html","dsh-session-manager","message-rewind","mobile-fix","offpeak","picturereader","prompt-custom","soul-md"],"recommendedPackId":"dev.dsh-eac.desktop-recommended","pluginClasses":{"agent-teams":"external","balance":"builtin","better-sidebar":"recommended","change-review":"recommended","client-file-changes":"builtin","compact":"builtin","composer-dynamic-island":"recommended","computer-user":"external","conversation-tweaks":"recommended","dock-settings":"recommended","dsh-dafeiyu":"external","dsh-feature-toggles":"external","dsh-navbar":"recommended","dsh-pet":"external","dsh-pet-settings":"external","dsh-phone":"external","dsh-raw-html":"recommended","dsh-session-manager":"recommended","dsh-stt":"external","dsh-undo":"external","dsh-webui-prompt-optimizer":"external","dsh-whale-widget":"external","eac-core-bridge":"builtin","eac-locale-compat":"builtin","easy-setup":"builtin","file-changes":"builtin","float-window":"external","font-custom":"external","image-paste":"external","meow-smooth":"external","message-rewind":"recommended","mobile-fix":"recommended","offpeak":"recommended","openclaw-bridge":"external","picturereader":"recommended","plugin-shield":"builtin","plugin-wizard":"builtin","prompt-custom":"recommended","settings-groups":"external","settings-scroll-fix":"builtin","side-session":"external","soul-md":"recommended","think-zh-expand-eac":"external","unified-market":"builtin","viewport-lock":"builtin"}}
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.RECOMMENDED_PACK_ID = exports.PLUGIN_DISTRIBUTION_CLASSES = exports.RECOMMENDED_PACK_PLUGIN_IDS = exports.DISTRIBUTION_BUILTIN_PLUGIN_IDS = exports.PLUGIN_UPDATE_SOURCES = exports.PLUGIN_SYNC_REGISTRY = void 0;
 exports.PLUGIN_SYNC_REGISTRY = {
@@ -15,12 +15,9 @@ exports.PLUGIN_SYNC_REGISTRY = {
             "eac-locale-compat",
             "easy-setup",
             "file-changes",
-            "file-drop-eac",
-            "plugin-manager",
             "plugin-shield",
             "plugin-wizard",
             "settings-scroll-fix",
-            "terminal",
             "unified-market",
             "viewport-lock"
         ],
@@ -51,7 +48,6 @@ exports.PLUGIN_SYNC_REGISTRY = {
             "eac-locale-compat": "builtin",
             "easy-setup": "builtin",
             "file-changes": "builtin",
-            "file-drop-eac": "builtin",
             "float-window": "external",
             "font-custom": "external",
             "image-paste": "external",
@@ -61,7 +57,6 @@ exports.PLUGIN_SYNC_REGISTRY = {
             "offpeak": "recommended",
             "openclaw-bridge": "external",
             "picturereader": "recommended",
-            "plugin-manager": "builtin",
             "plugin-shield": "builtin",
             "plugin-wizard": "builtin",
             "prompt-custom": "recommended",
@@ -69,7 +64,6 @@ exports.PLUGIN_SYNC_REGISTRY = {
             "settings-scroll-fix": "builtin",
             "side-session": "external",
             "soul-md": "recommended",
-            "terminal": "builtin",
             "think-zh-expand-eac": "external",
             "unified-market": "builtin",
             "viewport-lock": "builtin"
@@ -517,22 +511,6 @@ exports.PLUGIN_SYNC_REGISTRY = {
             },
             "syncMode": "manual"
         },
-        "file-drop-eac": {
-            "class": "internal",
-            "kind": "plugin",
-            "packageName": "dsh-file-drop-eac",
-            "path": "dsh-desktop/assets/plugins/dsh-file-drop-eac",
-            "runtimeUpdate": {
-                "allowed": false,
-                "defaultAction": "prompt"
-            },
-            "source": {
-                "kind": "internal",
-                "name": "dsh-file-drop-eac",
-                "reason": "maintained in this repository; no external source is declared"
-            },
-            "syncMode": "manual"
-        },
         "float-window": {
             "class": "internal",
             "kind": "plugin",
@@ -685,22 +663,6 @@ exports.PLUGIN_SYNC_REGISTRY = {
             },
             "syncMode": "mirror"
         },
-        "plugin-manager": {
-            "class": "internal",
-            "kind": "plugin",
-            "packageName": "@deepseek-ai/dsh-plugin-manager",
-            "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
-            "runtimeUpdate": {
-                "allowed": false,
-                "defaultAction": "prompt"
-            },
-            "source": {
-                "kind": "internal",
-                "name": "@deepseek-ai/dsh-plugin-manager",
-                "reason": "maintained in this repository; no external source is declared"
-            },
-            "syncMode": "manual"
-        },
         "plugin-shield": {
             "class": "manual",
             "kind": "plugin",
@@ -829,22 +791,6 @@ exports.PLUGIN_SYNC_REGISTRY = {
                 "repository": "git+https://github.com/Scorp1o117/dsh-soul-md.git"
             },
             "syncMode": "mirror"
-        },
-        "terminal": {
-            "class": "internal",
-            "kind": "plugin",
-            "packageName": "@deepseek-ai/dsh-terminal",
-            "path": "dsh-desktop/assets/plugins/dsh-terminal",
-            "runtimeUpdate": {
-                "allowed": false,
-                "defaultAction": "prompt"
-            },
-            "source": {
-                "kind": "internal",
-                "name": "@deepseek-ai/dsh-terminal",
-                "reason": "maintained in this repository; no external source is declared"
-            },
-            "syncMode": "manual"
         },
         "think-zh-expand-eac": {
             "class": "follow-upstream",

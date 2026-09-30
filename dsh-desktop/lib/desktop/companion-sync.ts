@@ -120,7 +120,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   { id: 'balance', name: '@deepseek-ai/dsh-balance' },
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
-  { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
   // 统一插件市场（dsh-unified-market，内置）：聚合精选目录
   // （awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm 检索三源；
   // EAC 特化（web-desktop profile），试装验证 + 冲突预检 + 后台自动更新 +
@@ -238,9 +237,6 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 选定按钮收纳为向上展开的紧凑岛，不移动宿主 React 节点；仅在已确认的
   // composer surface 内发现控件，设置只持久化启用状态与控件标识。
   { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island', dir: 'dsh-composer-dynamic-island' },
-  // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
-  // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
-  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
   // 插件选择向导入口（设置页「插件 → 选择向导」分区）：重新打开首次启动的
   // 内置插件选择向导，按需启用/停用内置插件。纯客户端 UI + 壳层 IPC
   // （onboard:*），host 半边 no-op；核心插件组内锁定，永不被向导停用。
@@ -271,11 +267,9 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
   // 可在「设置 → 插件 → 管理」关闭。
   { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  // 拖入文件/文件夹到对话（EAC 特化版，取代原 dsh-file-drop）：普通文件
-  // 显示可预览、可移除的卡片，并保存临时副本后只注入紧凑路径引用；图片
-  // 继续走官方缩略图链路，混合拖放拆分处理。纯客户端实现（host 半边 no-op）。
-  // 独立发布：https://github.com/jing-hy/dsh-file-drop-eac（issue #141）。
-  { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
+  // EAC-CORE-SHELL-01：file-drop-eac 已退役 —— 官方 0.2.0 的
+  // `apps/desktop/src/preload-app.ts` 已内置拖入/粘贴 → `@path` 引用
+  // （`__DSH_HOST_PATHS__.pathFor = webUtils.getPathForFile`），功能重叠。
   // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
   // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
   // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
@@ -602,6 +596,13 @@ export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'dsh-eac-skin-trading', name: '@dsh-eac/skin-trading' },
   { id: 'dsh-eac-skin-whale-song', name: '@dsh-eac/skin-whale-song' },
   { id: 'dsh-eac-skin-xp', name: '@dsh-eac/skin-xp' },
+  // EAC-CORE-SHELL-01：3 个与内核同名/官方已内置的插件退役。
+  //  - plugin-manager / terminal 与内核 0.2.0 同名，会遮蔽官方包
+  //    （terminal 的官方版提供 ctx.terminals，EAC 版不提供）；
+  //  - file-drop-eac 的拖放 → @path 能力官方已内置。
+  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
+  { id: 'file-drop-eac', name: 'dsh-file-drop-eac' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。

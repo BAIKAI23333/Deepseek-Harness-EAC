@@ -270,16 +270,6 @@
       }
     },
     {
-      "id": "file-drop-eac",
-      "distributionClass": "builtin",
-      "delivery": "bundled",
-      "migration": {
-        "current": "bundled",
-        "target": "bundled",
-        "state": "migrated"
-      }
-    },
-    {
       "id": "float-window",
       "distributionClass": "external",
       "delivery": "market",
@@ -374,16 +364,6 @@
       }
     },
     {
-      "id": "plugin-manager",
-      "distributionClass": "builtin",
-      "delivery": "bundled",
-      "migration": {
-        "current": "bundled",
-        "target": "bundled",
-        "state": "migrated"
-      }
-    },
-    {
       "id": "plugin-shield",
       "distributionClass": "builtin",
       "delivery": "bundled",
@@ -453,16 +433,6 @@
         "current": "bundled",
         "target": "pack",
         "state": "source-pending"
-      }
-    },
-    {
-      "id": "terminal",
-      "distributionClass": "builtin",
-      "delivery": "bundled",
-      "migration": {
-        "current": "bundled",
-        "target": "bundled",
-        "state": "migrated"
       }
     },
     {

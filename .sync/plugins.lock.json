@@ -1,7 +1,7 @@
 {
   "generatedRegistry": "dsh-desktop/lib/desktop/plugin-sync-registry.ts",
   "manifest": ".sync/plugins.json",
-  "manifestRevision": "382b9a95839ba94d574353e23bbc457d4293d6004aaf5fb049828f20ca6aad55",
+  "manifestRevision": "40e823e73d353af0911003a8f3a13b0f2cd1d76812bfc817ebfc63fdec9ce689",
   "plugins": {
     "agent-teams": {
       "compatibility": {},
@@ -728,34 +728,6 @@
       },
       "sourceCommit": null
     },
-    "file-drop-eac": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 6,
-        "license": "MIT",
-        "packageName": "dsh-file-drop-eac",
-        "packageVersion": "0.1.2",
-        "path": "dsh-desktop/assets/plugins/dsh-file-drop-eac",
-        "treeSha256": "75628d7085fa1ffbcebe2762ec6f0c683d9aa4d30686a08a417813f43b2f5ac3"
-      },
-      "manifestEntrySha256": "01e903ea850238a86e666391d59cacd6d1e5b9c7c89e373383b3b3401dc60623",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.2",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "internal",
-        "name": "dsh-file-drop-eac",
-        "sha256": "75628d7085fa1ffbcebe2762ec6f0c683d9aa4d30686a08a417813f43b2f5ac3",
-        "version": "0.1.2"
-      },
-      "sourceCommit": null
-    },
     "float-window": {
       "compatibility": {},
       "local": {
@@ -1010,34 +982,6 @@
       },
       "sourceCommit": null
     },
-    "plugin-manager": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 4,
-        "license": "MIT",
-        "packageName": "@deepseek-ai/dsh-plugin-manager",
-        "packageVersion": "0.1.0",
-        "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
-        "treeSha256": "cc1e2be2eac7635d42c2933217e43846cdb70e470fc492e9fcb470e5aa6615df"
-      },
-      "manifestEntrySha256": "b23a25f33cbc1ef7c02589e9762f3406ce2db92f1318eb8d182df252ed35ace0",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.0",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "internal",
-        "name": "@deepseek-ai/dsh-plugin-manager",
-        "sha256": "cc1e2be2eac7635d42c2933217e43846cdb70e470fc492e9fcb470e5aa6615df",
-        "version": "0.1.0"
-      },
-      "sourceCommit": null
-    },
     "plugin-shield": {
       "compatibility": {},
       "local": {
@@ -1259,34 +1203,6 @@
         "repository": "git+https://github.com/Scorp1o117/dsh-soul-md.git",
         "sha256": "cf299c52054bbbfdbe9d23ec1fd8e864118ab901cee8afd2dc8e6613d4595684",
         "version": "0.2.8"
-      },
-      "sourceCommit": null
-    },
-    "terminal": {
-      "compatibility": {},
-      "local": {
-        "entrypoints": [
-          "lib/index.js"
-        ],
-        "excludedPaths": [],
-        "fileCount": 4,
-        "license": "MIT",
-        "packageName": "@deepseek-ai/dsh-terminal",
-        "packageVersion": "0.1.0",
-        "path": "dsh-desktop/assets/plugins/dsh-terminal",
-        "treeSha256": "84b51d39909bd219d165d98544d2a2418eb1a038f6aa3d05a148bbfb4789d5f4"
-      },
-      "manifestEntrySha256": "661493f26c5309ee758ef59106da3feb77ff053313b7a6b2d21d7cd65fc8424c",
-      "patchFiles": [],
-      "patchSet": "none",
-      "patchSetSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "requested": "0.1.0",
-      "runtimeUpdate": "disabled",
-      "source": {
-        "kind": "internal",
-        "name": "@deepseek-ai/dsh-terminal",
-        "sha256": "84b51d39909bd219d165d98544d2a2418eb1a038f6aa3d05a148bbfb4789d5f4",
-        "version": "0.1.0"
       },
       "sourceCommit": null
     },

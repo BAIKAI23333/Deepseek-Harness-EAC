@@ -276,7 +276,6 @@ console.log('[stage] assets（v6 最简本体：图标 + WS 客户端 + skills�
   // 记录日志并跳过，因此分阶段接回无需改同步器）。
   const BUILTIN_PLUGIN_DIRS = [
     // 阶段 1（PR #392）：零外设依赖的试点插件
-    'dsh-terminal',
     'dsh-viewport-lock',
     'dsh-eac-locale-compat',
     // 阶段 2：不依赖 window.dshDesktop 已删桥接面的 6 个 builtin 插件。
@@ -288,9 +287,7 @@ console.log('[stage] assets（v6 最简本体：图标 + WS 客户端 + skills�
     'dsh-settings-scroll-fix',
     'dsh-unified-market',
     // 阶段 3：服务端 RPC / bridge 面已随本批接回
-    'dsh-plugin-manager',
     'dsh-plugin-shield',
-    'dsh-file-drop-eac',
     'dsh-client-file-changes',
   ];
   // EAC-CORE-SHELL-01：皮肤平台（loader + 13 款公约皮肤）已彻底外迁，宿主

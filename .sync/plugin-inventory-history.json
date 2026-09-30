@@ -132,11 +132,6 @@
       "patched": true
     },
     {
-      "id": "file-drop-eac",
-      "path": "dsh-desktop/assets/plugins/dsh-file-drop-eac",
-      "patched": false
-    },
-    {
       "id": "float-window",
       "path": "dsh-desktop/assets/plugins/dsh-float-window",
       "patched": true
@@ -182,11 +177,6 @@
       "patched": true
     },
     {
-      "id": "plugin-manager",
-      "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
-      "patched": true
-    },
-    {
       "id": "plugin-shield",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-shield",
       "patched": false
@@ -219,11 +209,6 @@
     {
       "id": "soul-md",
       "path": "dsh-desktop/assets/plugins/dsh-soul-md",
-      "patched": true
-    },
-    {
-      "id": "terminal",
-      "path": "dsh-desktop/assets/plugins/dsh-terminal",
       "patched": true
     },
     {

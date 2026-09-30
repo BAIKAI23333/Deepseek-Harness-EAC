@@ -240,7 +240,7 @@ test('host 半静态 inject 进入扫描面（dsh-compact/index.js）', () => {
 // ---------------------------------------------------------------------------
 
 test('随包插件 inject 只消费本半（client/host）的服务面', () => {
-  assert.ok(pluginEntries.length >= 25, `随包插件入口扫描面不得为空（实际 ${pluginEntries.length}）`);
+  assert.ok(pluginEntries.length >= 20, `随包插件入口扫描面不得为空（实际 ${pluginEntries.length}）`);
   assert.ok(pluginEntries.some((e) => e.half === 'client' && e.injects.length > 0), 'client 半必须有被扫描到的 inject');
   const hostWithInject = pluginEntries.filter((e) => e.half === 'host' && e.injects.length > 0);
   assert.ok(hostWithInject.length > 0, 'host 半必须有被扫描到的 inject（否则 host 门禁形同虚设）');

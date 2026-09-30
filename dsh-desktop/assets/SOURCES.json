@@ -425,23 +425,6 @@
       }
     },
     {
-      "id": "C017",
-      "line": "main",
-      "name": "dsh-file-drop-eac",
-      "type": "plugin",
-      "origin": "eac-original",
-      "version": "0.1.2",
-      "path": "dsh-desktop/assets/plugins/dsh-file-drop-eac",
-      "registryStatus": "注册表默认启用",
-      "audit": {
-        "verdict": "catalog-miss",
-        "compare": "cross-version-diff-pending",
-        "note": "同路径变更涉及：客户端界面/生命周期、宿主/工具/路由、包元数据/依赖/来源声明。请按基线可比性阅读；缺少历史锚点时不直接归因为EAC修改。",
-        "basis": "插件README移植目标与发布仓库",
-        "conflict": null
-      }
-    },
-    {
       "id": "C018",
       "line": "main",
       "name": "@deepseek-ai/dsh-float-window",
@@ -722,34 +705,6 @@
       }
     },
     {
-      "id": "C029",
-      "line": "main",
-      "name": "@deepseek-ai/dsh-plugin-manager",
-      "type": "plugin",
-      "origin": "upstream",
-      "version": "0.1.0",
-      "path": "dsh-desktop/assets/plugins/dsh-plugin-manager",
-      "registryStatus": "注册表默认启用",
-      "audit": {
-        "verdict": "same-name-unresolved",
-        "compare": "no-upstream",
-        "note": "无可靠上游，不能判定修改",
-        "basis": "无独立上游证明",
-        "conflict": null
-      },
-      "upstream": {
-        "repository": "https://github.com/myYangyunfan/dsh_desktop",
-        "refType": "version",
-        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
-        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
-      },
-      "resolution": {
-        "date": "2026-09-06",
-        "decision": "upstream（dsh_desktop 伴侣套件）",
-        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。"
-      }
-    },
-    {
       "id": "C030",
       "line": "main",
       "name": "dsh-plugin-shield",
@@ -977,34 +932,6 @@
         "provenance": "package.repository明确声明"
       },
       "postAuditChanges": "5.3.6 内核 0.1.3 升级适配（e01d2e2a..HEAD，settings 垫片/契约接线）"
-    },
-    {
-      "id": "C040",
-      "line": "main",
-      "name": "@deepseek-ai/dsh-terminal",
-      "type": "plugin",
-      "origin": "upstream",
-      "version": "0.1.0",
-      "path": "dsh-desktop/assets/plugins/dsh-terminal",
-      "registryStatus": "注册表默认启用",
-      "audit": {
-        "verdict": "catalog-miss",
-        "compare": "no-upstream",
-        "note": "无可靠上游，不能判定修改",
-        "basis": "无独立上游证明",
-        "conflict": null
-      },
-      "upstream": {
-        "repository": "https://github.com/myYangyunfan/dsh_desktop",
-        "refType": "version",
-        "pinnedHead": "ee052c6b007a61e36213d57271309020e20ab24f",
-        "provenance": "dsh_desktop monorepo（2026-09-06 排查确认）"
-      },
-      "resolution": {
-        "date": "2026-09-06",
-        "decision": "upstream（dsh_desktop 伴侣套件）",
-        "evidence": "dsh_desktop 伴侣插件套件同源（上游 v0.2.0 2026-08-13 起；早于 EAC v1.0 2026-08-15）。上游版本可能超前（balance 0.1.1 / plugin-manager 0.1.2），EAC 侧带本地适配。 注意：与官方内核 npm 包 @deepseek-ai/dsh-terminal（PTY seam）同名不同物，本插件为 dsh_desktop 的 SSE 变体；上游亦已退役。"
-      }
     },
     {
       "id": "C041",
