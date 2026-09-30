@@ -50,6 +50,10 @@ use tokio_tungstenite::tungstenite::Message;
 const BRIDGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/bridge-bundle.js"));
 const WS_PORT: u16 = 19873;
 
+// 安装环境隔离（ADR 0004）：产品数据根名 + 默认发布通道。
+const EAC_PRODUCT_NAME: &str = "Deepseek Harness EAC";
+const DEFAULT_EAC_CHANNEL: &str = "beta";
+
 // The manager path is the v6 default. DSH_UI_SKIN_MANAGER_ROLLBACK is a
 // one-release emergency switch for operators; it only selects the embedded fallback
 // recovery styles and never restores the removed EAC source tree.
@@ -77,8 +81,7 @@ fn ws_port() -> u16 {
 /// 两条契约在 v6 外壳迁移时对不上：
 ///   - 壳层（sidecar/bridge.ts）只发布 `data-dsh-title-bar-height="36"`，
 ///     注释写「内核据此把顶部固定元素下移」，但内核**从不读这个属性**
-///     （全量检索 apps/ packages/ 均无引用）—— 是个死属性。
-///   - 内核实际读的是 `data-windows-titlebar`（布尔）+
+///     （全量检索 apps/ packages/ 均无引用）—— 是个死属性。///   - 内核实际读的是 `data-windows-titlebar`（布尔）+
 ///     `--dsh-windows-titlebar-height`（长度），而内核设置后者的唯一实现
 ///     位于 Electron preload（`import { ipcRenderer } from 'electron'`）；
 ///     v6 换 Tauri 后 Electron 整条链不再随包分发，二者都无人提供。
@@ -134,8 +137,7 @@ if(!d()){{if(document.readyState==='loading'){{document.addEventListener('DOMCon
 ///
 /// 主窗首屏 /loading 会通过页面 HTML 注入端口，但导航到真实 Web UI
 /// 后页面上下文会重建；仅注入裸 BRIDGE_JS 会让客户端退回固定的
-/// 19873，端口发生回退时窗口控制全部失效。标记同样必须在每次导航的
-/// document-start 注入，故与端口写在同一段初始化脚本里。
+/// 19873，端口发生回退时窗口控制全部失效。标记同样必须在每次导航的/// document-start 注入，故与端口写在同一段初始化脚本里。
 fn bridge_init_script() -> String {
     let manager_active = ui_skin_manager_snapshot().is_some();
     let skin_css = if manager_active {
@@ -145,13 +147,44 @@ fn bridge_init_script() -> String {
     };
     let manager = ui_skin_manager_bootstrap_json();
     format!(
-        "{}\nwindow.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\nwindow.__DSH_UI_SKIN_CSS__={};\nwindow.__DSH_UI_SKIN_MANAGER__={};\n{}",
+        "{}\nwindow.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';\n{}window.__DSH_UI_SKIN_CSS__={};\nwindow.__DSH_UI_SKIN_MANAGER__={};\n{}",
         windows_titlebar_marker_js(),
         ws_port(),
+        shell_invoke_bridge_js(),
         skin_css,
         manager,
         BRIDGE_JS,
     )
+}
+
+/// 壳层页面专用的 `invoke` 绑定（`window.dshShell.invoke`）。
+///
+/// 为什么需要它：`/died` 页要调 L1 的 `diagnose_environment` /
+/// `repair_environment` 做环境自愈，但 Tauri 的 `window.__TAURI__` 只在启用
+/// `app.withGlobalTauri` 时才存在 —— 而本壳**刻意不开**它。
+///
+/// 底层 IPC `window.__TAURI_INTERNALS__.invoke` 是**无条件注入**的
+///（tauri manager/webview.rs 的 main_frame_script，与 withGlobalTauri 无关），
+/// 所以这里只做一层薄包装。
+///
+/// **真实边界（勿误读）**：注入发生在同一个 `main` 窗口的 initialization_script，
+/// 而内核 Web UI 也是在这个窗口里 `win.navigate` 过去的 —— 因此内核页面
+/// **同样能看到 `window.dshShell`**。它的实际收益只是：
+///   1. 比开 `withGlobalTauri` 少暴露整个 `__TAURI__` 命名空间（面更小）；
+///   2. 真正拦住内核页面的是 **ACL**：`capabilities/default.json` 的
+///      `remote.urls` 只授权壳桥的 origin（`http://127.0.0.1:<壳桥端口>/*`），
+///      内核 UI 在**另一个端口**上，origin 不匹配 → 拿不到任何 `allow-*` 权限。
+/// 即：**安全边界靠 ACL 的 origin 匹配，不靠「注入给谁」**。若要进一步收紧，
+/// 应改为按 URL 注入（Tauri 支持按导航注入），而非依赖命名空间大小。
+fn shell_invoke_bridge_js() -> &'static str {
+    "window.dshShell=window.dshShell||{};\
+     window.dshShell.invoke=function(cmd,args){\
+       var t=window.__TAURI_INTERNALS__;\
+       if(!t||typeof t.invoke!=='function'){\
+         return Promise.reject(new Error('shell invoke unavailable: __TAURI_INTERNALS__ missing'));\
+       }\
+       return t.invoke(cmd,args||{});\
+     };\n"
 }
 
 fn locale_tag_is_chinese(tag: &str) -> bool {
@@ -197,7 +230,7 @@ fn ui_text<'a>(zh: &'a str, en: &'a str) -> &'a str {
 mod shell_tests {
     use super::{
         is_sidecar_respawn_request, locale_tag_is_chinese, shell_http_status, ui_skin_asset,
-        ui_skin_manager_enabled, ui_skin_manager_snapshot, verified_resource_root,
+        ui_skin_manager_enabled, ui_skin_manager_snapshot, verified_resource_root, WS_PORT,
     };
     use std::fs;
     use std::sync::Mutex;
@@ -307,6 +340,219 @@ mod shell_tests {
         assert!(page.contains("_call('boot.start'"));
         assert!(!page.contains("rescue.safe-mode"));
         assert!(!page.contains(&format!("{}-{}", "recovery", "center")));
+    }
+
+    #[test]
+    fn died_page_exposes_environment_diagnosis_and_guarded_purge() {
+        // P1 自愈（形态 1）：sidecar 已退场，页面必须能独立给出环境诊断，
+        // 并把「清理重建」做成**受保护**的显式动作。
+        let page = super::died_page("/tmp/dsh-web.log", "1");
+        // 诊断面板与命名锚点（与现有 shell-page 契约同一命名风格）。
+        assert!(page.contains("data-control-name=\"system.default.environment-panel\""));
+        assert!(page.contains("data-control-name=\"system.default.environment-summary\""));
+        assert!(page.contains("data-control-name=\"system.default.environment-problems\""));
+        assert!(page.contains("data-control-name=\"system.default.environment-purge-button\""));
+        // 走 L1 命令（不依赖 sidecar 存活）。
+        assert!(page.contains("invoke('diagnose_environment')"));
+        assert!(page.contains("invoke('repair_environment'"));
+        // 删除必须二次确认，且默认隐藏，只有 removable=true 才放出。
+        assert!(page.contains("window.confirm("));
+        assert!(page.contains("d.removable?'idle':'hidden'"));
+        // 不得引入任何自动删除路径。
+        assert!(!page.contains("invoke('repair_environment',{purge:true}).then(function(){location.reload();});\n"),
+            "清理必须由用户点击触发，不得在加载时自动执行");
+        assert!(page.contains("onclick=\"purgeEnvironment()\""));
+        // 无法自动清理时必须给出人工出路（注册表损坏场景实测会卡住）。
+        assert!(page.contains("data-control-name=\"system.default.environment-hint\""));
+        assert!(page.contains("环境无法自动清理"), "必须给出可执行的人工恢复提示");
+    }
+
+    #[test]
+    fn shell_pages_do_not_leak_line_continuation_backslashes() {
+        // 回归（2026-09-29 实测「一坨黑」）：页面模板每行结尾必须用**单**反斜杠
+        // 做 Rust 续行。写成双反斜杠 `\\` 时，Rust 把它当「字面反斜杠」，
+        // 于是每个 HTML 行尾都吐出一个可见 `\` + 真实换行，页面被游离反斜杠铺满。
+        //
+        // 这个缺陷在 HEAD 上就已存在（28 处，/loading 页可见 17 处），
+        // 自愈面板插入后扩到 84 处。
+        //
+        // 注意：只检查 **HTML 模板部分**（`<script>` 之前）。BRIDGE_JS 是
+        // include_str! 进来的 JS 产物，其中的行尾 `\` 是合法的 JS 字符串续行，
+        // 不能一并判死（首版断言过宽，被这个测试自己抓出来了）。
+        for (label, page) in [
+            ("loading_page", super::loading_page()),
+            ("died_page", super::died_page("/tmp/dsh-web.log", "1")),
+        ] {
+            let html_only = match page.find("<script") {
+                Some(idx) => &page[..idx],
+                None => &page[..],
+            };
+            let leaked: Vec<&str> = html_only
+                .split('\n')
+                .filter(|line| line.ends_with('\\'))
+                .collect();
+            assert!(
+                leaked.is_empty(),
+                "{label} 的 HTML 模板泄露了 {} 个行尾反斜杠（续行应写单 \\，不得写 \\\\）：{:?}",
+                leaked.len(),
+                leaked.first().map(|l| &l[l.len().saturating_sub(60)..]),
+            );
+        }
+    }
+
+    #[test]
+    fn died_page_uses_shell_invoke_bridge_not_global_tauri() {
+        // 回归（2026-09-30 实测：诊断面板永远停在「正在检查隔离环境…」）：
+        // 页面原先读 `window.__TAURI__`，但本壳**刻意不开** `withGlobalTauri`
+        // （避免把 L1 命令面暴露给内核 Web UI 等所有页面），于是 `invoke` 恒为
+        // undefined，诊断从未生效过。
+        //
+        // 修法：壳在 initialization_script 里注入受限的 `window.dshShell.invoke`
+        //（薄包装 Tauri 无条件注入的 `__TAURI_INTERNALS__.invoke`），页面改用它。
+        let page = super::died_page("/tmp/dsh-web.log", "1");
+        assert!(
+            page.contains("window.dshShell&&window.dshShell.invoke"),
+            "页面必须经壳注入的 dshShell.invoke 调 L1 命令",
+        );
+        assert!(
+            !page.contains("window.__TAURI__"),
+            "页面不得依赖 __TAURI__（本壳未启用 withGlobalTauri，运行时恒为 undefined）",
+        );
+
+        // 注入侧必须真的定义了这个命名空间，且底层走 __TAURI_INTERNALS__。
+        let init = super::shell_invoke_bridge_js();
+        assert!(init.contains("window.dshShell"), "注入脚本必须定义 window.dshShell");
+        assert!(
+            init.contains("__TAURI_INTERNALS__"),
+            "底层必须用 Tauri 无条件注入的 __TAURI_INTERNALS__.invoke",
+        );
+        assert!(
+            init.contains("Promise.reject"),
+            "底层缺失时必须显式 reject，不得静默 resolve 成假成功",
+        );
+
+        // 组合进 initialization_script：壳启动时确实会注入它。
+        let full = super::bridge_init_script();
+        assert!(full.contains("window.dshShell"), "bridge_init_script 必须包含壳 invoke 绑定");
+    }
+
+    #[test]
+    fn environment_cli_actions_are_allowlisted() {
+        // L1 只允许这三个动作；拼错的动作名必须在脚本侧被拒绝（fail loud），
+        // 而不是静默变成一个「什么都没做」的成功。
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("repo root")
+                .join("dsh-desktop")
+                .join("scripts")
+                .join("environment-diagnose.mjs"),
+        )
+        .expect("read environment-diagnose.mjs");
+        for action in ["status", "plan", "remove", "repair"] {
+            assert!(source.contains(action), "脚本必须支持 action={action}");
+        }
+        assert!(source.contains("未知 action"));
+    }
+
+    #[test]
+    fn every_invoked_command_is_declared_for_acl() {
+        // 回归（2026-09-30 实测：所有 command 都报 "not allowed by ACL"）：
+        // Tauri v2 的自定义 command **默认被拒**，必须在 build.rs 的
+        // AppManifest::commands() 里声明，才会生成 allow-* 权限；
+        // 再由 capabilities/*.json 授权给窗口。任一处漏掉，命令在运行期
+        // 就是「静默不可调用」—— 页面只看到 unavailable，毫无线索。
+        //
+        // 这里锁死三处的一致性：invoke_handler ⊆ build.rs 声明 ⊆ capability 授权。
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let main_rs = std::fs::read_to_string(manifest_dir.join("src").join("main.rs"))
+            .expect("read main.rs");
+        let build_rs = std::fs::read_to_string(manifest_dir.join("build.rs")).expect("read build.rs");
+        let capability =
+            std::fs::read_to_string(manifest_dir.join("capabilities").join("default.json"))
+                .expect("read capabilities/default.json");
+
+        // 从 generate_handler![...] 提取已注册的命令名。
+        // 用 rfind：本测试自己的注释/字面量里也含这个字符串，find 会先命中测试自身。
+        const MARKER: &str = "generate_handler![";
+        let handler_start = main_rs.rfind(MARKER).expect("找到 invoke_handler");
+        let after_bracket = handler_start + MARKER.len();
+        let handler_end = main_rs[after_bracket..]
+            .find(']')
+            .map(|i| after_bracket + i)
+            .expect("找到 handler 结束");
+        let registered: Vec<&str> = main_rs[after_bracket..handler_end]
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+            .collect();
+        assert!(
+            registered.len() >= 4,
+            "应至少注册 shell_ping / sidecar_call / diagnose_environment / repair_environment，实际 {registered:?}",
+        );
+
+        for cmd in &registered {
+            assert!(build_rs.contains(&format!("\"{cmd}\"")), "build.rs 的 AppManifest 必须声明命令 {cmd}");
+            let slug = cmd.replace('_', "-");
+            assert!(
+                capability.contains(&format!("allow-{slug}")),
+                "capabilities/default.json 必须授权 allow-{slug}（否则 {cmd} 运行期被 ACL 拒绝）",
+            );
+        }
+
+        // 反向：声明了却没人调用的权限是死配置，容易被误认为「已授权」。
+        let declared_in_build = build_rs
+            .split("commands(&[")
+            .nth(1)
+            .and_then(|s| s.split("])").next())
+            .expect("build.rs 应有 commands(&[...]) 清单");
+        for raw in declared_in_build.split(',').map(str::trim) {
+            let name = raw.trim_matches(|c: char| c == '"' || c.is_whitespace());
+            if name.is_empty() {
+                continue;
+            }
+            assert!(
+                registered.contains(&name),
+                "build.rs 声明了 {name}，但 invoke_handler 未注册它（该权限是死配置）",
+            );
+        }
+    }
+
+    #[test]
+    fn capability_remote_scope_stays_narrow() {
+        // 回归（2026-09-30 review 发现）：capability 初版用通配端口
+        // `http://127.0.0.1:*/*`，**把 L1 命令面一并授权给了内核 Web UI**
+        // —— 因为内核 UI 也是同一个 main 窗口导航过去的，只是跑在**动态端口**
+        // 上（实测 /died 在 19873，内核 UI 在 58809 之类）。通配端口等于没有
+        // origin 隔离，`remote` 那行就失去意义。
+        //
+        // 但也不能写死 19873：壳桥端口被占时会向上回退 25 个候选
+        //（WS_PORT..WS_PORT+24），写死会在回退时让自愈功能失效。
+        //
+        // 因此 scope 必须是**端口段**正则：覆盖 [WS_PORT, WS_PORT+24]，排除
+        // 内核的动态端口。这里锁死这个边界，防止以后被改回通配。
+        let capability = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("capabilities")
+                .join("default.json"),
+        )
+        .expect("read capabilities/default.json");
+
+        assert!(
+            !capability.contains("127.0.0.1:*"),
+            "不得用通配端口：那会把 L1 命令面授权给内核 Web UI（动态端口）",
+        );
+        assert!(
+            capability.contains("1987[3-9]") && capability.contains("1989[0-8]"),
+            "scope 必须是覆盖壳桥端口段（{WS_PORT}..{}）的正则",
+            WS_PORT + 24,
+        );
+        // 壳桥回退范围与 scope 必须同步：WS_PORT 改了这里也要改。
+        assert_eq!(super::WS_PORT, 19873, "WS_PORT 变动时必须同步 capability 的端口段");
+        assert!(
+            capability.contains("\"local\": false"),
+            "页面是外部 HTTP origin，local 必须为 false",
+        );
     }
 
     #[test]
@@ -459,6 +705,93 @@ fn dsh_desktop_dir() -> String {
         .join("dsh-desktop")
         .to_string_lossy()
         .replace('\u{5C}', "/")
+}
+
+// 通道名是 ASCII 标识符，且必须满足 dpx 的 /^[A-Za-z][A-Za-z0-9-]{0,63}$/。
+// 非法值退回默认通道 —— 不要「清洗」成一个看似合法却错误的通道（ADR 0004）。
+fn sanitize_eac_channel(value: &str) -> String {
+    let channel = value.trim().to_ascii_lowercase().replace('_', "-");
+    let valid = channel.len() <= 60
+        && channel.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && channel.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    if valid && !channel.ends_with('-') { channel } else { DEFAULT_EAC_CHANNEL.to_string() }
+}
+
+// 发布通道：显式环境变量优先（开发/测试），其次安装包内的 environment-policy.json，
+// 最后退回默认通道。
+fn eac_channel() -> String {
+    if let Ok(channel) = std::env::var("DSH_EAC_CHANNEL") {
+        if !channel.trim().is_empty() {
+            return sanitize_eac_channel(&channel);
+        }
+    }
+    let policy = resource_root().join("dsh-desktop").join("environment-policy.json");
+    if let Ok(text) = std::fs::read_to_string(policy) {
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(channel) = value.get("channel").and_then(|v| v.as_str()) {
+                if !channel.trim().is_empty() {
+                    return sanitize_eac_channel(channel);
+                }
+            }
+        }
+    }
+    DEFAULT_EAC_CHANNEL.to_string()
+}
+
+// 产品数据根（ADR 0004）：Windows = %LOCALAPPDATA%\Deepseek Harness EAC，
+// 非 Windows 在产品数据根下同样布局。L1 只负责给这一个根 + 通道；
+// dpx storageRoot / 环境名 / 环境根 / 目录骨架全部由 L2 sidecar 调 dsh-dpx 推导，
+// 壳里不复制 dpx 的路径策略，避免两侧漂移。
+//
+// 外部注入的 `DSH_EAC_DATA_ROOT` 是**权威值**：便携启动器、端到端验证与
+// 故障注入都靠它把环境指到指定位置。若这里无视它、再用 `LOCALAPPDATA`
+// 重算一遍，就会把环境建到与调用方预期不同的位置（L2 侧却把该变量当权威，
+// 两侧语义正好相反），实测表现为「隔离根建在别处」。因此显式给定时一律采用。
+fn eac_data_root() -> std::path::PathBuf {
+    eac_data_root_with(
+        std::env::var("DSH_EAC_DATA_ROOT").ok().as_deref(),
+        std::env::var("USERPROFILE").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+        std::env::var("LOCALAPPDATA").ok().as_deref(),
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        std::env::temp_dir(),
+    )
+}
+
+/// `eac_data_root` 的**纯函数**核心：不读全局环境，参数即输入。
+///
+/// 拆出来是为了可测：`std::env::set_var` 是进程全局的，直接改它会让并行运行的
+/// 其它测试读到被污染的 `DSH_EAC_DATA_ROOT`（实测出现过一次性失败）。纯函数
+/// 版本既覆盖同一逻辑，又不引入跨测试干扰。
+#[allow(clippy::too_many_arguments)]
+fn eac_data_root_with(
+    declared: Option<&str>,
+    userprofile: Option<&str>,
+    home_var: Option<&str>,
+    localappdata: Option<&str>,
+    xdg_data_home: Option<&str>,
+    fallback_temp: std::path::PathBuf,
+) -> std::path::PathBuf {
+    // 显式注入即权威（空白值不算「给定」，退回推导）。
+    if let Some(value) = declared {
+        if !value.trim().is_empty() {
+            return std::path::PathBuf::from(value.trim());
+        }
+    }
+    let home = userprofile
+        .or(home_var)
+        .map(std::path::PathBuf::from)
+        .unwrap_or(fallback_temp);
+    let base = if cfg!(windows) {
+        localappdata
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData").join("Local"))
+    } else {
+        xdg_data_home
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| home.join(".local").join("share"))
+    };
+    base.join(EAC_PRODUCT_NAME)
 }
 
 static SHELL_NOTIFY: OnceLock<broadcast::Sender<Value>> = OnceLock::new();
@@ -908,6 +1241,11 @@ impl Sidecar {
         // 壳进程 PID：便携自更新助手的等待目标（等待壳退出后做目录树交换）。
         cmd.env("DSH_SHELL_PID", std::process::id().to_string());
         cmd.env("DSH_RESOURCE_ROOT", resource_root());
+        // 安装环境隔离（ADR 0004）：正式壳启动始终注入隔离根 —— 只给产品数据根
+        // 与通道，dpx 的 storageRoot/环境名/环境根由 L2 调 dsh-dpx 推导。
+        let channel = eac_channel();
+        cmd.env("DSH_EAC_DATA_ROOT", eac_data_root());
+        cmd.env("DSH_EAC_CHANNEL", channel);
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("spawn node({}) failed: {}", node, e))?;
@@ -1811,14 +2149,14 @@ const UI_SKIN_LINKS: &str = concat!(
 
 fn loading_page() -> String {
     format!(
-        "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>Deepseek Harness EAC</title>{UI_SKIN_LINKS}</head>\\
-         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"loading\">\\
-         <main data-control-name=\"system.default.shell-page\" data-state=\"loading\">\\
-         <section data-control-name=\"system.default.shell-content\">\\
-         <div data-control-name=\"system.default.shell-title\">Deepseek Harness EAC</div>\\
-         <div data-control-name=\"system.default.shell-status\">{}</div>\\
-         <div data-control-name=\"system.default.loading-spinner\" data-state=\"loading animating\" aria-label=\"Loading\"></div>\\
-         </section></main>\\
+        "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>Deepseek Harness EAC</title>{UI_SKIN_LINKS}</head>\
+         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"loading\">\
+         <main data-control-name=\"system.default.shell-page\" data-state=\"loading\">\
+         <section data-control-name=\"system.default.shell-content\">\
+         <div data-control-name=\"system.default.shell-title\">Deepseek Harness EAC</div>\
+         <div data-control-name=\"system.default.shell-status\">{}</div>\
+         <div data-control-name=\"system.default.loading-spinner\" data-state=\"loading animating\" aria-label=\"Loading\"></div>\
+         </section></main>\
          <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script></body></html>",
         ui_text("正在启动服务…", "Starting services..."), ws_port(), BRIDGE_JS
     )
@@ -1831,21 +2169,64 @@ fn died_page(log_path: &str, code: &str) -> String {
             .replace('>', "&gt;")
     };
     format!(
-        "<!doctype html><html class=\"eac-shell\" lang={0}><head><meta charset=utf-8><title>{1}</title>{UI_SKIN_LINKS}</head>\\
-         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"error\">\\
-         <main data-control-name=\"system.default.shell-page\" data-state=\"error\">\\
-         <section data-control-name=\"system.default.shell-content\">\\
-         <div data-control-name=\"system.default.shell-title\">{2}</div>\\
-         <div data-control-name=\"system.default.shell-status\">{3} {4}</div>\\
-         <div data-control-name=\"system.default.shell-log-path\">{5}</div>\\
-         <div data-control-name=\"system.default.shell-actions\">\\
-         <button data-control-name=\"system.default.restart-button\" data-state=\"idle\" onclick=\"retry()\">{6}</button>\\
-         </div></section></main>\\
-         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{7}/ws';{8}\\
-         function retry(){{\\
-           var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\\
-           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\\
-             .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\\
+        "<!doctype html><html class=\"eac-shell\" lang={0}><head><meta charset=utf-8><title>{1}</title>{UI_SKIN_LINKS}</head>\
+         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"error\">\
+         <main data-control-name=\"system.default.shell-page\" data-state=\"error\">\
+         <section data-control-name=\"system.default.shell-content\">\
+         <div data-control-name=\"system.default.shell-title\">{2}</div>\
+         <div data-control-name=\"system.default.shell-status\">{3} {4}</div>\
+         <div data-control-name=\"system.default.shell-log-path\">{5}</div>\
+         <div data-control-name=\"system.default.shell-actions\">\
+         <button data-control-name=\"system.default.restart-button\" data-state=\"idle\" onclick=\"retry()\">{6}</button>\
+         </div>\
+         <div data-control-name=\"system.default.environment-panel\" data-state=\"loading\" id=\"env-panel\">\
+         <div data-control-name=\"system.default.environment-title\">{11}</div>\
+         <div data-control-name=\"system.default.environment-summary\" id=\"env-summary\">{12}</div>\
+         <div data-control-name=\"system.default.environment-problems\" id=\"env-problems\"></div>\
+         <button data-control-name=\"system.default.environment-purge-button\" data-state=\"hidden\" id=\"env-purge\" onclick=\"purgeEnvironment()\">{13}</button>\
+         <div data-control-name=\"system.default.environment-hint\" data-state=\"hidden\" id=\"env-hint\"></div>\
+         </div>\
+         </section></main>\
+         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{7}/ws';{8}\
+         function setEnvState(state){{var p=document.getElementById('env-panel');if(p){{p.setAttribute('data-state',state);}}}}\
+         function renderProblems(list){{\
+           var host=document.getElementById('env-problems');if(!host){{return;}}\
+           host.textContent='';\
+           (list||[]).forEach(function(item){{var d=document.createElement('div');d.setAttribute('data-control-name','system.default.environment-problem');d.textContent=item.text||item.code||'';host.appendChild(d);}});\
+         }}\
+         function refreshEnvironment(){{\
+           var invoke=window.dshShell&&window.dshShell.invoke;\
+           if(!invoke){{setEnvState('unavailable');return;}}\
+           invoke('diagnose_environment').then(function(res){{\
+             var d=(res&&res.diagnosis)||{{}};\
+             var summary=document.getElementById('env-summary');\
+             var problems=d.problems||[];\
+             if(summary){{summary.textContent=(d.expectedRoot||'')+' · '+({14:?})+' '+(d.registered?({15:?}):({16:?}));}}\
+             renderProblems(problems);\
+             setEnvState(problems.length?'damaged':'healthy');\
+             var purge=document.getElementById('env-purge');\
+             if(purge){{purge.setAttribute('data-state',d.removable?'idle':'hidden');purge.disabled=!d.removable;}}\
+             var hint=document.getElementById('env-hint');\
+             if(hint){{\
+               hint.textContent=d.removable?'':({20:?});\
+               hint.setAttribute('data-state',d.removable?'hidden':'idle');\
+             }}\
+           }}).catch(function(e){{setEnvState('unavailable');var s=document.getElementById('env-summary');if(s){{s.textContent=String(e);}}}});\
+         }}\
+         function purgeEnvironment(){{\
+           var b=document.getElementById('env-purge');if(!b){{return;}}\
+           if(!window.confirm({17:?})){{return;}}\
+           b.textContent={18:?};b.disabled=true;b.setAttribute('data-state','running');\
+           var invoke=window.dshShell&&window.dshShell.invoke;\
+           if(!invoke){{b.textContent={19:?};return;}}\
+           invoke('repair_environment',{{purge:true}}).then(function(){{location.reload();}})\
+             .catch(function(e){{b.textContent={19:?};b.disabled=false;b.setAttribute('data-state','error');var s=document.getElementById('env-summary');if(s){{s.textContent=String(e);}}}});\
+         }}\
+         refreshEnvironment();\
+         function retry(){{\
+           var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\
+           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\
+             .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\
          }}</script></body></html>",
         ui_text("zh-CN", "en"),
         ui_text("服务已停止", "Service stopped"),
@@ -1858,6 +2239,24 @@ fn died_page(log_path: &str, code: &str) -> String {
         BRIDGE_JS,
         ui_text("正在重启…", "Restarting..."),
         ui_text("重启失败，请重试", "Restart failed. Try again."),
+        // P1 自愈文案：环境 fail-closed 时给用户可操作的诊断与清理入口，
+        // 而不是让他对着一个白屏猜原因。
+        ui_text("安装环境", "Install environment"),
+        ui_text("正在检查隔离环境…", "Checking the isolated environment..."),
+        ui_text("清理并重建环境", "Clean and rebuild environment"),
+        ui_text("已注册", "registered"),
+        ui_text("已登记", "registered"),
+        ui_text("未登记", "not registered"),
+        ui_text("将删除该隔离环境下的全部数据（会话/配置/插件），且不可恢复。继续？", "This deletes all data in this isolated environment (sessions, config, plugins) and cannot be undone. Continue?"),
+        ui_text("正在清理…", "Cleaning..."),
+        ui_text("清理失败，请查看日志", "Cleanup failed; check the log"),
+        // 无法自动清理时的出路（注册表损坏 / 目录被外部占用）：dpx 拒绝在
+        // 不可信的注册表上做删除（正确的 fail-closed），所以这里给手工路径，
+        // 而不是留一个点不动的按钮让人干瞪眼。
+        ui_text(
+            "环境无法自动清理（注册表不可读或目录被占用）。可手动把上面那条路径整个删掉或改名，然后重启本应用。",
+            "This environment cannot be cleaned automatically (unreadable registry or the directory is in use). Manually delete or rename the path shown above, then restart the app.",
+        ),
     )
 }
 
@@ -2097,11 +2496,11 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (died_page(&log, &code), "text/html; charset=utf-8")
     } else {
         let page = format!(
-            "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>DSH EAC Shell</title>{UI_SKIN_LINKS}</head>\\
-             <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"idle\">\\
-             <main data-control-name=\"system.default.shell-page\"><section data-control-name=\"system.default.shell-content\">\\
-             <h3 data-control-name=\"system.default.shell-title\">DSH EAC — Tauri ShellHost</h3>\\
-             <pre data-control-name=\"system.default.shell-status\" id=out>connecting…</pre></section></main>\\
+            "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>DSH EAC Shell</title>{UI_SKIN_LINKS}</head>\
+             <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"idle\">\
+             <main data-control-name=\"system.default.shell-page\"><section data-control-name=\"system.default.shell-content\">\
+             <h3 data-control-name=\"system.default.shell-title\">DSH EAC — Tauri ShellHost</h3>\
+             <pre data-control-name=\"system.default.shell-status\" id=out>connecting…</pre></section></main>\
              <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script></body></html>",
             ws_port(), BRIDGE_JS
         );
@@ -2186,6 +2585,93 @@ fn run_bridge_test() -> i32 {
 #[tauri::command]
 fn shell_ping() -> serde_json::Value {
     serde_json::json!({ "pong": true, "shell": "tauri", "pid": std::process::id() })
+}
+
+/// 环境诊断/清理通道（P1 自愈，形态 1）。
+///
+/// 为什么放在 L1：环境 fail-closed 时 sidecar 已经退场（exit(2)），bridge 与
+/// 它的 environment.* RPC 一起消失，而 `/died` 页正需要「环境坏了没有、坏在哪、
+/// 能不能清理」—— 这条通道必须**不依赖 sidecar 存活**。
+///
+/// 分层红线（ADR 0002）：L1 **不实现**任何环境治理逻辑。这里只做三件事：
+/// 用随包 node 跑 `dsh-desktop/scripts/environment-diagnose.mjs`、把它的
+/// 单行 JSON 原样解析返回、把失败原因如实带出。注册表/清单/锁/删除全部仍由
+/// dsh-dpx 经 L2 适配层完成。
+fn run_environment_action(action: &str, purge: bool) -> Result<Value, String> {
+    let script = resource_root()
+        .join("dsh-desktop")
+        .join("scripts")
+        .join("environment-diagnose.mjs");
+    if !script.is_file() {
+        return Err(format!(
+            "环境诊断脚本缺失：{}（安装包不完整，请重新安装）",
+            script.display()
+        ));
+    }
+    let node = resolve_node();
+    let mut args = vec![
+        script.to_string_lossy().to_string(),
+        format!("--action={action}"),
+    ];
+    if purge {
+        args.push("--purge".to_string());
+    }
+
+    let output = std::process::Command::new(&node)
+        .args(&args)
+        // 脚本自身需要真实用户环境（产品数据根/注册表位置都由它推导）。
+        .stdin(std::process::Stdio::null())
+        // 关键：必须注入资源根。打包态 dpx payload 位于 <resources>/dpx/src/index.js，
+        // 适配层只能经 DSH_RESOURCE_ROOT 定位它；不传就会退化成开发态相对路径查找
+        //（安装树上不存在）→ 诊断/清理在真实安装包里全部失效（实测踩中）。
+        .env("DSH_RESOURCE_ROOT", resource_root())
+        // 阻塞式取输出：诊断/清理都是短命的一次性进程。
+        .output()
+        .map_err(|e| format!("无法启动环境诊断（node={node}）：{e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    // 脚本约定：成功与失败都以单行 JSON 输出，便于这里原样透传给页面。
+    match serde_json::from_str::<Value>(&stdout) {
+        Ok(value) => Ok(value),
+        Err(_) => Err(format!(
+            "环境诊断返回了非 JSON 数据（exit={:?}）：stdout={} stderr={}",
+            output.status.code(),
+            truncate_for_ui(&stdout, 400),
+            truncate_for_ui(&stderr, 400),
+        )),
+    }
+}
+
+/// 截断长文本用于 UI 展示（避免把整段堆栈塞进 /died 页）。
+fn truncate_for_ui(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max).collect();
+    format!("{head}…")
+}
+
+#[tauri::command]
+fn diagnose_environment() -> Result<Value, String> {
+    run_environment_action("status", false)
+}
+
+/// 显式清理/重建当前通道环境。
+///
+/// 安全：`purge=true` 只在已登记环境上由 dpx 放行（未登记目录一律拒绝）；
+/// 本命令**不会**被任何自动流程调用，只能由用户在 /died 页显式点击触发。
+/// 不迁移旧数据、不触碰宿主 `~/.dsh`。
+#[tauri::command]
+fn repair_environment(purge: bool) -> Result<Value, String> {
+    if !purge {
+        // 非 purge 的 repair = 幂等重新确保（不删任何东西）。
+        return run_environment_action("repair", false);
+    }
+    // 先 dry-run 取计划（不落盘），再执行 —— 让调用方拿到"删了什么"的事实。
+    let plan = run_environment_action("plan", true)?;
+    let removed = run_environment_action("remove", true)?;
+    Ok(serde_json::json!({ "ok": true, "plan": plan, "removed": removed }))
 }
 
 #[tauri::command]
@@ -2327,7 +2813,12 @@ fn main() {
                 let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
             }
         }))
-        .invoke_handler(tauri::generate_handler![shell_ping, sidecar_call])
+        .invoke_handler(tauri::generate_handler![
+            shell_ping,
+            sidecar_call,
+            diagnose_environment,
+            repair_environment
+        ])
         .setup(move |app| {
             use tauri::Manager;
 
@@ -2691,5 +3182,76 @@ mod tests {
     #[test]
     fn leaves_plain_text_unchanged() {
         assert_eq!(escape_apple_script_string("hello 世界"), "hello 世界");
+    }
+}
+
+#[cfg(test)]
+mod eac_channel_tests {
+    use super::{
+        eac_data_root, eac_data_root_with, sanitize_eac_channel, DEFAULT_EAC_CHANNEL, EAC_PRODUCT_NAME,
+    };
+
+    #[test]
+    fn keeps_valid_channels() {
+        assert_eq!(sanitize_eac_channel("beta"), "beta");
+        assert_eq!(sanitize_eac_channel("  Beta  "), "beta");
+        assert_eq!(sanitize_eac_channel("rc-1"), "rc-1");
+    }
+
+    #[test]
+    fn falls_back_for_invalid_channels_instead_of_mangling() {
+        // 空值、非 ASCII 与非法首字符都必须退回默认通道，
+        // 而不是「清洗」成一个看似合法却指向错误环境的名字。
+        for invalid in ["", "   ", "中文通道", "1beta", "-beta", "beta!", "a".repeat(64).as_str()] {
+            assert_eq!(sanitize_eac_channel(invalid), DEFAULT_EAC_CHANNEL, "input={invalid:?}");
+        }
+    }
+
+    #[test]
+    fn product_data_root_ends_with_product_name() {
+        let root = eac_data_root();
+        assert!(root.ends_with(EAC_PRODUCT_NAME), "root={}", root.display());
+        // L1 只给产品数据根：dpx storageRoot / dsh-environments 由 L2 推导，
+        // 这里不得出现，否则两侧路径策略会各说各话。
+        assert!(!root.to_string_lossy().contains("dsh-environments"));
+        assert!(!root.to_string_lossy().contains("dpx"));
+    }
+
+    #[test]
+    fn honors_injected_data_root_instead_of_recomputing() {
+        // 回归（2026-09-28 实测）：首版实现无视外部注入的 DSH_EAC_DATA_ROOT，
+        // 一律用 LOCALAPPDATA 重算 —— 而 L2 适配层把该变量当**权威值**，
+        // 两侧语义相反，导致「隔离根建在别处」（便携启动器/端到端验证踩中）。
+        //
+        // 用纯函数核心验证：不碰进程全局环境，因此不会与并行运行的其它测试
+        // 互相污染（早期版本用 set_var 出现过一次瞬时失败）。
+        let injected = if cfg!(windows) { r"D:\EAC 数据\产品 Root" } else { "/tmp/eac 数据/产品 Root" };
+        let temp = std::env::temp_dir();
+
+        // 1) 显式注入 → 原样采用（含空格与中文）。
+        assert_eq!(
+            eac_data_root_with(Some(injected), None, None, Some(r"C:\ignored"), None, temp.clone()),
+            std::path::PathBuf::from(injected),
+            "显式注入的产品数据根必须原样采用，不得被 LOCALAPPDATA 覆盖"
+        );
+        // 首尾空白要裁剪（便于 shell/启动器传值时容错）。
+        assert_eq!(
+            eac_data_root_with(Some("  D:\\Trimmed  "), None, None, None, None, temp.clone()),
+            std::path::PathBuf::from("D:\\Trimmed"),
+        );
+        // 2) 空白值不算「给定」→ 退回推导。
+        assert!(
+            eac_data_root_with(Some("   "), Some("C:\\Users\\u"), None, Some("C:\\la"), None, temp.clone())
+                .ends_with(EAC_PRODUCT_NAME),
+            "空白注入值应退回推导"
+        );
+        // 3) 未注入 → 按平台默认推导（Windows: LOCALAPPDATA；非 Windows: XDG_DATA_HOME）。
+        let derived = eac_data_root_with(None, Some("/home/u"), None, Some("C:\\la"), Some("/xdg/data"), temp.clone());
+        assert!(derived.ends_with(EAC_PRODUCT_NAME));
+        if cfg!(windows) {
+            assert!(derived.starts_with("C:\\la"), "Windows 推导应基于 LOCALAPPDATA：{derived:?}");
+        } else {
+            assert!(derived.starts_with("/xdg/data"), "非 Windows 推导应基于 XDG_DATA_HOME：{derived:?}");
+        }
     }
 }

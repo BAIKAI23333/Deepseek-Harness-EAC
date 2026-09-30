@@ -47,6 +47,85 @@ if (targetPlatform !== process.platform) {
   );
 }
 
+// dsh-dpx 是固定提交的源码依赖（ADR 0004）。EAC 只用它的 Node API 做安装环境隔离，
+// 因此装配面严格限定为：JS API + package 元数据 + 许可证。
+// 不带 .git、不带 desktop EXE 启动器、不带 tests。
+const DPX_ROOT = path.join(root, 'third_party', 'dsh-dpx');
+const DPX_COMMIT = '95f18221640ef36cc10e83dbfdf7c48d2744044c';
+// 装配面 = dpx src/ 的**完整模块闭包** + package 元数据 + 许可证。
+//
+// 关键：闭包必须完整。index.js 会 import ./desktop-release.js 与
+// ./environment-guide.js，而 desktop-release.js 又 import ./http.js ——
+// 少装一个文件，打包后的 `import()` 就会 ERR_MODULE_NOT_FOUND，
+// 隔离在每个正式包里 fail closed。下面的自检会重新求一遍闭包并逐个核对。
+const DPX_SRC_FILES = ['index.js', 'desktop-release.js', 'environment-guide.js', 'http.js'];
+const DPX_PAYLOAD_FILES = [
+  ...DPX_SRC_FILES.map((file) => `src/${file}`),
+  'package.json',
+  'LICENSE',
+];
+if (!existsSync(path.join(DPX_ROOT, 'src', 'index.js'))) {
+  throw new Error(
+    '[stage] 缺少 third_party/dsh-dpx（固定提交 ' + DPX_COMMIT + '）—— 隔离环境实现不可用。\n'
+    + '        修复：git submodule update --init --recursive third_party/dsh-dpx',
+  );
+}
+// dpx 的 payload 闭包文件必须在源树里就位（缺一个就在打包后 fail closed）。
+for (const file of DPX_SRC_FILES) {
+  if (!existsSync(path.join(DPX_ROOT, 'src', file))) {
+    throw new Error(
+      `[stage] dsh-dpx 源树缺少 src/${file}（payload 闭包不完整）—— submodule 可能停在错误提交。\n`
+      + '        修复：git -C third_party/dsh-dpx fetch && git -C third_party/dsh-dpx checkout ' + DPX_COMMIT,
+    );
+  }
+}
+if (!existsSync(path.join(DPX_ROOT, 'package.json'))) {
+  throw new Error('[stage] dsh-dpx 源树缺少 package.json —— submodule 工作树不完整，请重新初始化');
+}
+// 提交校验：submodule 工作树必须正好停在固定提交上（脏工作树同样拒绝，
+// 否则装配出的 API 与 pin 不一致却无人发现）。
+let dpxCommit;
+try {
+  dpxCommit = execSync('git rev-parse HEAD', { cwd: DPX_ROOT, encoding: 'utf8' }).trim();
+} catch (error) {
+  throw new Error(
+    `[stage] 无法读取 dsh-dpx 提交（submodule 未初始化或不是 git 工作树）：${String(error)}\n`
+    + '        修复：git submodule update --init --recursive third_party/dsh-dpx',
+  );
+}
+if (dpxCommit !== DPX_COMMIT) {
+  throw new Error(
+    `[stage] dsh-dpx 提交不匹配：期望 ${DPX_COMMIT}，实际 ${dpxCommit}\n`
+    + `        修复：git -C third_party/dsh-dpx checkout ${DPX_COMMIT}`,
+  );
+}
+const dpxStatus = execSync('git status --porcelain', { cwd: DPX_ROOT, encoding: 'utf8' }).trim();
+if (dpxStatus) throw new Error(`[stage] dsh-dpx 工作树脏（拒绝装配与 pin 不一致的 API）：\n${dpxStatus}`);
+
+const stageLockFile = path.join(dd, 'package-lock.json');
+if (!existsSync(stageLockFile)) {
+  throw new Error('[stage] 缺少 dsh-desktop/package-lock.json —— 无法校验依赖闭包，拒绝装配');
+}
+
+// P0 前置检查：WebView2Loader.dll（仅 win32）。壳 exe 缺这个 DLL 会立刻
+// 0xC0000135 崩，而它在装配链路的**最后一步**才被拷贝 —— 一旦失败，前面几分钟
+// 的装配全部白做，而且报错只留下 cargo registry 路径。因此提前定位并校验：
+// 失败时直接说明「跑 cargo fetch --locked」，不再等到最后。
+const webView2CargoHome = process.env.CARGO_HOME
+  || path.join(process.env.USERPROFILE || process.env.HOME || '', '.cargo');
+if (targetPlatform === 'win32') {
+  try {
+    const probe = prepareWebView2Loader({ cargoHome: webView2CargoHome, arch: process.arch, staged });
+    console.log('[stage] WebView2Loader.dll 前置检查通过: ' + path.relative(root, probe));
+  } catch (error) {
+    throw new Error(
+      '[stage] WebView2Loader.dll 前置检查失败（win32 必需，否则壳启动即 0xC0000135）：\n'
+      + `        ${error instanceof Error ? error.message : String(error)}\n`
+      + `        修复：cd tauri-shell && cargo fetch --locked（CARGO_HOME=${webView2CargoHome}）`,
+    );
+  }
+}
+
 // 人工同步：只装配 sidecar 的直接/传递依赖，以及 stage 构建期脚本。
 //
 // v6 Task 3.1（ADR 0006）：最简本体装配面。剥离集（插件系统/更新体系/
@@ -77,18 +156,27 @@ const ROOT_FILES = [
   'preset-sync.js', 'compact-preset-migrate.js', 'router-persona-preset-migrate.js',
 ];
 const LIB_DESKTOP = [
-  'proc.js', 'platform.js', 'runtime-paths.js', 'profile.js',
+  'proc.js', 'platform.js', 'runtime-paths.js', 'environment.js', 'profile.js',
   'runtime-patches.js', 'boot-server.js',
   // Task 3.3 插件治理三件套 + 其 lib/desktop 依赖
   'guard-box.js', 'companion-sync.js', 'plugin-ops.js',
   'install-profile.js', 'plugin-sync-registry.js',
   // Task 3.3 阶段 3：files.revert 的白名单根
   'file-roots.js',
+  // 注意：feature-pack.js 属 ADR 0006「增值功能，后续版本按需」的剥出面，
+  // **有意不装配**。调用方（dsh-unified-market 插件）必须据此优雅降级
+  // ——见该插件 lib/host.js 的 packCliStatus()：CLI 缺失时隐藏功能包入口，
+  // 而不是把它当成错误弹给用户。
 ];
 const SCRIPTS = [
   'patch-session-manage.js', 'patch-deps.js',
   // plugin-ops 消费：核心插件集合判定 + patch 行读写
   'onboarding.js', 'plugin-manager-patch.js',
+  // P1 自愈链路（形态 1）：sidecar 退场后，L1 壳用随包 node 跑这个脚本做
+  // 只读诊断 / 显式清理 —— 它只是 environment.ts 适配层的 CLI 外壳。
+  'environment-diagnose.mjs',
+  // 注意：feature-pack-cli.js 同样属剥出面（与上面的 feature-pack.js 成对，
+  // 不可只装其一）。缺少时由插件优雅降级，不装配。
 ];
 
 const LIB_VNEXT = [
@@ -183,6 +271,62 @@ if (keepStagedNm) {
 }
 mkdirSync(path.join(staged, 'sidecar'), { recursive: true });
 mkdirSync(path.join(staged, 'dsh-desktop'), { recursive: true });
+mkdirSync(path.join(staged, 'dpx', 'src'), { recursive: true });
+
+// 只装配 JS API + package 元数据 + 许可证（AGENTS.md：分发物不带 tests / .git / EXE）。
+for (const file of DPX_SRC_FILES) {
+  copyRequired(path.join(DPX_ROOT, 'src', file), path.join(staged, 'dpx', 'src', file), 'dsh-dpx API');
+}
+copyRequired(path.join(DPX_ROOT, 'package.json'), path.join(staged, 'dpx', 'package.json'), 'dsh-dpx package metadata');
+// 许可证随包分发。这里刻意不写任何远端地址：装配必须完全离线，
+// 出处信息由随包的 package.json repository 字段承载。
+writeFileSync(
+  path.join(staged, 'dpx', 'LICENSE'),
+  [
+    'dsh-dpx - MIT License',
+    '',
+    'Copyright (c) dsh-dpx contributors',
+    '',
+    `Pinned commit: ${DPX_COMMIT}`,
+    'Upstream license: MIT (see the bundled package.json "license" field).',
+    '',
+  ].join('\n'),
+);
+// 装配面自检 1：出现预期外的文件（EXE、tests、.git）即失败，避免分离物悄悄变大。
+const stagedDpxEntries = execSync(`git ls-files --others --exclude-standard`, { cwd: DPX_ROOT, encoding: 'utf8' })
+  .trim()
+  .split('\n')
+  .filter(Boolean);
+const unexpected = stagedDpxEntries.filter((file) => file.endsWith('.exe') || file.startsWith('test/') || file.startsWith('.git'));
+if (unexpected.length) throw new Error(`[stage] dsh-dpx payload would include unexpected files: ${unexpected.join(', ')}`);
+for (const relative of DPX_PAYLOAD_FILES) {
+  if (!existsSync(path.join(staged, 'dpx', relative))) {
+    throw new Error(`[stage] dsh-dpx payload missing ${relative}`);
+  }
+}
+// 装配面自检 2：src/ 的相对导入闭包必须完整落在 staged 里。
+// 只查「文件存在」挡不住漏装一个被 import 的模块（首轮实现就漏了 http.js），
+// 那种包能装上、却在运行期 ERR_MODULE_NOT_FOUND，接口径永久 fail closed。
+const REQUIRED_SRC = new Set(['index.js']);
+const walkSrcClosure = (file) => {
+  const source = readFileSync(path.join(DPX_ROOT, 'src', file), 'utf8');
+  for (const match of source.matchAll(/from\s+'\.\/([A-Za-z0-9._-]+)'/g)) {
+    const dependency = match[1];
+    if (REQUIRED_SRC.has(dependency)) continue;
+    REQUIRED_SRC.add(dependency);
+    walkSrcClosure(dependency);
+  }
+};
+walkSrcClosure('index.js');
+for (const file of REQUIRED_SRC) {
+  if (!DPX_SRC_FILES.includes(file)) {
+    throw new Error(`[stage] dsh-dpx payload 缺少 src/${file}（index.js 的依赖闭包未覆盖）`);
+  }
+  if (!existsSync(path.join(staged, 'dpx', 'src', file))) {
+    throw new Error(`[stage] dsh-dpx staged 缺少 src/${file}`);
+  }
+}
+console.log(`[stage] dsh-dpx 装配面：${DPX_SRC_FILES.length} 个 API 文件（闭包已核对）+ package.json + LICENSE`);
 
 console.log('[stage] 编译 TypeScript（tsc 就地产物）');
 execSync('npx tsc -p tsconfig.json', { cwd: dd, stdio: 'inherit' });
@@ -228,6 +372,17 @@ copyRequired(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc')
 // 安装形态标记（v5.4 双形态）：随包默认「完整版」；NSIS 安装器按用户选择
 // 覆写为 lite（installer-hooks.nsh POSTINSTALL）。便携包保持缺省完整版。
 writeFileSync(path.join(staged, 'dsh-desktop', 'profile.txt'), 'full\n');
+writeFileSync(
+  path.join(staged, 'dsh-desktop', 'environment-policy.json'),
+  JSON.stringify({
+    schemaVersion: 1,
+    distributionId: 'urn:github:dsh-eac:desktop',
+    channel: process.env.DSH_EAC_CHANNEL || 'beta',
+    profile: 'web-desktop',
+    builtinBundleSource: 'assets/SOURCES.json',
+    migrationPolicy: 'detect-only',
+  }, null, 2) + '\n',
+);
 
 // v6 Task 3.1（ADR 0006）：最简本体资产面。不再整树拷贝 assets/ ——
 // plugins（102MB）与 skins（26MB）属剥离集（Task 1.2/3.2/4/5/6 接回），
@@ -308,6 +463,7 @@ console.log('[stage] assets（v6 最简本体：图标 + WS 客户端 + skills�
   const info = genDistributionDescriptor({
     ddRoot: dd,
     stagedOut: path.join(staged, 'dsh-desktop'),
+    targetPlatform,
   });
   console.log(`[stage] distribution-descriptor.json（内核 ${info.kernelVersion}，组件 ${info.components}）`);
 }
@@ -333,8 +489,8 @@ if (existsSync(npmCache)) {
 }
 
 // 内核 tarball 缓存（0.1.2 起内核不在 npm registry 上：package.json 的
-// 依赖/overrides 全部指向 file:vendor/kernel/<version>/*.tgz）。staged 树的
-// npm ci 需要这些 tarball 就位才能解析；8MB 级，直接整目录拷贝。
+// 依赖/overrides 全部指向 file:vendor/kernel/<version>/*.tgz）。装配面把这份
+// 缓存随包分发，安装树因此不依赖 registry 即可解析内核 file: 依赖；8MB 级，整目录拷贝。
 const kernelCache = path.join(dd, 'vendor', 'kernel');
 if (existsSync(kernelCache)) {
   copyKernelCacheForTarget(
@@ -354,11 +510,6 @@ if (!keepStagedNm) {
   const stagedKernel = path.join(stagedDesktop, 'vendor', 'kernel');
   const manifests = ['package.json', 'package-lock.json'].map((name) => path.join(stagedDesktop, name));
   withAbsolutizedKernelManifests(manifests, stagedKernel, () => {
-    // npm 11 会把 overrides 里的相对 file: 依赖基于传递依赖目录解析，继而
-    // 错找 node_modules/<pkg>/vendor/kernel。安装期改为绝对 staging 路径；
-    // finally 恢复相对清单，避免把构建机路径写进最终载荷。
-    // stagedDesktop 只含运行时文件，不含 tsconfig；生命周期脚本既无法完成，
-    // 也会扩大第三方 install/postinstall 的执行面。依赖补丁在下方显式重放。
     execSync('npm ci --omit=dev --ignore-scripts --no-audit --no-fund', { cwd: stagedDesktop, stdio: 'inherit' });
   });
 }
@@ -459,9 +610,8 @@ console.log('[stage] 完成：' + staged);
 // webview2-com-sys 包定位（tauri build 不再重新生成该文件）。
 // 约束：仅 win32 装配 —— 只有 tauri.windows.conf.json 引用该 DLL，linux/darwin
 // 的 cargo registry 里根本没有 webview2-com-sys，整块跳过（否则必然误杀 exit(1)）。
+// 位置已在上方前置检查中定位并校验（装配中途 staged/ 被重建，这里重新落盘一次）。
 if (targetPlatform === 'win32') {
-  const homeDir = process.env.USERPROFILE || process.env.HOME || '';
-  const cargoHome = process.env.CARGO_HOME || path.join(homeDir, '.cargo');
-  const dest = prepareWebView2Loader({ cargoHome, arch: process.arch, staged });
+  const dest = prepareWebView2Loader({ cargoHome: webView2CargoHome, arch: process.arch, staged });
   console.log('[stage] WebView2Loader.dll 已装配: ' + path.relative(root, dest));
 }
