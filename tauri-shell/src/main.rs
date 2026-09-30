@@ -1963,7 +1963,7 @@ fn browser_acquire(app: &tauri::AppHandle, params: &Value) -> Result<Value, Stri
     let dir_suffix = {
         let guests = browser_guests()
             .lock()
-            .map_err(|_| "browser.acquire: guest registry poisoned".to_string())?;
+            .map_err(|_| "browser.acquire: guest table poisoned".to_string())?;
         let mut n = 0u32;
         while guests
             .values()
@@ -2442,7 +2442,7 @@ async fn handle_shell_method(
             };
             let guests = browser_guests().lock().ok();
             let Some(guests) = guests else {
-                return Ok(Some(reply_error("browser.guest-load-url: registry poisoned".into())));
+                return Ok(Some(reply_error("browser.guest-load-url: guest table poisoned".into())));
             };
             let Some(entry) = guests.get(lease) else {
                 return Ok(Some(reply_error("browser.guest-load-url: unknown lease".into())));
