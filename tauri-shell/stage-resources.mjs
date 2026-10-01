@@ -16,7 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { canReuseStagedNodeModules, writeStagedPlatformStamp } from './stage-platform-cache.mjs';
 import { copyKernelCacheForTarget, sanitizeClientBuildPaths } from './stage-linux-sanitize.mjs';
-import { withAbsolutizedKernelManifests } from './stage-kernel-manifest.mjs';
+import { stageProductionNodeModules } from './stage-node-modules.mjs';
 import {
   assertSupportedStageArch,
   pruneDarwinPayloads,
@@ -102,6 +102,14 @@ if (dpxCommit !== DPX_COMMIT) {
 const dpxStatus = execSync('git status --porcelain', { cwd: DPX_ROOT, encoding: 'utf8' }).trim();
 if (dpxStatus) throw new Error(`[stage] dsh-dpx 工作树脏（拒绝装配与 pin 不一致的 API）：\n${dpxStatus}`);
 
+// P0 前置检查：生产依赖源树。装配**不再联网安装**，因此源树必须先就位，
+// 否则会退化成运行期 ERR_MODULE_NOT_FOUND 的坏包。这里提前给出可执行指引。
+if (!existsSync(path.join(dd, 'node_modules'))) {
+  throw new Error(
+    `[stage] 缺少 ${path.relative(root, path.join(dd, 'node_modules'))} —— 生产依赖源树不存在。\n`
+    + '        装配阶段不再联网安装；请先在 dsh-desktop/ 下运行 npm ci（首次需要网络），之后装配完全离线可重复。',
+  );
+}
 const stageLockFile = path.join(dd, 'package-lock.json');
 if (!existsSync(stageLockFile)) {
   throw new Error('[stage] 缺少 dsh-desktop/package-lock.json —— 无法校验依赖闭包，拒绝装配');
@@ -508,15 +516,30 @@ if (existsSync(kernelCache)) {
   throw new Error('[stage] vendor/kernel 缺失：先运行 npm run fetch-kernel 重建内核缓存');
 }
 
-console.log('[stage] 生产 node_modules（npm ci --omit=dev --ignore-scripts，首次较慢）');
+// 生产 node_modules：从已安装好的 dsh-desktop/node_modules **离线复制**，
+// 不再在 staged 树里跑 npm ci。
+//
+// 原因（实测）：package-lock.json 里 234/280 个 file:vendor/kernel/*.tgz 的
+// integrity 与磁盘 tarball 不符，npm ci 必然 EINTEGRITY；回滚时 rmdir 又撞
+// EPERM，留下半截坏树。这条链路既联网又不可重复，必须切断。
+// 装配正确性改由 stage-node-modules.mjs 显式校验（非 optional 闭包 + 逐包文件数）。
+console.log('[stage] 生产 node_modules（从 dsh-desktop/node_modules 离线装配，不联网）');
 const nmDest = path.join(staged, 'dsh-desktop', 'node_modules');
 if (!keepStagedNm) {
-  const stagedDesktop = path.join(staged, 'dsh-desktop');
-  const stagedKernel = path.join(stagedDesktop, 'vendor', 'kernel');
-  const manifests = ['package.json', 'package-lock.json'].map((name) => path.join(stagedDesktop, name));
-  withAbsolutizedKernelManifests(manifests, stagedKernel, () => {
-    execSync('npm ci --omit=dev --ignore-scripts --no-audit --no-fund', { cwd: stagedDesktop, stdio: 'inherit' });
-  });
+  try {
+    const stagedReport = stageProductionNodeModules({
+      sourceNodeModules: path.join(dd, 'node_modules'),
+      destNodeModules: nmDest,
+      lockFile: path.join(dd, 'package-lock.json'),
+      expectedPlatform: targetPlatform,
+      expectedArch: process.arch,
+    });
+    console.log(`[stage] 已装配 ${stagedReport.packages} 个包 / ${stagedReport.files} 个文件（离线，无 npm 安装）`);
+  } catch (error) {
+    // 装配失败必须给出可执行的下一步，而不是让 npm 的 EINTEGRITY 噪声淹没现场。
+    console.error(error instanceof Error ? error.message : String(error));
+    throw new Error('[stage] 生产依赖装配失败：修复上面的原因后重跑（装配阶段不再联网安装）');
+  }
 }
 
 if (targetPlatform === 'linux') {
