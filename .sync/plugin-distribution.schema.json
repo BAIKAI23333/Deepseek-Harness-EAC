@@ -30,10 +30,12 @@
       ],
       "properties": {
         "current": {
+          "description": "当前交付通道。bundled=随本安装包交付；pack=推荐包交付；market=市场按需安装；none=本包当前不交付该副本（已从仓库资产剥离，目标通道来源尚未就绪，配合 migration.state=source-pending）。",
           "enum": [
             "bundled",
             "pack",
-            "market"
+            "market",
+            "none"
           ]
         },
         "target": {
@@ -177,6 +179,9 @@
               },
               "migration": {
                 "properties": {
+                  "current": {
+                    "const": "bundled"
+                  },
                   "target": {
                     "const": "bundled"
                   },

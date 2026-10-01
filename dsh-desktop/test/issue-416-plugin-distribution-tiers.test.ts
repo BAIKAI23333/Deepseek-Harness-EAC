@@ -105,8 +105,9 @@ test('runtime class resolution reproduces the ledger for every entry', () => {
 
 test('builtin rows are default-enabled, non-disableable and labelled', () => {
   // coreIds 刻意留空：锁定必须来自 distributionClass，而不是调用方注入的核心集合。
+  // ISO-004：样例从 balance（实物不存在，已改判 recommended）换成仍随包的 builtin。
   const [row] = rows([], {
-    companion: [{ id: 'balance', name: '@deepseek-ai/dsh-balance' }],
+    companion: [{ id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' }],
     distributionClasses: classes,
     recommendedPack: RECOMMENDED_PACK,
   });
@@ -117,8 +118,8 @@ test('builtin rows are default-enabled, non-disableable and labelled', () => {
   assert.equal(row.toggleable, false, '内置行不可停用');
   assert.equal(row.removable, false, '内置行不可移除');
   // 存量/手改的 disabled 行同样保持锁定（IPC 侧也拒绝停用内置插件）。
-  const [locked] = rows([{ id: 'balance', disabled: true }], {
-    companion: [{ id: 'balance', name: '@deepseek-ai/dsh-balance' }],
+  const [locked] = rows([{ id: 'file-changes', disabled: true }], {
+    companion: [{ id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' }],
     distributionClasses: classes,
   });
   assert.equal(locked.toggleable, false);
@@ -179,13 +180,16 @@ test('external default-disable plan targets only new third-party bundles', () =>
       'dsh-community-thing',
       '@scope/other-thing',
       'dsh-navbar',
-      '@vlln/dsh-navbar',
-      'balance',
+      'file-changes',
     ],
     // 登记判定跟着 canonical id 走：@scope/other-thing 使用无碰撞编码。
     isRegistered: (id: string) => id === 'scoped-4073636f70652f6f746865722d7468696e67',
     distributionClasses: classes,
-    skipIds: ['balance'],
+    // 配套插件 skipIds（ISO-004：样例换成仍随包的 builtin 行 id）。
+    // 注：`@vlln/dsh-navbar` 这类「scoped 包名 → 台账 id」反查随随包清单收敛
+    // （45→10）失效——推荐包资产不在仓库，packageName 无处登记，canonical 会
+    // 退化为 scoped-<hex>；此处用裸 id `dsh-navbar` 取证分级表的推荐类。
+    skipIds: ['file-changes'],
   }) as { id: string; name: string }[];
   assert.deepEqual(plan, [{ id: 'dsh-community-thing', name: 'dsh-community-thing' }],
     '内核骨架 / 已登记 / 推荐与内置 / 配套插件都不进默认禁用清单');
@@ -282,18 +286,25 @@ test('#416 回归：不同 scope 的同名包不再互相塌成一行', () => {
 
 test('#416 回归：canonical 包名解析（已知包走台账 id，未知 scoped 规范化全名）', () => {
   const canonical = state.canonicalBundleId as (name: string) => string;
-  assert.equal(canonical('@deepseek-ai/dsh-balance'), 'balance',
+  assert.equal(canonical('@deepseek-ai/dsh-client-file-changes'), 'client-file-changes',
     '已登记 scoped 包的行 id 走台账 id，不是去 scope 的短名');
   assert.equal(canonical('@deepseek-ai/dsh-file-changes'), 'file-changes', '已登记 scoped 包的行 id 走台账 id');
-  assert.equal(canonical('@vlln/dsh-navbar'), 'dsh-navbar', '推荐包走台账 id');
   assert.equal(canonical('@deepseek-ai/dsh-web-app'), 'dsh-web-app', '内核骨架保持现有短名语义');
+  // ISO-004：随包清单收敛（45→10）后，反查表只剩随包 10 条 —— 推荐包资产不在
+  // 仓库，scoped 包名按无碰撞编码落盘；其分级仍由 canonical 分级表（ledger）给出。
+  assert.equal(canonical('@vlln/dsh-navbar'), 'scoped-40766c6c6e2f6473682d6e6176626172',
+    '已移出随包清单的推荐包不再折成裸 id（除非反查表重新登记它的 packageName）');
+  assert.equal(state.distributionClassOf('dsh-navbar', 'other', classes), 'recommended',
+    '推荐包的 canonical 分级不受随包清单收敛影响（裸 id 仍在分级表里）');
   assert.equal(canonical('@evil/dsh-navbar'), 'scoped-406576696c2f6473682d6e6176626172', '未登记 scoped 包使用无碰撞编码，绝不折成别人的 id');
   assert.equal(canonical('dsh-community-thing'), 'dsh-community-thing', '无 scope 包名即 id');
 });
 
 test('#416 回归：已知包（内置 / 推荐包）不被当成外部层规划', () => {
   const plan = state.externalDefaultDisabledPlan({
-    bundles: ['@deepseek-ai/dsh-balance', '@vlln/dsh-navbar', '@deepseek-ai/dsh-web-app'],
+    // ISO-004：随包清单收敛后 scoped 反查表只剩随包 10 条，推荐包改用
+    // canonical 分级表里的裸 id 取证（'dsh-navbar' ∈ recommended）。
+    bundles: ['@deepseek-ai/dsh-file-changes', 'dsh-navbar', '@deepseek-ai/dsh-web-app'],
     isRegistered: () => false,
     distributionClasses: classes,
     builtinIds: registry.DISTRIBUTION_BUILTIN_PLUGIN_IDS,

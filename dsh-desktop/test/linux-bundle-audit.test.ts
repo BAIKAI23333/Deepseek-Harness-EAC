@@ -17,12 +17,16 @@ function elf64(machine: number): Buffer {
 const ELF = elf64(62);
 const ELF_ARM64 = elf64(183);
 
-function fixture(elf = ELF): string {
+// 默认造带 native 围栏载荷（supervisor/snapshot）的树；native: false 造
+// 「围栏当前不随包」的树（ISO-003：装配面 NATIVE_MODULES=[] 的现状）。
+function fixture(elf = ELF, options: { native?: boolean } = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eac-linux-bundle-'));
   const runtime = path.join(root, 'dsh-desktop', 'vendor', 'node', 'node');
-  const supervisor = path.join(root, 'dsh-desktop', 'native', 'supervisor', 'index.node');
-  const snapshot = path.join(root, 'dsh-desktop', 'native', 'snapshot', 'index.node');
-  for (const file of [runtime, supervisor, snapshot]) {
+  const nativeFiles = options.native === false ? [] : [
+    path.join(root, 'dsh-desktop', 'native', 'supervisor', 'index.node'),
+    path.join(root, 'dsh-desktop', 'native', 'snapshot', 'index.node'),
+  ];
+  for (const file of [runtime, ...nativeFiles]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, elf);
   }
@@ -34,6 +38,18 @@ test('Linux bundle audit accepts ELF runtime and native modules', () => {
   const root = fixture();
   try {
     assert.deepEqual(auditLinuxBundle(root), { filesChecked: 3, nativeModules: 2 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ISO-003：进程隔离围栏（native/{supervisor,snapshot}）当前不随包
+//（stage-resources.mjs 的 NATIVE_MODULES=[]，ADR 0003 已裁废）—— 缺失不得
+// 报错；存在时仍由通用 walk 校验 ELF/目标架构（见下方 PE native 用例）。
+test('Linux bundle audit treats the native fence payloads as optional (not staged)', () => {
+  const root = fixture(ELF, { native: false });
+  try {
+    assert.deepEqual(auditLinuxBundle(root), { filesChecked: 1, nativeModules: 0 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -67,6 +83,7 @@ test('Linux bundle audit rejects Windows payloads anywhere in the reachable tree
   }
 });
 
+// 存在性校验仍生效：fixture 里 native/snapshot/index.node 在场，PE 内容必须被拒。
 test('Linux bundle audit rejects a PE native module and a non-executable runtime', () => {
   const root = fixture();
   const native = path.join(root, 'dsh-desktop', 'native', 'snapshot', 'index.node');

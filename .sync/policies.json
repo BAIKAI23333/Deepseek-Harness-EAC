@@ -11,9 +11,9 @@
     "recommendedPack": ".sync/packs/desktop-recommended.pack.json",
     "packSchema": "docs/schemas/feature-pack-pack.json",
     "expectedCounts": {
-      "builtin": 12,
-      "recommended": 14,
-      "external": 19
+      "builtin": 10,
+      "recommended": 15,
+      "external": 20
     }
   },
   "inventoryRoots": [
@@ -21,16 +21,6 @@
       "kind": "plugin",
       "path": "dsh-desktop/assets/plugins",
       "manifestKey": "plugins"
-    },
-    {
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins",
-      "manifestKey": "skins"
-    },
-    {
-      "kind": "sdk-plugin",
-      "path": "dsh-desktop/assets/sdk-plugins",
-      "manifestKey": "sdkPlugins"
     }
   ],
   "allowedClasses": [
@@ -56,18 +46,12 @@
   "owners": {
     "desktop-plugins": [
       "dsh-desktop/assets/plugins/"
-    ],
-    "desktop-skins": [
-      "dsh-desktop/assets/skins/"
-    ],
-    "desktop-sdk": [
-      "dsh-desktop/assets/sdk-plugins/"
     ]
   },
   "runtimeUpdates": {
     "defaultAllowed": false,
     "requiresExplicitSource": true,
-    "legacySourceCount": 12,
+    "legacySourceCount": 1,
     "sourceMapMustBeOneToOne": true
   },
   "forbiddenTrackedNames": [

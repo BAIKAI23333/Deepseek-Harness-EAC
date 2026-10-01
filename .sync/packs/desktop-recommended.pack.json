@@ -14,6 +14,7 @@
   "x-eac": {
     "status": "draft",
     "intendedPluginIds": [
+      "balance",
       "better-sidebar",
       "change-review",
       "composer-dynamic-island",

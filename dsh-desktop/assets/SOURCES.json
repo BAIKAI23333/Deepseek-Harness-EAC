@@ -18,6 +18,7 @@
       "origin": "upstream",
       "version": "0.3.6",
       "path": "dsh-desktop/assets/plugins/computer-user",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -43,6 +44,7 @@
       "origin": "upstream",
       "version": "0.1.13-eac.3",
       "path": "dsh-desktop/assets/plugins/dsh-agent-teams",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -67,6 +69,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-balance",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -95,6 +98,7 @@
       "origin": "upstream",
       "version": "0.15.3-eac.2",
       "path": "dsh-desktop/assets/plugins/dsh-better-sidebar",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -131,6 +135,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-change-review",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -222,6 +227,7 @@
       "origin": "upstream",
       "version": "2.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-composer-dynamic-island",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -257,6 +263,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-conversation-tweaks",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -285,6 +292,7 @@
       "origin": "upstream",
       "version": "0.1.0-alpha.6",
       "path": "dsh-desktop/assets/plugins/dsh-dafeiyu",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -309,6 +317,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-dock-settings",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -387,6 +396,7 @@
       "origin": "eac-original",
       "version": "0.1.1",
       "path": "dsh-desktop/assets/plugins/dsh-feature-toggles",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -432,6 +442,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-float-window",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -460,6 +471,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-font-custom",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -482,6 +494,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-image-paste",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -510,6 +523,7 @@
       "origin": "upstream",
       "version": "0.5.0",
       "path": "dsh-desktop/assets/plugins/dsh-meow-smooth",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -534,6 +548,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-message-rewind",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -562,6 +577,7 @@
       "origin": "upstream",
       "version": "0.3.0",
       "path": "dsh-desktop/assets/plugins/dsh-navbar",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -586,6 +602,7 @@
       "origin": "upstream",
       "version": "9.9.9",
       "path": "dsh-desktop/assets/plugins/dsh-offpeak",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -621,6 +638,7 @@
       "origin": "upstream",
       "version": "0.7.0",
       "path": "dsh-desktop/assets/plugins/dsh-openclaw-bridge",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -649,6 +667,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-pet-settings",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -671,6 +690,7 @@
       "origin": "upstream",
       "version": "0.1.3",
       "path": "dsh-desktop/assets/plugins/dsh-pet",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认禁用",
       "audit": {
         "verdict": "catalog-hit",
@@ -695,6 +715,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-phone",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -745,6 +766,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-wizard",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -767,6 +789,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-prompt-custom",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -795,6 +818,7 @@
       "origin": "upstream",
       "version": "0.6.2",
       "path": "dsh-desktop/assets/plugins/dsh-raw-html",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -819,6 +843,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-session-manager",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -843,6 +868,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-settings-groups",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -888,6 +914,7 @@
       "origin": "upstream",
       "version": "0.2.8",
       "path": "dsh-desktop/assets/plugins/dsh-side-session",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -916,6 +943,7 @@
       "origin": "upstream",
       "version": "0.2.8",
       "path": "dsh-desktop/assets/plugins/dsh-soul-md",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -941,6 +969,7 @@
       "origin": "upstream",
       "version": "0.3.4",
       "path": "dsh-desktop/assets/plugins/dsh-undo-savepoint",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1017,6 +1046,7 @@
       "origin": "upstream",
       "version": "1.0.1",
       "path": "dsh-desktop/assets/plugins/dsh-web-mobile-fix",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1041,6 +1071,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "dsh-desktop/assets/plugins/dsh-webui-prompt-optimizer",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1065,6 +1096,7 @@
       "origin": "upstream",
       "version": "0.2.10",
       "path": "dsh-desktop/assets/plugins/dsh-whale-widget",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认禁用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1100,6 +1132,7 @@
       "origin": "upstream",
       "version": "3.3.3",
       "path": "dsh-desktop/assets/plugins/picturereader",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1125,6 +1158,7 @@
       "origin": "eac-original",
       "version": "1.0.0",
       "path": "dsh-desktop/assets/sdk-plugins/sample-sdk-plugin",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1170,6 +1204,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/_preset",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1196,6 +1231,7 @@
       "origin": "unresolved",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/anchored-standard",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -1235,6 +1271,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/minimal-gitbash",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1252,6 +1289,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/minimal-win",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1269,6 +1307,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/router-standard",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1295,6 +1334,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/v4-flash-godmode-opencode-go",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1312,6 +1352,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/warmupbetter-replay",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1329,6 +1370,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/warmupbetter",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1346,6 +1388,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/whoami-standard",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1363,6 +1406,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "dsh-desktop/assets/agent-presets/zero-anchored-standard",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -1480,6 +1524,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-auto-compact",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -1517,6 +1562,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-balance",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -1545,6 +1591,7 @@
       "origin": "upstream",
       "version": "0.12.2",
       "path": "assets/plugins/dsh-better-sidebar",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1580,6 +1627,7 @@
       "origin": "upstream",
       "version": "2.1.0",
       "path": "assets/plugins/dsh-composer-dynamic-island",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1615,6 +1663,7 @@
       "origin": "upstream",
       "version": "1.20.2",
       "path": "assets/plugins/dsh-market",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "JS表已注册；Tauri sidecar表未登记",
       "audit": {
         "verdict": "catalog-hit",
@@ -1648,6 +1697,7 @@
       "origin": "upstream",
       "version": "1.0.0",
       "path": "assets/plugins/dsh-offpeak",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1683,6 +1733,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-plugin-manager",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -1711,6 +1762,7 @@
       "origin": "upstream",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-plugin-marketplace",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -1739,6 +1791,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-plugin-shield",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1772,6 +1825,7 @@
       "origin": "eac-original",
       "version": "0.1.0",
       "path": "assets/plugins/dsh-skin-switch",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1794,6 +1848,7 @@
       "origin": "upstream",
       "version": "0.3.3-1",
       "path": "assets/plugins/dsh-undo-savepoint",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1829,6 +1884,7 @@
       "origin": "upstream",
       "version": "0.1.2",
       "path": "assets/plugins/dsh-webui-market",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认启用",
       "audit": {
         "verdict": "catalog-hit",
@@ -1853,6 +1909,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/blue-fantasy",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1877,6 +1934,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/dragon-heir",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1901,6 +1959,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/miku",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1925,6 +1984,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/minecraft",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1949,6 +2009,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/qq98",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1973,6 +2034,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/ths",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -1997,6 +2059,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/trading",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -2021,6 +2084,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/whale-song",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -2045,6 +2109,7 @@
       "origin": "upstream",
       "version": "0.1.11",
       "path": "assets/skins/xp",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -2069,6 +2134,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "assets/agent-presets/_preset",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -2095,6 +2161,7 @@
       "origin": "unresolved",
       "version": null,
       "path": "assets/agent-presets/anchored-standard",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "same-name-unresolved",
@@ -2134,6 +2201,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "assets/agent-presets/router-spec",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -2159,6 +2227,7 @@
       "origin": "eac-original",
       "version": null,
       "path": "assets/agent-presets/router-standard",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "存在源码；需按皮肤/预设选择加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -2185,6 +2254,7 @@
       "origin": "upstream",
       "version": "0.1.2",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-hit",
@@ -2209,6 +2279,7 @@
       "origin": "upstream",
       "version": "0.5.1",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -2233,6 +2304,7 @@
       "origin": "upstream",
       "version": "0.1.0-rc.6",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -2257,6 +2329,7 @@
       "origin": "eac-original",
       "version": "1.2.2",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-miss",
@@ -2274,6 +2347,7 @@
       "origin": "upstream",
       "version": "0.4.0",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed依赖；未直接列入bundle",
       "audit": {
         "verdict": "catalog-hit",
@@ -2298,6 +2372,7 @@
       "origin": "upstream",
       "version": "0.1.6",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "名录命中；安装声明与包内来源冲突",
@@ -2331,6 +2406,7 @@
       "origin": "upstream",
       "version": "0.3.7",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-hit",
@@ -2364,6 +2440,7 @@
       "origin": "upstream",
       "version": "0.1.40",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-hit",
@@ -2397,6 +2474,7 @@
       "origin": "upstream",
       "version": "0.6.8",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-hit",
@@ -2430,6 +2508,7 @@
       "origin": "upstream",
       "version": "0.4.3",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed依赖；未直接列入bundle",
       "audit": {
         "verdict": "catalog-hit",
@@ -2463,6 +2542,7 @@
       "origin": "upstream",
       "version": "0.9.1",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-hit",
@@ -2496,6 +2576,7 @@
       "origin": "upstream",
       "version": "0.3.0",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed依赖；未直接列入bundle",
       "audit": {
         "verdict": "catalog-miss",
@@ -2529,6 +2610,7 @@
       "origin": "upstream",
       "version": "0.2.10",
       "path": "distribution/profile-seed/profiles/web-desktop/package.json",
+      "pathBaseline": "aio-v1@9de383c7ba1c2c51bd8eb5ba5f669aec3b95badd",
       "registryStatus": "seed bundle加载",
       "audit": {
         "verdict": "catalog-hit",
@@ -2664,6 +2746,7 @@
       "origin": "upstream",
       "version": "0.3.0",
       "path": "dsh-desktop/assets/plugins/dsh-stt",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认禁用",
       "audit": {
         "verdict": "catalog-miss",
@@ -2686,6 +2769,7 @@
       "origin": "upstream",
       "version": "1.0.0",
       "path": "dsh-desktop/assets/plugins/dsh-think-zh-expand-eac",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",

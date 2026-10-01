@@ -31,6 +31,7 @@
 //     win.maximized（通知推送）
 //     menu.action 的纯壳动作（reload / devtools / fullscreen / quit / open-browser）
 //     log.page-error（send，壳层记录）
+//     directory.pick（SYNC-004，原生目录选择对话框 → 绝对路径 | null）
 //   其余 → sidecar（chrome.init / service.restart / boot.* / P3 渐进收编面）。
 
 use std::collections::HashMap;
@@ -196,8 +197,9 @@ fn ui_text<'a>(zh: &'a str, en: &'a str) -> &'a str {
 #[cfg(test)]
 mod shell_tests {
     use super::{
-        is_sidecar_respawn_request, locale_tag_is_chinese, shell_http_status, ui_skin_asset,
-        ui_skin_manager_enabled, ui_skin_manager_snapshot, verified_resource_root,
+        is_sidecar_respawn_request, locale_tag_is_chinese, locale_tag_is_well_formed,
+        shell_http_status, ui_skin_asset, ui_skin_manager_enabled, ui_skin_manager_snapshot,
+        verified_resource_root,
     };
     use std::fs;
     use std::sync::Mutex;
@@ -212,6 +214,22 @@ mod shell_tests {
         assert!(!locale_tag_is_chinese("en-US"));
         assert!(!locale_tag_is_chinese("ja-JP"));
         assert!(!locale_tag_is_chinese(""));
+    }
+
+    #[test]
+    fn locale_tag_gate_matches_official_id_pattern() {
+        // 官方 LOCALE_ID_PATTERN：^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$。
+        assert!(locale_tag_is_well_formed("zh"));
+        assert!(locale_tag_is_well_formed("en"));
+        assert!(locale_tag_is_well_formed("zh-CN"));
+        assert!(locale_tag_is_well_formed("zh-Hant-TW"));
+        assert!(!locale_tag_is_well_formed("z")); // 主段过短
+        assert!(!locale_tag_is_well_formed("chineseee")); // 主段 9 > 8
+        assert!(!locale_tag_is_well_formed("zh_ CN")); // 非法字符
+        assert!(!locale_tag_is_well_formed(""));
+        assert!(!locale_tag_is_well_formed("zh_CN")); // 下划线不是分隔符
+        assert!(locale_tag_is_well_formed("zh-C")); // 子段 1-8 位均合法（含 1）
+        assert!(!locale_tag_is_well_formed("zh-CNbbbbbbbbb")); // 子段 >8
     }
 
     #[test]
@@ -299,6 +317,22 @@ mod shell_tests {
         assert!(died.contains("data-state=\"idle\""));
         assert!(died.contains("setAttribute('data-state','running')"));
         assert!(died.contains("setAttribute('data-state','error')"));
+
+        // 回归锁（启动页 `\` 乱码）：script 注入之前的 HTML 段不得含任何反斜杠
+        // —— 模板行连接写成 `\\` 时，字面 `\` + 换行 + 缩进会原样进入响应体，
+        // 标签之间的 `\` 成为可见文本节点（散落的 "\" 乱码）。
+        let loading_html = loading.split("<script>").next().unwrap_or("");
+        assert!(
+            !loading_html.contains('\\'),
+            "stray backslash in loading page HTML"
+        );
+        let died_html = died.split("<script>").next().unwrap_or("");
+        assert!(
+            !died_html.contains('\\'),
+            "stray backslash in died page HTML"
+        );
+        // died 页脚本大括号配平：retry 函数体必须以 `});}` 收口后紧跟 </script>。
+        assert!(died.contains("});}</script>"));
     }
 
     #[test]
@@ -629,6 +663,497 @@ fn throttle_save_window_state(app: &tauri::AppHandle) {
     *last = Some(now);
     save_window_state(app);
 }
+
+// ---------------------------------------------------------------------------
+// 壳语言态（SYNC-002 · __DSH_LOCALE__ 回写链，官方 preload-app.ts:102-105）
+//
+// 官方语义（main.ts:703-721）：localeBootstrap 返回 {languages, preference}，
+// preference 存 Host 设置文档（ns=locale）；localeChanged 后更新应用菜单/平台页。
+// EAC 权威源选型（任务卡要求调研后定点）：壳 L1 自持 locale-state.json ——
+//   * L1 现无任何语言持久化（CHINESE_UI OnceLock 启动探测 OS、只读，全程不变）；
+//   * sidecar settings.json 兼容层无语言键，且 L1 与 L2 并发写同一 JSON 有覆盖
+//     竞态 —— 本域内唯一写者单独成文件，天然无冲突；
+//   * 内核 Host 设置文档（ns=locale）是官方存储，但属禁改内核面，且壳 bootstrap
+//     时 web 服务可能未起，语言读取不得依赖它。
+// 文件放在壳设置目录（与 sidecar settings.json 同目录），路径解析与
+// dsh-desktop/lib/desktop/platform.ts 的 userDataDir() 逐分支对齐：
+// APPDATA / XDG_CONFIG_HOME 环境变量重定向即可隔离验证。preference 缺失 =
+// null（官方语义：自动选择，回退 OS 语言检测）。
+// ---------------------------------------------------------------------------
+
+/// 壳设置目录（= sidecar platform.ts userDataDir() 的 Rust 镜像）。
+fn shell_settings_dir() -> std::path::PathBuf {
+    #[cfg(windows)]
+    {
+        let base = std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                // platform.ts 回退：homeDir\AppData\Roaming（homeDir = USERPROFILE）。
+                let home = std::env::var_os("USERPROFILE")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                home.join("AppData").join("Roaming")
+            });
+        base.join("Deepseek Harness EAC")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        home.join("Library").join("Application Support").join("deepseek-harness-eac")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let base = std::env::var_os("XDG_CONFIG_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
+                home.join(".config")
+            });
+        base.join("deepseek-harness-eac")
+    }
+}
+
+fn locale_state_path() -> std::path::PathBuf {
+    shell_settings_dir().join("locale-state.json")
+}
+
+/// 读持久化 preference（文件缺失/损坏/形态非法 → None = 自动选择）。
+fn load_locale_preference() -> Option<String> {
+    let raw = std::fs::read_to_string(locale_state_path()).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value
+        .get("preference")
+        .and_then(|p| p.as_str())
+        .map(|s| s.to_string())
+}
+
+fn save_locale_preference(preference: &str) {
+    let path = locale_state_path();
+    let json = serde_json::json!({ "preference": preference }).to_string();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[shell] locale-state mkdir failed: {}", e);
+            return;
+        }
+    }
+    if let Err(e) = std::fs::write(&path, json) {
+        eprintln!("[shell] locale-state save failed: {}", e);
+    }
+}
+
+/// 壳 UI 语言：持久化 preference 命中 zh 系 → 中文；其余 tag → 英文
+///（官方 resolveDesktopStartupLocale：preference 归一到 zh/en，fallback en）；
+/// 无持久化 → OS 语言检测（既有 use_chinese_ui）。
+fn shell_prefers_chinese() -> bool {
+    match load_locale_preference() {
+        Some(p) => locale_tag_is_chinese(&p),
+        None => use_chinese_ui(),
+    }
+}
+
+/// 官方 LocaleSettings id 形态（client-locale LOCALE_ID_PATTERN）：
+/// /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/。send 型通道的输入闸门：
+/// 非法 tag 静默丢弃（官方 main.ts:713 对非 string 亦直接 return）。
+fn locale_tag_is_well_formed(tag: &str) -> bool {
+    let mut segments = tag.split('-');
+    let Some(primary) = segments.next() else { return false };
+    let primary_len = primary.len();
+    if !(2..=8).contains(&primary_len) || !primary.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
+    segments.all(|sub| {
+        let n = sub.len();
+        (1..=8).contains(&n) && sub.bytes().all(|b| b.is_ascii_alphanumeric())
+    })
+}
+
+/// 系统语言标签（locale.bootstrap 的 L1 languages 来源 = 官方
+/// app.getPreferredSystemLanguages 的 EAC 等价物；页面侧 navigator.languages
+/// 由桥合并优先，L1 单标签兜底）。
+#[cfg(windows)]
+fn system_language_tag() -> String {
+    use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
+    let mut locale = [0u16; 85];
+    let len = unsafe { GetUserDefaultLocaleName(locale.as_mut_ptr(), locale.len() as i32) };
+    if len <= 1 {
+        return "en".to_string();
+    }
+    String::from_utf16_lossy(&locale[..len as usize - 1])
+}
+
+#[cfg(not(windows))]
+fn system_language_tag() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE"]
+        .iter()
+        .find_map(|name| std::env::var(name).ok())
+        .map(|value| {
+            value
+                .split(':')
+                .next()
+                .unwrap_or(&value)
+                .split('.')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
+        .filter(|tag| !tag.is_empty())
+        .unwrap_or_else(|| "en".to_string())
+}
+
+/// 托盘菜单构建（初始 + locale.changed 重建共用；文案随壳语言态）。
+fn build_tray_menu(
+    app: &tauri::AppHandle,
+    zh: bool,
+) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    let text = |zh_text: &'static str, en_text: &'static str| if zh { zh_text } else { en_text };
+    let show = tauri::menu::MenuItem::with_id(
+        app,
+        "show",
+        text("显示 / 隐藏窗口", "Show / Hide Window"),
+        true,
+        None::<&str>,
+    )?;
+    let restart = tauri::menu::MenuItem::with_id(
+        app,
+        "restart",
+        text("重启 Web 服务", "Restart Web Service"),
+        true,
+        None::<&str>,
+    )?;
+    let feedback = tauri::menu::MenuItem::with_id(
+        app,
+        "feedback",
+        text("反馈建议", "Feedback"),
+        true,
+        None::<&str>,
+    )?;
+    let quit = tauri::menu::MenuItem::with_id(app, "quit", text("退出", "Quit"), true, None::<&str>)?;
+    let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
+    tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &feedback, &quit])
+}
+
+/// locale.changed → 重建托盘菜单（语言回写落点）。菜单操作要求主线程，经
+/// run_on_main_thread 派发；托盘未就绪（启动竞态）或重建失败只记日志 ——
+/// send 型通道无回复可承载失败。
+fn rebuild_tray_menu(app: &tauri::AppHandle) {
+    let zh = shell_prefers_chinese();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        match build_tray_menu(&handle, zh) {
+            Ok(menu) => match handle.tray_by_id(TRAY_ID) {
+                Some(tray) => {
+                    if let Err(e) = tray.set_menu(Some(menu)) {
+                        eprintln!("[shell] tray menu rebuild failed: {}", e);
+                    } else {
+                        println!("[shell] tray menu rebuilt (locale: {})", if zh { "zh" } else { "en" });
+                    }
+                }
+                None => eprintln!("[shell] tray not ready for locale rebuild"),
+            },
+            Err(e) => eprintln!("[shell] tray menu build failed: {}", e),
+        }
+    });
+}
+
+/// 托盘固定 id（locale.changed 重建时按 id 取回 TrayIcon 句柄）。
+const TRAY_ID: &str = "dsh-main-tray";
+
+// ---------------------------------------------------------------------------
+// __DSH_HOST_PATHS__ 路径暂存（SYNC-003 · 官方 webUtils.getPathForFile 等价能力）
+//
+// 调研结论（bridge.ts 同款长注释，证据在任务自证材料）：WebView2 页面层的
+// File 无真实路径（Chromium 没有 Electron 的 File.path patch），宿主层拿到
+// 「粘贴的真实文件」的唯一无损通道是系统剪贴板 CF_HDROP —— 资源管理器复制的
+// 文件以 CF_HDROP 落板，WebView2 页面 paste 事件的 clipboardData.files 正由它
+// 生成（File 的 name/size 与此处枚举一致）。而「拖放」的真实路径只能在
+// WebView2 之前接管 OLE 拖放（SetAllowExternalDrop(false) + 自注册 IDropTarget）
+// 才能拿到，接管 = 页面原生 HTML5 拖放整体失效（页面收不到 dragover/drop，
+// wry 对非文件拖拽无事件不可合成），本壳特意 disable_drag_drop_handler 保住
+// 页面拖放 —— 故拖放路径本版不接管，桥侧 pathFor 对拖放文件返回 ''（走上传，
+// 与现状一致），任务卡「已知局限」条款。
+//
+// 机制：常驻剪贴板监听线程（消息专用窗 HWND_MESSAGE +
+// AddClipboardFormatListener）在 WM_CLIPBOARDUPDATE 时读 CF_HDROP
+//（DragQueryFileW，wry 同款两段式取长路径）并取元数据（name/size/is_dir），
+// 快照存 HOST_PATH_FILES 并经 shell_notify 广播 win.host-paths 通知帧；桥
+//（bridge.ts）暂存后由 __DSH_HOST_PATHS__.pathFor 按 name+size 匹配返回绝对
+// 路径。剪贴板不再含文件时推送空表清场（字节流截图上板 → 旧路径失效 →
+// pathFor 返 ''，官方语义）。绝无伪造路径：表项只来自 DragQueryFileW 真实枚举。
+//
+// 局限：仅 Windows（CF_HDROP 为 Windows 剪贴板格式；macOS/Linux 文件粘贴格式
+// 不同，未实现时无帧推送 → 桥侧无暂存 → pathFor 返 ''，行为与现状一致）。
+// 新 WS 连接建立时补推当前快照（页面重载不丢已暂存剪贴板内容）。
+// ---------------------------------------------------------------------------
+
+/// 一条真实路径条目（win.host-paths 帧元素；字段与 bridge.ts 的匹配算法对齐）。
+#[cfg(windows)]
+#[derive(Clone, Debug, serde::Serialize)]
+struct HostPathEntry {
+    path: String,
+    name: String,
+    size: u64,
+    is_dir: bool,
+}
+
+/// 最近一次剪贴板文件快照（win.host-paths 帧的权威源；剪贴板变化即整体替换）。
+#[cfg(windows)]
+static HOST_PATH_FILES: RwLock<Vec<HostPathEntry>> = RwLock::new(Vec::new());
+
+/// 新 WS 连接补推当前快照（页面重载/重连不丢已暂存内容；空快照不推 ——
+/// 页面 pathFor 对未知文件本就落 ''）。
+#[cfg(windows)]
+fn host_paths_snapshot_frame() -> Option<String> {
+    let files = HOST_PATH_FILES.read().ok()?;
+    if files.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&serde_json::json!({
+        "method": "win.host-paths",
+        "params": { "files": &*files }
+    }))
+    .ok()
+}
+
+#[cfg(not(windows))]
+fn host_paths_snapshot_frame() -> Option<String> {
+    None
+}
+
+/// 隔离验证钩子（SYNC-003 任务卡「L1 事件注入」条款）：环境变量
+/// DSH_HOST_PATHS_STAGE 预置真实文件/目录路径（分号分隔），启动时经与剪贴板
+/// 监听同一条 publish_host_path_entries 链路（快照 + WS 广播 + 新连接补推）
+/// 暂存。用途：无法操作系统剪贴板的自动化验证环境（远程会话/策略锁剪贴板）
+/// 下，仍可对 L1→WS→桥→pathFor 全链路做真实路径验证。硬约束不变：路径必须
+/// 真实存在（fs::metadata 逐条校验，不存在的跳过并告警）—— 绝不产生伪造路径。
+/// 默认（未设置环境变量）完全惰性，生产路径零影响。
+#[cfg(windows)]
+fn stage_host_paths_from_env() {
+    let Some(raw) = std::env::var_os("DSH_HOST_PATHS_STAGE") else {
+        return;
+    };
+    let mut entries: Vec<HostPathEntry> = Vec::new();
+    for part in raw.to_string_lossy().split(';') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        let Ok(meta) = std::fs::metadata(p) else {
+            eprintln!("[shell] host-paths stage: skip nonexistent path: {}", p);
+            continue;
+        };
+        let name = std::path::Path::new(p)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| p.to_string());
+        entries.push(HostPathEntry {
+            path: p.to_string(),
+            name,
+            size: meta.len(),
+            is_dir: meta.is_dir(),
+        });
+    }
+    if entries.is_empty() {
+        return;
+    }
+    eprintln!(
+        "[shell] host-paths stage: {} real path(s) from DSH_HOST_PATHS_STAGE",
+        entries.len()
+    );
+    publish_host_path_entries(entries);
+}
+
+#[cfg(not(windows))]
+fn stage_host_paths_from_env() {}
+
+/// 快照落库 + WS 广播。每次剪贴板内容变化都推送（含空表清场）。
+#[cfg(windows)]
+fn publish_host_path_entries(entries: Vec<HostPathEntry>) {
+    let empty = entries.is_empty();
+    if let Ok(mut slot) = HOST_PATH_FILES.write() {
+        let had = !slot.is_empty();
+        *slot = entries.clone();
+        if empty && had {
+            eprintln!("[shell] host-paths: clipboard holds no files, staged paths cleared");
+        }
+    }
+    if !empty {
+        eprintln!("[shell] host-paths: staged {} clipboard file(s)", entries.len());
+    }
+    let _ = shell_notify().send(serde_json::json!({
+        "method": "win.host-paths",
+        "params": { "files": entries }
+    }));
+}
+
+// windows-sys 未启用 Win32_System_DataExchange feature —— 剪贴板监听只需 5 个
+// user32 函数，按 windows-sys 同款签名就地声明 FFI，避免为它们改动构建清单
+//（Cargo.toml）。CF_HDROP / WM_CLIPBOARDUPDATE 为 winuser.h 文档常量。
+#[cfg(windows)]
+mod clipboard_ffi {
+    /// RegisterClipboardFormat 预定义剪贴板格式：文件列表（winuser.h：CF_HDROP=15）。
+    pub const CF_HDROP: u32 = 15;
+    /// 剪贴板内容变化通知消息（winuser.h：WM_CLIPBOARDUPDATE=0x031D）。
+    pub const WM_CLIPBOARDUPDATE: u32 = 0x031D;
+
+    #[link(name = "user32")]
+    extern "system" {
+        pub fn OpenClipboard(hwndnewowner: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+        pub fn CloseClipboard() -> windows_sys::core::BOOL;
+        pub fn GetClipboardData(uformat: u32) -> windows_sys::Win32::Foundation::HANDLE;
+        pub fn AddClipboardFormatListener(hwnd: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+        pub fn RemoveClipboardFormatListener(hwnd: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+    }
+}
+
+/// 读当前剪贴板 CF_HDROP → 路径 + 元数据。无文件/读取失败返回 None（调用方
+/// 区分「确认无文件」(Some(空)) 与「瞬态读不到」(None，保留旧快照)）。
+#[cfg(windows)]
+unsafe fn read_clipboard_host_paths() -> Option<Vec<HostPathEntry>> {
+    use clipboard_ffi::{CF_HDROP, CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+    // 剪贴板可能被其它进程短暂持有：有限重试打开（打开失败不动旧快照，
+    // 避免瞬态争用清掉页面已暂存的真实路径）。
+    let mut opened = false;
+    for _ in 0..3 {
+        if OpenClipboard(std::ptr::null_mut()) != 0 {
+            opened = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    }
+    if !opened {
+        return None;
+    }
+    let mut entries: Vec<HostPathEntry> = Vec::new();
+    let handle = GetClipboardData(CF_HDROP);
+    if !handle.is_null() {
+        let hdrop: HDROP = handle;
+        // ifile = 0xFFFFFFFF → 返回条目数；随后逐条「先取长度再取内容」
+        //（长路径可超 MAX_PATH，wry drag_drop.rs 同款两段式）。
+        let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, std::ptr::null_mut(), 0);
+        for i in 0..count {
+            let len = DragQueryFileW(hdrop, i, std::ptr::null_mut(), 0) as usize;
+            if len == 0 {
+                continue;
+            }
+            let mut buf = vec![0u16; len + 1];
+            let written = DragQueryFileW(hdrop, i, buf.as_mut_ptr(), (len + 1) as u32) as usize;
+            if written == 0 {
+                continue;
+            }
+            let path = String::from_utf16_lossy(&buf[..written]);
+            let meta = std::fs::metadata(&path);
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
+            entries.push(HostPathEntry {
+                path,
+                name,
+                // 文件损坏/已删时 size=0、is_dir=false：仍如实暂存路径（粘贴
+                // 时 Chromium 的 File 同样读不到内容，上传/引用语义由内核定）。
+                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                is_dir: meta.map(|m| m.is_dir()).unwrap_or(false),
+            });
+        }
+    }
+    let _ = CloseClipboard();
+    Some(entries)
+}
+
+/// 常驻剪贴板监听线程：消息专用窗（不进任务栏、无焦点）+
+/// AddClipboardFormatListener，独立线程自泵消息，不与 tauri 主事件循环耦合。
+/// 仅 Windows（见顶部注释局限条款）。
+#[cfg(windows)]
+fn spawn_clipboard_path_listener() {
+    let spawned = std::thread::Builder::new()
+        .name("dsh-clipboard-paths".to_string())
+        .spawn(|| unsafe { clipboard_listener_main() });
+    if spawned.is_err() {
+        eprintln!("[shell] clipboard path listener spawn failed");
+    }
+}
+
+#[cfg(windows)]
+unsafe fn clipboard_listener_main() {
+    use clipboard_ffi::{AddClipboardFormatListener, RemoveClipboardFormatListener, WM_CLIPBOARDUPDATE};
+    use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
+        TranslateMessage, MSG, WNDCLASSW, WM_DESTROY,
+    };
+
+    unsafe extern "system" fn clip_host_wndproc(
+        hwnd: windows_sys::Win32::Foundation::HWND,
+        msg: u32,
+        wparam: windows_sys::Win32::Foundation::WPARAM,
+        lparam: windows_sys::Win32::Foundation::LPARAM,
+    ) -> windows_sys::Win32::Foundation::LRESULT {
+        if msg == WM_CLIPBOARDUPDATE {
+            if let Some(entries) = read_clipboard_host_paths() {
+                publish_host_path_entries(entries);
+            }
+            return 0;
+        }
+        if msg == WM_DESTROY {
+            RemoveClipboardFormatListener(hwnd);
+            return 0;
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
+
+    let class_name: Vec<u16> = "dsh_eac_clip_host\0".encode_utf16().collect();
+    let mut wc: WNDCLASSW = std::mem::zeroed();
+    wc.lpfnWndProc = Some(clip_host_wndproc);
+    wc.hInstance = GetModuleHandleW(std::ptr::null());
+    wc.lpszClassName = class_name.as_ptr();
+    if RegisterClassW(&wc) == 0 {
+        eprintln!("[shell] clipboard listener RegisterClassW failed");
+        return;
+    }
+    // HWND_MESSAGE = (HWND)-3：消息专用窗。注册失败只降级（无路径暂存，
+    // 桥侧 pathFor 返 ''，与未实现平台行为一致），绝不阻塞壳启动。
+    let hwnd_message = -3isize as windows_sys::Win32::Foundation::HWND;
+    let hwnd = CreateWindowExW(
+        0,
+        class_name.as_ptr(),
+        std::ptr::null(),
+        0,
+        0,
+        0,
+        0,
+        0,
+        hwnd_message,
+        std::ptr::null_mut(),
+        wc.hInstance,
+        std::ptr::null(),
+    );
+    if hwnd.is_null() {
+        eprintln!("[shell] clipboard listener window create failed");
+        return;
+    }
+    if AddClipboardFormatListener(hwnd) == 0 {
+        eprintln!("[shell] AddClipboardFormatListener failed");
+        return;
+    }
+    println!("[shell] clipboard path listener ready");
+    let mut msg: MSG = std::mem::zeroed();
+    loop {
+        // -1 = 错误（窗口销毁后即返回 -1 收摊），0 = WM_QUIT。
+        let r = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
+        if r <= 0 {
+            break;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // 视口失同步自愈（issue：全屏窗口只有左侧 ~208px 条带被绘制、其余黑屏，
@@ -1142,6 +1667,497 @@ async fn sidecar_exit_action(_app: &tauri::AppHandle) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+// ---------------------------------------------------------------------------
+// 原生目录选择（SYNC-004 · __DSH_DIRECTORY_PICKER__.pick 的 L1 能力源）
+//
+// 官方语义（apps/desktop/src/directory-picker.ts:12,24）：主进程
+// dialog.showOpenDialog(properties=['openDirectory','createDirectory'])，经
+// preload（preload-app.ts:75-77）以 ipcRenderer.invoke(DESKTOP_IPC.directoryPick)
+// 暴露为 window.__DSH_DIRECTORY_PICKER__.pick(): Promise<string | null> ——
+// 用户选定 → 目录绝对路径字符串；取消 → null。消费者
+// dsh-client-ui-directory-picker-native/lib/client.js:63 优先取本桥，缺失才
+// 回退 Web 浏览式选目录（ctx.uiWorkspace.pickDirectory()）。
+//
+// 实现选型（任务卡方案优先级）：tauri-plugin-dialog（官方 dialog 插件，内部
+// 即 rfd 0.16 的 IFileDialog 封装）—— 不引第二套原生对话框栈。与官方选项的
+// 映射：openDirectory → FileDialogBuilder::pick_folder（IFileDialog 的
+// FOS_PICKFOLDERS 文件夹模式）；createDirectory → 该模式自带「新建文件夹」
+// 按钮（IFileDialog 文件夹模式默认提供，无需独立开关）。差异：官方传了
+// 父窗口（应用内模态），本壳弹顶层对话框（非模态）—— 本壳主窗是无装饰
+// 自绘标题栏窗，模态阻塞主窗会连自绘关闭钮一起失效，权衡后不设父窗。
+//
+// 线程模型（任务卡硬约束：绝不阻塞主线程）：禁用 blocking_pick_folder ——
+// 它内部 run_on_main_thread + 通道等待，在异步/主线程上下文会 panic。
+// 这里用异步 pick_folder(回调) + oneshot channel：插件在主线程事件循环上
+// 只做「调度」（desktop.rs:172-182），IFileDialog 在独立线程模态运行并以
+// 回调回传 FilePath，主线程与 WS 任务全程不被卡；WS 连接任务在
+// handle_conn 里 await oneshot（tokio 异步等待，非忙等），等待期间出站
+// 通知（win.maximized / win.host-paths 等）照常送达页面。
+//
+// 隔离验证钩子（任务卡「L1 注入钩子模拟两态」条款，仿 SYNC-003 的
+// DSH_HOST_PATHS_STAGE 先例）：自动化环境（Edge headless + CDP）无法点击
+// 原生对话框，故提供环境变量驱动的两态模拟 —— 只在显式设置时生效，
+// 默认（未设置）恒走真实原生对话框，生产路径零影响：
+//   DSH_DIRECTORY_PICK_STAGE=<目录> → 不弹框，校验该目录真实存在后模拟
+//                                     「用户选定它」（绝无伪造：路径必须
+//                                     是真实存在的目录）；
+//   DSH_DIRECTORY_PICK_CANCEL=1     → 不弹框，模拟「用户取消」（null）。
+// 两者同设时 STAGE 优先。L1 日志显式标注 (stage)，与真实轨迹可区分。
+// ---------------------------------------------------------------------------
+
+/// directory.pick 的 L1 实现：Some(绝对路径) = 用户选定；None = 取消/失败。
+/// 由 handle_shell_method 的 "directory.pick" 分支 await。
+async fn pick_directory(app: &tauri::AppHandle) -> Option<String> {
+    // —— 隔离验证钩子（见上方注释；未设置环境变量时完全惰性）——
+    if let Ok(stage) = std::env::var("DSH_DIRECTORY_PICK_STAGE") {
+        let dir = stage.trim().to_string();
+        // 绝不伪造：必须是真实存在的目录，否则按取消语义返回 None 并告警。
+        let is_real_dir = std::fs::metadata(&dir).map(|m| m.is_dir()).unwrap_or(false);
+        if !is_real_dir {
+            eprintln!(
+                "[shell] directory.pick (stage): staged path is not an existing directory: {}",
+                dir
+            );
+            return None;
+        }
+        eprintln!("[shell] directory.pick (stage): simulated pick -> {}", dir);
+        return Some(dir);
+    }
+    if std::env::var("DSH_DIRECTORY_PICK_CANCEL").as_deref() == Ok("1") {
+        eprintln!("[shell] directory.pick (stage): simulated cancel -> null");
+        return None;
+    }
+
+    // —— 真实原生对话框（tauri-plugin-dialog · 异步回调 + oneshot 回传）——
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = oneshot::channel::<Option<String>>();
+    eprintln!("[shell] directory.pick: native folder dialog open (awaiting user)");
+    app.dialog().file().pick_folder(move |picked| {
+        // 回调在插件的工作线程上执行（desktop.rs pick_folder），不占主线程。
+        let resolved = picked
+            .as_ref()
+            .and_then(|p| p.as_path())
+            .map(|p| p.to_string_lossy().into_owned());
+        match &resolved {
+            Some(path) => println!("[shell] directory.pick: picked {}", path),
+            None => println!("[shell] directory.pick: cancelled by user"),
+        }
+        // 对话框关闭即回传；接收端（WS 任务）若已消失则发送失败被忽略。
+        let _ = tx.send(resolved);
+    });
+    rx.await.ok().flatten()
+}
+
+// ---------------------------------------------------------------------------
+// 侧栏浏览器 guest 租约（SYNC-006 · dshDesktop.browser 的 L1 能力源）
+//
+// 官方契约（dsh-client-ui-sidebar-browser/lib/types/types.d.ts:16-23，逐字段）：
+//   acquire(workspace) → Promise<DesktopBrowserReservation{lease, partition}>
+//   release(lease)     → Promise<void>（guest 已销毁后才返回；幂等）
+//   onOpenRequested(lease, listener) → () => void（disposer）
+// 官方主进程（browser-guests.ts）持有 guest、执行固定隔离策略、租约制；guest
+// 的可见载体由渲染层 <webview> 标签（Electron 专有）呈现。WebView2 无 webview
+// 标签，本壳的等价物（任务卡两方案的落地形态，调研证据见任务自证材料）：
+//   L1（本文件）= 主窗内「子 webview」作为 guest：
+//     - Window::add_child(WebviewBuilder, pos, size) —— tauri 2.11.5 的多
+//       webview 能力，被 "unstable" feature 门控；tauri-runtime-wry 2.11.4 的
+//       unstable = []（空 feature），启用它不新增依赖、不动 Cargo.lock 的
+//       tauri 2.11.5 / wry 0.55.1 / tao 0.35.3 锁定版本。
+//     - guest 带 per-workspace data_directory（WebView2 用户数据目录）= 官方
+//       partition 的存储隔离语义：同 workspace → 同 partition（跨 acquire 持久，
+//       登录态/cookie 存活）；不同 workspace → 不同目录（互不可见）。
+//     - 固定隔离策略（on_navigation）：只放行 about:blank（初始页）与非应用
+//       自身源的 http(s)；其余一律取消（file:/data:/应用源等）。应用源与
+//       官方消费者文案 error.application-origin（「不能在嵌入浏览器中打开
+//       DSH 应用自身」）同一纪律。
+//   L1.5（bridge.ts，页面层）= <webview> 宿主元素适配：消费者
+//     （client.js ElectronWebViewImpl，:1332-1344）创建的 <webview> 是
+//     HTMLUnknownElement（customElements.define 拒绝无连字符标签名，无法做成
+//     自定义元素），桥在其上挂 Electron 同名 API（loadURL/goBack/canGoBack/
+//     getURL/...），并把 bounds/命令上报 L1、把 L1 事件翻译成 Electron 同名
+//     DOM 事件 —— 见 bridge.ts SYNC-006 节。
+//
+// 通道（handle_shell_method 拦截域，全部不经 sidecar）：
+//   call  browser.acquire         {workspace, generation} → {lease, partition}
+//   call  browser.release         {lease} → {ok:true}（幂等；销毁后广播
+//                                  browser.guest-destroyed）
+//   call  browser.guest-load-url  {lease, url} → {ok:true}（http(s) 白名单）
+//   call  browser.guests.state    {} → {guests:[…], webviewCount}（L1 内省面，
+//                                  不上桥面，语义同 sidecar 的 shortcuts.state；
+//                                  验证通道的「webview 消失」观测点）
+//   send  browser.guest-cmd       {lease, cmd: goBack|goForward|reload|clearHistory}
+//   send  browser.guest-bounds    {lease, x, y, w, h}（逻辑像素，页面视口系 =
+//                                 窗口客户区系；w/h<1 即隐藏 guest 不销毁 ——
+//                                 keepMounted 语义：切页隐藏保状态）
+//   send  browser.guest-attach    {lease}（宿主元素挂载 → 回推 bootstrap
+//                                  dom-ready；Electron 首个 dom-ready 的等价物）
+//   send  browser.page-hello      {generation}（页面世代：主文档重载/导航重建
+//                                  后，旧文档的租约已无人持有 —— 官方由
+//                                  webContents destroyed 收敛，本壳以世代比对
+//                                  等价回收，防孤儿 guest 泄漏）
+//   通知帧（shell_notify 广播，仅主窗页面消费；guest 无桥注入）：
+//   browser.guest-event    {lease, event, url, title, loading, canGoBack,
+//                           canGoForward, …事件载荷}（shim 缓存源 + DOM 事件翻译）
+//   browser.open-requested {lease, url}（guest window.open/target=_blank 的
+//                           http(s) 请求；实际开窗恒 Deny —— 官方语义：URL 推给
+//                           消费者自行决定打开方式）
+//   browser.guest-destroyed {lease}
+//
+// 已知局限（如实记录，见任务自证材料）：
+//   1. canGoBack/canGoForward 来自 L1 导航深度计数（WebView2/wry 未暴露
+//      history 栈查询），清史语义由 clearHistory 命令近似；
+//   2. SPA pushState 导航不产生 NavigationStarting/ContentLoading → URL 不
+//      上报（Electron did-navigate-in-page 无对应事件源）；
+//   3. wry 的 NavigationCompleted 不区分成功/失败 → did-fail-load 无真实
+//      错误码来源，加载失败呈现为空白页而非错误卡片；
+//   4. 同一 workspace 并发第二个 guest 用 <partition>-<n> 目录（WebView2 每
+//      环境独占用户数据目录；基名目录留给稳态单 guest 保持久性）。
+// ---------------------------------------------------------------------------
+
+/// 租约/标签序号（lease 唯一性的第二因子，纳秒时间戳防跨进程撞号）。
+static GUEST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 页面世代（browser.page-hello 上报；世代不符的 guest 在 hello 时回收）。
+static PAGE_GENERATION: OnceLock<RwLock<String>> = OnceLock::new();
+
+/// guest 登记：lease → 条目。回调（on_navigation 等运行在 WebView2 线程）与
+/// WS 任务共享；条目里的 Webview 句柄线程安全（dispatcher 模型）。
+struct GuestEntry {
+    #[allow(dead_code)]
+    label: String,
+    partition: String,
+    workspace: String,
+    generation: String,
+    /// 同 partition 并发 guest 的目录后缀（0 = 基名 <partition>）。
+    dir_suffix: u32,
+    /// 宿主元素是否声明了可见 bounds（guest 是否 show 中）。
+    visible: bool,
+    /// 导航深度计数（canGoBack/canGoForward 的近似来源）。
+    back_depth: u32,
+    max_depth: u32,
+    /// guest-cmd goBack/goForward 预置方向，下一次放行的 NavigationStarting 消费。
+    pending_dir: i8,
+    /// 最近一次放行导航的 URL / 文档标题 / 加载态（状态帧的缓存源）。
+    last_url: String,
+    last_title: String,
+    loading: bool,
+    webview: tauri::Webview,
+}
+
+static BROWSER_GUESTS: OnceLock<std::sync::Mutex<HashMap<String, GuestEntry>>> = OnceLock::new();
+
+fn browser_guests() -> &'static std::sync::Mutex<HashMap<String, GuestEntry>> {
+    BROWSER_GUESTS.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
+}
+
+/// FNV-1a 64：workspace → 稳定 partition 目录名（跨进程/跨版本稳定，不引入
+/// 哈希依赖）。
+fn fnv1a64(data: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_3ce4_8422_2325;
+    for byte in data.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn browser_partition_for_workspace(workspace: &str) -> String {
+    format!("browser-guest-{:016x}", fnv1a64(workspace))
+}
+
+/// guest 用户数据目录：<app_data_dir>/browser-guests/<名称>。
+fn browser_guest_data_dir(app: &tauri::AppHandle, dir_name: &str) -> Option<PathBuf> {
+    use tauri::Manager;
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|base| base.join("browser-guests").join(dir_name))
+}
+
+/// 应用自身源判定（隔离策略第二条款：guest 绝不承载内核 Web UI）。
+fn is_app_origin_url(url: &str) -> bool {
+    match (current_web_url(), tauri::Url::parse(url)) {
+        (Some(app_url), Ok(parsed)) => {
+            tauri::Url::parse(&app_url)
+                .map(|a| a.origin().ascii_serialization() == parsed.origin().ascii_serialization())
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// guest 隔离策略（唯一裁决点）：about:blank（初始页）+ 非应用源的 http(s)。
+fn guest_navigation_allowed(url: &str) -> bool {
+    if url == "about:blank" {
+        return true;
+    }
+    matches!(
+        tauri::Url::parse(url).map(|u| u.scheme().to_string()),
+        Ok(ref s) if s == "http" || s == "https"
+    ) && !is_app_origin_url(url)
+}
+
+/// 广播一帧到页面（所有 WS 连接；guest 无桥注入，实际只有主窗页面消费）。
+fn push_guest_frame(frame: Value) {
+    let _ = shell_notify().send(frame);
+}
+
+/// 销毁 guest（幂等）：不存在返回 false；存在 → 移除登记 + 关闭 webview +
+/// 广播 browser.guest-destroyed。close 走 dispatcher（线程安全），可在任意
+/// 任务线程调用。
+fn destroy_guest(lease: &str) -> bool {
+    let entry = browser_guests()
+        .lock()
+        .ok()
+        .and_then(|mut guests| guests.remove(lease));
+    let Some(entry) = entry else {
+        return false;
+    };
+    let _ = entry.webview.close();
+    push_guest_frame(serde_json::json!({
+        "method": "browser.guest-destroyed",
+        "params": { "lease": lease }
+    }));
+    eprintln!(
+        "[shell] browser guest destroyed: lease={} label={}",
+        lease, entry.label
+    );
+    true
+}
+
+/// browser.acquire 的 L1 实现：建租约 + 真实创建子 webview guest + 登记。
+/// 返回 Err(msg) = JSON-RPC error 回复文案。
+fn browser_acquire(app: &tauri::AppHandle, params: &Value) -> Result<Value, String> {
+    use tauri::Manager;
+    // 官方签名 acquire(workspace: string)：workspace = 已解析的存储账户
+    // （消费者 browserWorkspace 产出 "cwd:<path>" / "session:<id>"）。
+    let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+        Some(w) if !w.trim().is_empty() => w.to_string(),
+        _ => return Err("browser.acquire: workspace must be a non-empty string".into()),
+    };
+    let generation = params
+        .get("generation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    // guest 是主窗的子 webview：主窗必须存在。
+    let Some(window) = app.get_window("main") else {
+        return Err("browser.acquire: main window unavailable".into());
+    };
+
+    let partition = browser_partition_for_workspace(&workspace);
+    let seq = GUEST_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let lease = format!(
+        "dsh-browser-lease-{}-{}",
+        seq,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0)
+    );
+    let label = format!("browser-guest-{}", seq);
+
+    // 目录后缀分配：同 partition 的存活 guest 各占一个后缀（WebView2 每
+    // 环境独占用户数据目录）；最低空闲后缀优先 —— 稳态单 guest 恒用基名
+    // 目录，跨 acquire 持久（登录态/cookie 存活）。
+    let dir_suffix = {
+        let guests = browser_guests()
+            .lock()
+            .map_err(|_| "browser.acquire: guest table poisoned".to_string())?;
+        let mut n = 0u32;
+        while guests
+            .values()
+            .any(|g| g.partition == partition && g.dir_suffix == n)
+        {
+            n += 1;
+        }
+        n
+    };
+    let dir_name = if dir_suffix == 0 {
+        partition.clone()
+    } else {
+        format!("{}-{}", partition, dir_suffix)
+    };
+    let Some(data_dir) = browser_guest_data_dir(app, &dir_name) else {
+        return Err("browser.acquire: app data dir unavailable".into());
+    };
+
+    // 子 webview guest：初始 about:blank；hidden 等宿主元素给 bounds。
+    let lease_nav = lease.clone();
+    let lease_win = lease.clone();
+    let lease_load = lease.clone();
+    let lease_title = lease.clone();
+    let builder = tauri::webview::WebviewBuilder::new(
+        label.clone(),
+        tauri::WebviewUrl::External(tauri::Url::parse("about:blank").expect("static url")),
+    )
+    .data_directory(data_dir)
+    // 固定隔离策略（放行 = true）。about:blank 不计数/不发事件（非用户导航）。
+    .on_navigation(move |url| {
+        let allowed = guest_navigation_allowed(url.as_str());
+        if allowed && url.as_str() != "about:blank" {
+            let url_string = url.as_str().to_string();
+            if let Ok(mut guests) = browser_guests().lock() {
+                if let Some(entry) = guests.get_mut(&lease_nav) {
+                    match entry.pending_dir {
+                        -1 => {
+                            entry.back_depth = entry.back_depth.saturating_sub(1);
+                            entry.pending_dir = 0;
+                        }
+                        1 => {
+                            entry.back_depth += 1;
+                            if entry.max_depth < entry.back_depth {
+                                entry.max_depth = entry.back_depth;
+                            }
+                            entry.pending_dir = 0;
+                        }
+                        _ => {
+                            entry.back_depth += 1;
+                            // 新导航截断前进栈（浏览器同款语义）。
+                            entry.max_depth = entry.back_depth;
+                        }
+                    }
+                    entry.last_url = url_string.clone();
+                    entry.loading = true;
+                    push_guest_frame(serde_json::json!({
+                        "method": "browser.guest-event",
+                        "params": {
+                            "lease": lease_nav,
+                            "event": "did-start-navigation",
+                            "url": entry.last_url,
+                            "title": entry.last_title,
+                            "loading": true,
+                            "canGoBack": entry.back_depth > 1,
+                            "canGoForward": entry.back_depth < entry.max_depth,
+                            "isMainFrame": true,
+                        }
+                    }));
+                }
+            }
+        }
+        allowed
+    })
+    // 官方 onOpenRequested 的事件源（types.d.ts:10-14）：guest 请求开 http(s)
+    // 页 → 推给消费者；guest 自身永不弹原生窗（Deny），打开方式由消费者决定。
+    .on_new_window(move |url, _features| {
+        if guest_navigation_allowed(url.as_str()) && url.as_str() != "about:blank" {
+            push_guest_frame(serde_json::json!({
+                "method": "browser.open-requested",
+                "params": { "lease": lease_win, "url": url.as_str() }
+            }));
+        }
+        tauri::webview::NewWindowResponse::Deny
+    })
+    // wry/WebView2 映射：ContentLoading → Started（≈ 提交 + DOM 就绪），
+    // NavigationCompleted → Finished。
+    .on_page_load(move |_webview, payload| {
+        let url = payload.url().as_str().to_string();
+        match payload.event() {
+            tauri::webview::PageLoadEvent::Started => {
+                if url == "about:blank" {
+                    return;
+                }
+                // 提交点：did-navigate（Electron 同名事件，消费者 observe(true) 的
+                // 触发器）+ dom-ready（每文档一次）。
+                for event in ["did-navigate", "dom-ready"] {
+                    push_guest_frame(serde_json::json!({
+                        "method": "browser.guest-event",
+                        "params": { "lease": lease_load, "event": event, "url": url }
+                    }));
+                }
+            }
+            tauri::webview::PageLoadEvent::Finished => {
+                if url == "about:blank" {
+                    return;
+                }
+                push_guest_frame(serde_json::json!({
+                    "method": "browser.guest-event",
+                    "params": { "lease": lease_load, "event": "did-stop-loading", "loading": false }
+                }));
+            }
+        }
+    })
+    .on_document_title_changed(move |_webview, title| {
+        if let Ok(mut guests) = browser_guests().lock() {
+            if let Some(entry) = guests.get_mut(&lease_title) {
+                entry.last_title = title.clone();
+            }
+        }
+        push_guest_frame(serde_json::json!({
+            "method": "browser.guest-event",
+            "params": { "lease": lease_title, "event": "page-title-updated", "title": title }
+        }));
+    });
+
+    // 创建在主窗内（1×1 起步，等宿主元素 bounds；创建完成前占用主线程是
+    // tauri add_child 的既定语义 —— 与同步 IPC 命令同代价）。
+    let webview = window
+        .add_child(
+            builder,
+            tauri::LogicalPosition::new(0.0, 0.0),
+            tauri::LogicalSize::new(1.0, 1.0),
+        )
+        .map_err(|e| format!("browser.acquire: guest webview build failed: {}", e))?;
+    let _ = webview.hide();
+
+    let entry = GuestEntry {
+        label: label.clone(),
+        partition: partition.clone(),
+        workspace: workspace.clone(),
+        generation,
+        dir_suffix,
+        visible: false,
+        back_depth: 0,
+        max_depth: 0,
+        pending_dir: 0,
+        last_url: String::from("about:blank"),
+        last_title: String::new(),
+        loading: false,
+        webview,
+    };
+    if let Ok(mut guests) = browser_guests().lock() {
+        guests.insert(lease.clone(), entry);
+    }
+    eprintln!(
+        "[shell] browser.acquire: lease={} label={} partition={} workspace={}",
+        lease, label, partition, workspace
+    );
+    Ok(serde_json::json!({ "lease": lease, "partition": partition }))
+}
+
+/// browser.guests.state：L1 内省面（不上桥面；验证通道观测点）。
+fn browser_guests_state(app: &tauri::AppHandle) -> Value {
+    use tauri::Manager;
+    let guests = browser_guests()
+        .lock()
+        .map(|guests| {
+            guests
+                .iter()
+                .map(|(lease, g)| {
+                    serde_json::json!({
+                        "lease": lease,
+                        "label": g.label,
+                        "partition": g.partition,
+                        "workspace": g.workspace,
+                        "generation": g.generation,
+                        "visible": g.visible,
+                        "url": g.last_url,
+                        "title": g.last_title,
+                        "loading": g.loading,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    // 主窗内 webview 总数（主 webview + 存活 guest）——「webview 消失」的
+    // 直接观测点（release 后回落）。
+    let webview_count = app
+        .get_window("main")
+        .map(|w| w.webviews().len())
+        .unwrap_or(0);
+    serde_json::json!({ "guests": guests, "webviewCount": webview_count })
+}
+
 /// 壳层方法拦截：返回 Some(reply) = 已处理并给出 JSON-RPC 完整回复；
 /// None = 已消费（send 型，无回复）；Err(()) = 非壳层方法 → 转发 sidecar。
 async fn handle_shell_method(
@@ -1153,6 +2169,10 @@ async fn handle_shell_method(
     use tauri::Manager;
     let reply =
         |result: Value| serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}).to_string();
+    // JSON-RPC error 回复（形态与 sidecar 路径一致：ws-jsonrpc-client 以
+    // Error(message) reject，页面 Promise 走 catch）。
+    let reply_error =
+        |message: String| serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":message}}).to_string();
     match method {
         "win.minimize" => {
             if let Some(w) = app.get_webview_window("main") {
@@ -1190,6 +2210,14 @@ async fn handle_shell_method(
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.close" => {
+            // SYNC-001：keyboard.closeWindow(revision) 复用本通道。EAC 无快捷键
+            // 配置修订存储，不做官方 keyboard.ts:97-102 的「revision 仍当前才
+            // 关窗」校验 —— 收到的 revision 仅在此记录，便于排查与未来对账。
+            if let Some(rev) = params.get("revision") {
+                if !rev.is_null() {
+                    eprintln!("[shell] win.close (shortcuts revision: {})", rev);
+                }
+            }
             // 退出策略（= Electron exitAction）：minimize→隐藏；quit→退出；
             // ask→弹出独立退出选择窗口。
             apply_exit_policy(app, true).await;
@@ -1328,6 +2356,229 @@ async fn handle_shell_method(
             eprintln!("[page-error] {}", msg);
             Ok(None)
         }
+        // SYNC-002：官方 __DSH_LOCALE__ 面（preload-app.ts:102-105）。localeBootstrap
+        //（官方 main.ts:703）返回 {languages, preference}；languages 给 L1 系统标签
+        //（页面侧 navigator.languages 由桥合并优先），preference 透传持久化值
+        //（string | null，null = 自动选择）。
+        "locale.bootstrap" => {
+            let preference = load_locale_preference();
+            let languages = vec![system_language_tag()];
+            Ok(Some(reply(serde_json::json!({
+                "languages": languages,
+                "preference": preference,
+            }))))
+        }
+        // localeChanged（官方 main.ts:711）：send 型 fire-and-forget。校验官方
+        // id 形态后持久化 preference + 重建托盘菜单文案（官方的应用菜单/平台页
+        // 刷新在 EAC 无对应面）。无效输入静默忽略（官方对非 string 亦直接 return）。
+        "locale.changed" => {
+            if let Some(next) = params.get("locale").and_then(|v| v.as_str()) {
+                if locale_tag_is_well_formed(next) {
+                    save_locale_preference(next);
+                    eprintln!("[shell] locale.changed: {}", next);
+                    rebuild_tray_menu(app);
+                }
+            }
+            Ok(None) // send 型
+        }
+        // SYNC-004：官方 __DSH_DIRECTORY_PICKER__ 面（preload-app.ts:75-77）。
+        // 官方 invoke(DESKTOP_IPC.directoryPick) → Promise<string | null>：
+        // 用户选定 → 目录绝对路径字符串；取消 → null。回包 result 直接承载
+        // 该标量（string | null），桥侧原样透传给消费者（见 bridge.ts）。
+        // await pick_directory 是 tokio 异步等待（oneshot），不阻塞任何线程；
+        // 等待期间本连接的后续入站帧排队，出站通知照常送达（见 pick_directory 注释）。
+        "directory.pick" => {
+            let picked = pick_directory(app).await;
+            Ok(Some(reply(match picked {
+                Some(path) => serde_json::json!(path),
+                None => serde_json::Value::Null,
+            })))
+        }
+        // SYNC-006：官方 dshDesktop.browser 面（types.d.ts:16-23）的 L1 通道。
+        // 通道语义与隔离策略见文件顶部「侧栏浏览器 guest 租约」节注释。
+        "browser.acquire" => match browser_acquire(app, params) {
+            Ok(reservation) => Ok(Some(reply(reservation))),
+            Err(message) => Ok(Some(reply_error(message))),
+        },
+        // 官方语义：release(lease) 在 guest 销毁后返回；幂等（重复 release /
+        // 未知 lease → ok:true + destroyed:false，不报错 —— 消费者 dropGuest
+        // 与 destroyed 事件可能竞争双发）。
+        "browser.release" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply_error(
+                    "browser.release: lease must be a string".into(),
+                )));
+            };
+            let destroyed = destroy_guest(lease);
+            Ok(Some(reply(serde_json::json!({ "ok": true, "destroyed": destroyed }))))
+        }
+        // guest 导航（call 型）：隔离策略与 on_navigation 同一条纪律的另一入口
+        //（地址栏 loadURL）。navigate 走 Webview::navigate（提交后事件链由
+        // on_navigation / on_page_load 续上）。
+        "browser.guest-load-url" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: lease must be a string".into(),
+                )));
+            };
+            let Some(url) = params.get("url").and_then(|v| v.as_str()) else {
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: url must be a string".into(),
+                )));
+            };
+            if !guest_navigation_allowed(url) || url == "about:blank" {
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: only http(s) URLs outside the app origin are allowed"
+                        .into(),
+                )));
+            }
+            let parsed = match tauri::Url::parse(url) {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    return Ok(Some(reply_error(
+                        "browser.guest-load-url: url failed to parse".into(),
+                    )))
+                }
+            };
+            let guests = browser_guests().lock().ok();
+            let Some(guests) = guests else {
+                return Ok(Some(reply_error("browser.guest-load-url: guest table poisoned".into())));
+            };
+            let Some(entry) = guests.get(lease) else {
+                return Ok(Some(reply_error("browser.guest-load-url: unknown lease".into())));
+            };
+            match entry.webview.navigate(parsed) {
+                Ok(()) => Ok(Some(reply(serde_json::json!({ "ok": true })))),
+                Err(e) => Ok(Some(reply_error(format!("browser.guest-load-url: {}", e)))),
+            }
+        }
+        // guest 导航命令（send 型）。goBack/goForward 先对账深度计数（与 UI
+        // 按钮态同源），越界请求直接忽略；历史回退/前进经 guest 内
+        // history.back()/forward()（wry 未暴露原生 GoBack/GoForward）。
+        "browser.guest-cmd" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            let cmd = params.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
+            let guests = browser_guests().lock().ok();
+            let Some(mut guests) = guests else { return Ok(None) };
+            let Some(entry) = guests.get_mut(lease) else { return Ok(None) };
+            match cmd {
+                "goBack" if entry.back_depth > 1 => {
+                    entry.pending_dir = -1;
+                    let _ = entry.webview.eval("history.back()");
+                }
+                "goForward" if entry.back_depth < entry.max_depth => {
+                    entry.pending_dir = 1;
+                    let _ = entry.webview.eval("history.forward()");
+                }
+                "reload" => {
+                    entry.loading = true;
+                    let _ = entry.webview.eval("location.reload()");
+                }
+                // 官方 observeReady 首文档后的 clearHistory：WebView2/wry 无
+                // history 栈清理 API —— 以深度计数归一近似（首个真实文档即为
+                // 历史起点，与官方「清掉 about:blank 起点」的语义一致）。
+                "clearHistory" => {
+                    entry.back_depth = 1;
+                    entry.max_depth = 1;
+                    entry.pending_dir = 0;
+                }
+                _ => { /* 未知/越界命令：忽略（不伪造成功） */ }
+            }
+            Ok(None)
+        }
+        // 宿主元素 bounds（send 型）：逻辑像素（页面视口系 = 窗口客户区系）。
+        // w/h<1 → 隐藏不销毁（keepMounted：切页保状态）；>0 → set_bounds + show。
+        "browser.guest-bounds" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            let num = |key: &str| params.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let (x, y, w, h) = (num("x"), num("y"), num("w"), num("h"));
+            let guests = browser_guests().lock().ok();
+            let Some(mut guests) = guests else { return Ok(None) };
+            let Some(entry) = guests.get_mut(lease) else { return Ok(None) };
+            if !w.is_finite() || !h.is_finite() || w < 1.0 || h < 1.0 {
+                if entry.visible {
+                    entry.visible = false;
+                    let _ = entry.webview.hide();
+                }
+            } else {
+                let rect = tauri::Rect {
+                    position: tauri::LogicalPosition::new(x, y).into(),
+                    size: tauri::LogicalSize::new(w, h).into(),
+                };
+                let _ = entry.webview.set_bounds(rect);
+                if !entry.visible {
+                    entry.visible = true;
+                    let _ = entry.webview.show();
+                }
+            }
+            Ok(None)
+        }
+        // 宿主元素挂载（send 型）：回推 bootstrap dom-ready —— Electron 的首个
+        // dom-ready（about:blank 文档）等价物。事件时序：消费者 attach 监听器
+        // 后才 present（挂载），此帧必然晚于监听器就绪；真实文档的 dom-ready
+        // 由 on_page_load 的 ContentLoading 续上。
+        "browser.guest-attach" => {
+            let Some(lease) = params.get("lease").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            if let Ok(guests) = browser_guests().lock() {
+                if let Some(entry) = guests.get(lease) {
+                    push_guest_frame(serde_json::json!({
+                        "method": "browser.guest-event",
+                        "params": {
+                            "lease": lease,
+                            "event": "dom-ready",
+                            "url": entry.last_url,
+                            "title": entry.last_title,
+                            "loading": entry.loading,
+                            "canGoBack": entry.back_depth > 1,
+                            "canGoForward": entry.back_depth < entry.max_depth,
+                        }
+                    }));
+                }
+            }
+            Ok(None)
+        }
+        // 页面世代（send 型）：新文档报到即回收旧世代 guest（官方由 webContents
+        // destroyed 收敛；本壳以世代比对等价，防页面重载孤儿泄漏）。
+        "browser.page-hello" => {
+            let Some(generation) = params.get("generation").and_then(|v| v.as_str()) else {
+                return Ok(None);
+            };
+            if generation.is_empty() {
+                return Ok(None);
+            }
+            let changed = match PAGE_GENERATION.get_or_init(|| RwLock::new(String::new())).write()
+            {
+                Ok(mut slot) => {
+                    let changed = slot.as_str() != generation;
+                    *slot = generation.to_string();
+                    changed
+                }
+                Err(_) => false,
+            };
+            if changed {
+                let stale: Vec<String> = match browser_guests().lock() {
+                    Ok(guests) => guests
+                        .iter()
+                        .filter(|(_, g)| g.generation != generation)
+                        .map(|(lease, _)| lease.clone())
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+                for lease in stale {
+                    eprintln!("[shell] browser page generation changed: reclaiming {}", lease);
+                    destroy_guest(&lease);
+                }
+            }
+            Ok(None)
+        }
+        // L1 内省面（不上桥面；验证通道观测点，语义同 sidecar 的 shortcuts.state）。
+        "browser.guests.state" => Ok(Some(reply(browser_guests_state(app)))),
         _ => Err(()),
     }
 }
@@ -1712,6 +2963,12 @@ async fn handle_conn(
         None
     };
 
+    // SYNC-003：新连接补推当前剪贴板路径快照（页面重载/重连不丢已暂存内容；
+    // 空快照不推，页面 pathFor 对未知文件本就落 ''）。
+    if let Some(frame) = host_paths_snapshot_frame() {
+        let _ = out_tx.send(Message::Text(frame));
+    }
+
     while let Some(msg) = source.next().await {
         let msg = match msg {
             Ok(m) => m,
@@ -1811,14 +3068,17 @@ const UI_SKIN_LINKS: &str = concat!(
 
 fn loading_page() -> String {
     format!(
-        "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>Deepseek Harness EAC</title>{UI_SKIN_LINKS}</head>\\
-         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"loading\">\\
-         <main data-control-name=\"system.default.shell-page\" data-state=\"loading\">\\
-         <section data-control-name=\"system.default.shell-content\">\\
-         <div data-control-name=\"system.default.shell-title\">Deepseek Harness EAC</div>\\
-         <div data-control-name=\"system.default.shell-status\">{}</div>\\
-         <div data-control-name=\"system.default.loading-spinner\" data-state=\"loading animating\" aria-label=\"Loading\"></div>\\
-         </section></main>\\
+        // 行连接必须是单反斜杠（Rust 字符串续行，吞掉换行与缩进）。
+        // 写成 `\\` 会把「字面反斜杠 + 换行 + 缩进」原样洗进 HTML —— 启动页
+        // 上散落的 `\` 乱码即源于此（标签之间的 `\` 成为可见文本节点）。
+        "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>Deepseek Harness EAC</title>{UI_SKIN_LINKS}</head>\
+         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"loading\">\
+         <main data-control-name=\"system.default.shell-page\" data-state=\"loading\">\
+         <section data-control-name=\"system.default.shell-content\">\
+         <div data-control-name=\"system.default.shell-title\">Deepseek Harness EAC</div>\
+         <div data-control-name=\"system.default.shell-status\">{}</div>\
+         <div data-control-name=\"system.default.loading-spinner\" data-state=\"loading animating\" aria-label=\"Loading\"></div>\
+         </section></main>\
          <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script></body></html>",
         ui_text("正在启动服务…", "Starting services..."), ws_port(), BRIDGE_JS
     )
@@ -1831,21 +3091,23 @@ fn died_page(log_path: &str, code: &str) -> String {
             .replace('>', "&gt;")
     };
     format!(
-        "<!doctype html><html class=\"eac-shell\" lang={0}><head><meta charset=utf-8><title>{1}</title>{UI_SKIN_LINKS}</head>\\
-         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"error\">\\
-         <main data-control-name=\"system.default.shell-page\" data-state=\"error\">\\
-         <section data-control-name=\"system.default.shell-content\">\\
-         <div data-control-name=\"system.default.shell-title\">{2}</div>\\
-         <div data-control-name=\"system.default.shell-status\">{3} {4}</div>\\
-         <div data-control-name=\"system.default.shell-log-path\">{5}</div>\\
-         <div data-control-name=\"system.default.shell-actions\">\\
-         <button data-control-name=\"system.default.restart-button\" data-state=\"idle\" onclick=\"retry()\">{6}</button>\\
-         </div></section></main>\\
-         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{7}/ws';{8}\\
-         function retry(){{\\
-           var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\\
-           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\\
-             .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\\
+        // 同 loading_page：单反斜杠续行；`\\` 会把字面 `\` 洗进 HTML/JS，
+        // HTML 里成为可见乱码，`<script>` 里更是直接 JS SyntaxError（重试按钮失效）。
+        "<!doctype html><html class=\"eac-shell\" lang={0}><head><meta charset=utf-8><title>{1}</title>{UI_SKIN_LINKS}</head>\
+         <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"error\">\
+         <main data-control-name=\"system.default.shell-page\" data-state=\"error\">\
+         <section data-control-name=\"system.default.shell-content\">\
+         <div data-control-name=\"system.default.shell-title\">{2}</div>\
+         <div data-control-name=\"system.default.shell-status\">{3} {4}</div>\
+         <div data-control-name=\"system.default.shell-log-path\">{5}</div>\
+         <div data-control-name=\"system.default.shell-actions\">\
+         <button data-control-name=\"system.default.restart-button\" data-state=\"idle\" onclick=\"retry()\">{6}</button>\
+         </div></section></main>\
+         <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{7}/ws';{8}\
+         function retry(){{\
+           var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\
+           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\
+             .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\
          }}</script></body></html>",
         ui_text("zh-CN", "en"),
         ui_text("服务已停止", "Service stopped"),
@@ -2027,6 +3289,17 @@ fn shell_http_status(path: &str) -> u16 {
             };
         }
     }
+    // SYNC-006 验证钩子（仿 DSH_HOST_PATHS_STAGE / DSH_DIRECTORY_PICK_STAGE
+    // 先例）：仅当 DSH_BROWSER_PROBE=1 时放行 /browser-probe —— 一个不含桥的
+    // 极小页面，window.open 触发 guest 的 NewWindowRequested，供自动化验证
+    // onOpenRequested 事件链。默认（未设置）404，生产路径零影响。
+    if route == "/browser-probe" {
+        return if std::env::var("DSH_BROWSER_PROBE").as_deref() == Ok("1") {
+            200
+        } else {
+            404
+        };
+    }
     if route == "/" || route == "/inject/bridge.js" || route == "/loading" || route == "/died" {
         200
     } else if route
@@ -2072,6 +3345,19 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (BRIDGE_JS.to_string(), "application/javascript")
     } else if let Some(file) = path.split('?').next().unwrap_or("").strip_prefix("/skin/") {
         (ui_skin_asset(file), "text/css; charset=utf-8")
+    } else if path.starts_with("/browser-probe") {
+        // SYNC-006 验证钩子页（shell_http_status 已按 DSH_BROWSER_PROBE=1 门控）。
+        // 不含桥注入 —— 纯触发器：guest 加载本页后 window.open 一个 http(s)
+        // 地址，L1 的 on_new_window 捕获并广播 browser.open-requested（开窗本身
+        // 恒 Deny，不会真弹出页面）。
+        (
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>browser-probe</title></head>\
+             <body><h1>browser-probe</h1><script>\
+             setTimeout(function(){window.open('/loading?probe=onOpenRequested','_blank');},150);\
+             </script></body></html>"
+                .to_string(),
+            "text/html; charset=utf-8",
+        )
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/died") {
@@ -2097,11 +3383,12 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
         (died_page(&log, &code), "text/html; charset=utf-8")
     } else {
         let page = format!(
-            "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>DSH EAC Shell</title>{UI_SKIN_LINKS}</head>\\
-             <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"idle\">\\
-             <main data-control-name=\"system.default.shell-page\"><section data-control-name=\"system.default.shell-content\">\\
-             <h3 data-control-name=\"system.default.shell-title\">DSH EAC — Tauri ShellHost</h3>\\
-             <pre data-control-name=\"system.default.shell-status\" id=out>connecting…</pre></section></main>\\
+            // 同 loading_page：单反斜杠续行（`\\` 会把字面 `\` 洗进 HTML）。
+            "<!doctype html><html class=\"eac-shell\"><head><meta charset=utf-8><title>DSH EAC Shell</title>{UI_SKIN_LINKS}</head>\
+             <body data-region=\"session\" data-control-name=\"session-root\" data-state=\"idle\">\
+             <main data-control-name=\"system.default.shell-page\"><section data-control-name=\"system.default.shell-content\">\
+             <h3 data-control-name=\"system.default.shell-title\">DSH EAC — Tauri ShellHost</h3>\
+             <pre data-control-name=\"system.default.shell-status\" id=out>connecting…</pre></section></main>\
              <script>window.__DSH_BRIDGE_WS__='ws://127.0.0.1:{}/ws';{}</script></body></html>",
             ws_port(), BRIDGE_JS
         );
@@ -2314,6 +3601,10 @@ fn main() {
     });
 
     tauri::Builder::default()
+        // SYNC-004：dialog 插件（原生目录选择能力源，见 pick_directory 注释）。
+        // 仅用 Rust 侧 API（app.dialog()）；WebView 侧 plugin:dialog|* 命令无
+        // capability 授权，页面不可绕过桥直达 —— 行为面与注册前一致。
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 二次启动：聚焦已有主窗（= Electron second-instance 行为）。
             use tauri::Manager;
@@ -2332,6 +3623,14 @@ fn main() {
             use tauri::Manager;
 
             initialize_packaged_resource_root(app);
+
+            // SYNC-003：剪贴板路径监听（__DSH_HOST_PATHS__ 暂存源）。失败只
+            // 降级（无帧推送 → 桥侧 pathFor 返 ''），不阻塞壳启动。
+            #[cfg(windows)]
+            spawn_clipboard_path_listener();
+            // SYNC-003 验证钩子（L1 事件注入，见函数注释）：仅当
+            // DSH_HOST_PATHS_STAGE 设置时生效。
+            stage_host_paths_from_env();
 
             BRIDGE_ONCE.call_once(|| {
                 let st = BridgeState {
@@ -2504,17 +3803,14 @@ fn main() {
             });
 
             // 托盘（L1）：显示/隐藏、重启服务、反馈、退出。
-            let app_handle = app.handle().clone();
-            let show = tauri::menu::MenuItem::with_id(app, "show", ui_text("显示 / 隐藏窗口", "Show / Hide Window"), true, None::<&str>)?;
-
-            let restart = tauri::menu::MenuItem::with_id(app, "restart", ui_text("重启 Web 服务", "Restart Web Service"), true, None::<&str>)?;
-            let feedback = tauri::menu::MenuItem::with_id(app, "feedback", ui_text("反馈建议", "Feedback"), true, None::<&str>)?;
-            let quit = tauri::menu::MenuItem::with_id(app, "quit", ui_text("退出", "Quit"), true, None::<&str>)?;
-            let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
-            let menu = tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &feedback, &quit])?;
-            let mut tray = tauri::tray::TrayIconBuilder::new()
+            // 文案语言 = 持久化 preference ?? OS 检测（SYNC-002：设置页改语言
+            // 经 __DSH_LOCALE__.onChange → locale.changed → rebuild_tray_menu
+            // 按 id 取回本托盘重建菜单）。菜单事件挂在托盘上，重建菜单不丢。
+            let menu = build_tray_menu(app.handle(), shell_prefers_chinese())?;
+            let mut tray = tauri::tray::TrayIconBuilder::with_id(TRAY_ID)
                 .tooltip("Deepseek Harness EAC")
                 .menu(&menu);
+            let app_handle = app.handle().clone();
             if let Some(icon) = app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }
@@ -2572,7 +3868,10 @@ fn main() {
                 }
             })
             .build(app)?;
-            println!("[shell] tray ready");
+            println!(
+                "[shell] tray ready (locale: {})",
+                if shell_prefers_chinese() { "zh" } else { "en" }
+            );
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -18,6 +18,9 @@
   模块作为“插口”。
 - **验证数字不沿用历史快照。** v2/v3/v4/v5 各节的计数只记录当时状态；
   Task 3.1 最终结果以 `reports/verify/v6-task-3.1-final.md` 的命令输出为准。
+- **ADR 0003 已由本文 v5/v6 取代。** `docs/adr/0003-plugin-isolation-architecture.md`
+  （插件进程隔离架构）现标注 **Superseded**，仅作历史设计记录，不再作为实现
+  依据（见 `工程控制/EAC-ISOLATION-SYNC-02`，2026-09-30）。
 
 ## 背景
 
@@ -305,6 +308,35 @@ plugins: { list(), add(spec), remove(name), update(name, version) }
 updates: { check(), install(), subscribe(listener) }
 ```
 
+> **勘误（2026-10-01，控制包 EAC-ISOLATION-SYNC-02 / SYNC-007，GAP O1）**：
+> 上框所引契约与官方源码不符，属 v5 时的误读，**不得再作为实现依据**。
+> 官方真实契约是内核 `apps/desktop/src/ipc.ts:71-81` 的
+> **`DshDesktopProductApi`**（经官方 preload 以 `contextBridge` 暴露为
+> `window.dshDesktop`）：
+>
+> ```
+> protocolVersion: 1
+> browser:   DesktopBrowserBridge   // acquire / release / onOpenRequested
+> keyboard:  DesktopKeyboardApi     // subscribe / closeWindow
+> shortcuts: DesktopShortcutsApi    // get / edit / subscribe / recording
+> updates:   { status(), open(), subscribe(listener) }
+> ```
+>
+> （0.2.0 起另增 `deviceInfo()`；0.1.7 无。）官方**没有** `locale()`、
+> **没有** `plugins.*`、**没有** `updates.{check,install}` —— 0.1.7 与
+> 0.2.0 全包 grep 均无消费者。语言选择由官方 preload 另暴露的全局键
+> `__DSH_LOCALE__` 承担；拖放/粘贴文件的磁盘路径由 `__DSH_HOST_PATHS__`
+> 承担。官方 preload 的全部全局键清单：`dshDesktop`、`__DSH_LOCALE__`、
+> `__DSH_HOST_PATHS__`、`__DSH_DIRECTORY_PICKER__`、`dshDesktopBoot`、
+> `dshOnboarding`、`dshPlatform`，另在 `<html>` 标 `data-platform` 属性。
+> 本仓库桥现状（SYNC-001~007 后）已与该真实契约对齐：官方面
+> keyboard/shortcuts/browser/updates.status/updates.subscribe 已接回，
+> `__DSH_LOCALE__`/`__DSH_HOST_PATHS__`/`__DSH_DIRECTORY_PICKER__`/
+> data-platform 已就位，`locale()`/`plugins.*`/`updates.{check,install}`/
+> `getPathForFile` 等无主面已删（见下节勘误）。v5 的收敛裁决本身
+> （只保留官方接口 + 壳最小控制面）不受影响，受修正的是「官方接口」
+> 的具体清单。
+
 ### 收敛后的 `window.dshDesktop`（bridge.ts）
 
 ```
@@ -329,6 +361,27 @@ restartService / floatWindow / phoneBridge / guard / pluginWizard /
 pluginManager / pluginUpdates / imagePaste / fileDrop / balancePrices /
 balanceModels / revertFiles / openPath / openExternal / copyText /
 getPathForFile / recovery / rescue。
+
+> **勘误（2026-10-01，控制包 EAC-ISOLATION-SYNC-02 / SYNC-007，GAP C2）**：
+> 上列为 v5 当时的删除快照，现状已按「接回后实况」修正如下：
+> - **v6 Task 3.3 已接回**（`tauri-shell/sidecar/bridge.ts` 现存，EAC 自有
+>   面，由 `dsh-desktop/test/bridge-preload-parity.test.ts` 的
+>   「已接回组」断言按接回后锁定）：`pluginManager` / `guard` / `fileDrop` /
+>   `getInfo` / `revertFiles` / `openPath` / `openExternal`。
+> - **`getPathForFile` 已由 SYNC-007 删除**：全包零消费者，职责由官方
+>   `__DSH_HOST_PATHS__.pathFor`（SYNC-003 接回）承担。
+> - **维持退役**（metaone01 2026-09-19 裁决 + 测试 STILL_RETIRED 锁定，
+>   不得回归）：`menu` / `floatWindow` / `phoneBridge` / `pluginUpdates` /
+>   `imagePaste` / `balancePrices` / `balanceModels` / `refreshBalance` /
+>   `restartService` / `copyText` / `pluginWizard` / `recovery` / `rescue`。
+> - **SYNC-001~006（2026-09-30 起，本控制包）接回/新增的官方真实面**：
+>   `keyboard` + `<html data-platform>` 标记（SYNC-001）、`__DSH_LOCALE__`
+>  （SYNC-002）、`__DSH_HOST_PATHS__`（SYNC-003）、`__DSH_DIRECTORY_PICKER__`
+>  （SYNC-004）、`shortcuts` 与 `updates.status/subscribe` 真事件源
+>  （SYNC-005）、`browser`（SYNC-006）—— 与上节勘误的官方契约一一对应。
+> - **SYNC-007（2026-10-01）删除 v5 误留的无主面**：`locale()`、
+>   `plugins.*`、`updates.check/install`（官方无此三面且零消费者，
+>   见上节「官方契约依据」勘误；`updates.open` 保持退役 reject）。
 
 ### 联动改动
 

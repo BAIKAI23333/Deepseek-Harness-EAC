@@ -4,13 +4,16 @@
 // 类型化迁出，行为零变更）：注入 web profile：余额小部件 + 文件更改追踪/
 // 还原 + 内置插件治理。
 // M2/#415：旧版用户可见皮肤切换（dsh-skin-switch + assets/skins 目录播种）
-// 已整体退役 —— 换肤由 ui-skin-loader 公约皮肤包接管；壳层 ui-skin manager
-// 的 boot/recovery 回退资源不受本退役影响（ADR 0010）。
-// M2/#415 皮肤平台预装（本文件下半段）：`@dsh-eac/ui-skin-loader` 与 13 款
-// 公约皮肤包在 COMPANION_PLUGINS 里登记（包拷贝来源），装载走 profile
-// bundles（profile.ts 的 BUNDLED_BUILTIN_PLUGINS）—— 它们的 package.json 都
-// 声明 `dsh.bundle.patch`，写 overlay insert 行会撞成 duplicate loader entry id。
-// 无皮肤激活时 loader 的 activeSkin 保持 `default`，观感 = 宿主原生。
+// 已整体退役 —— 换肤职责后由公约皮肤平台承接（该平台亦已于 EAC-CORE-SHELL-01
+// 外迁为市场可选包）；壳层 ui-skin manager 的 boot/recovery 回退资源不受本
+// 退役影响（ADR 0010）。
+// ISO-005 运行时清单收敛：COMPANION_PLUGINS 只登记「随包实物」—— 装配面
+// tauri-shell/stage-resources.mjs 的 BUILTIN_PLUGIN_DIRS 是唯一基准（当前 9
+// 项，每项在 assets/plugins 下有同名目录）。已不随包的插件不在本清单留空转项：
+// 旧 profile 残留的行/包副本由 RETIRED_BUILTIN_PLUGINS 兜底清理（见下方清单），
+// 用户仍需要时经市场按需安装（recommended/external 分级见 .sync 账本）。
+// 皮肤平台（`@dsh-eac/ui-skin-loader` + 13 款公约皮肤包）已于 EAC-CORE-SHELL-01
+// 外迁为市场可选包，同样只留 RETIRED 兜底；无皮肤激活 = 宿主原生观感。
 
 import path = require('node:path');
 import fs = require('node:fs');
@@ -116,9 +119,20 @@ interface PendingRow {
   config?: unknown;
 }
 
+// 运行时登记面 = 随包实物（基准见文件头）：每项都必须能解析出
+// assets/plugins/<dir> 实物目录。实物不在包却在清单里的条目，每次启动只会
+// 留一条「配套插件源目录无效，跳过」的空转日志 —— ISO-005 起本清单与装配面
+// 1:1（9 项），收敛前登记的 35 项不再随包，旧 profile 迁移见下方 RETIRED 清单。
+//
+// 绝不能写进 profile package.json 依赖 —— pnpm 安装会 hoist @deepseek-ai
+// 核心包形成模块双实例（Symbol 冲突，插件命名空间注册失效，即
+// "设置命名空间不可用" 故障的根因）。
 export const COMPANION_PLUGINS: CompanionPluginDef[] = [
-  { id: 'balance', name: '@deepseek-ai/dsh-balance' },
+  // 会话文件更改投影（fileChanges）：折叠 tool/result 的 meta.diffs，为「文件」
+  // 视图与回退提供数据。
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
+  // 「文件」视图：会话文件更改追踪 + 一键还原（数据来自上面的投影，还原由
+  // 壳层执行）。
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
   // 统一插件市场（dsh-unified-market，内置）：聚合精选目录
   // （awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm 检索三源；
@@ -126,197 +140,40 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 自动更新排队与启动消费 + 市场自更新。取代曾被内置的 webui-market /
   // zat-market / 旧 npm 市场（各自 profile 定位错误或重复，已从清单移除）。
   { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
-  // M2/#415：skin-switch（旧版用户可见皮肤切换）已退役并列入
-  // RETIRED_BUILTIN_PLUGINS；换肤由 ui-skin-loader 公约皮肤包接管。
+  // 设置页快速配置：视觉模型提供商/模型一键选择、soul.md 人设可视化编辑、
+  // 从 Codex / Claude Code 目录一键迁移 skills。
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
   // 旧版/社区客户端插件的英文兼容层：跟随官方 locale 状态翻译固定 UI
   // 文案，不触碰会话、代码、终端、编辑器或用户输入。作为界面底座始终启用。
   { id: 'eac-locale-compat', name: 'dsh-eac-locale-compat', dir: 'dsh-eac-locale-compat' },
-  // VNext Core Bridge（受信组件，vnext-absorb Phase 2）：把隔离 SDK 插件的
-  // 工具/上下文经回环端点桥接进 dsh Agent（DSH_EAC_BRIDGE_URL/TOKEN 由
-  // sidecar 在拉起 dsh web 前注入）；必须随包分发并默认启用。
-  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge', dir: 'dsh-eac-core-bridge' },
-  // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
-  // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
-  // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
-  // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
-  { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
-  // 读屏 + 鼠标键盘自动化（Codex-style computer use，配 picturereader；纯本地）。
-  { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
-  // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
-  // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
-  // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
-  // 写 config 是双保险，healSoulMdPatchRow 另负责修复存量坏行。
-  { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
-  { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
   // 视口钳制（文档级滚动根治）：html/body overflow:hidden + 稳定契约
   // （data-phase/data-conversation-scroll）hero 居中兜底。纯客户端 CSS，
   // 随内核页面加载 —— 桌面壳 / 浏览器 / 手机端三端同源生效，不再依赖
   // 桌面壳垫片与 CSS Modules 哈希类（内核更新换哈希即失效的旧方案）。
   { id: 'viewport-lock', name: 'dsh-viewport-lock', dir: 'dsh-viewport-lock' },
-  // 喵丝滑（Phant0Meow/dsh-meow-smooth 0.5.0，MIT）：手机端 UI 交互优化
-  // （输入框折叠/侧边栏手势/窄屏适配）+ 通知系统（页面卡片 / Web Push /
-  // webhook）+ 审计投影只读路由。5.2 起取代自研 mobile-app.html 续聊客户端
-  // —— 手机桥改为完整 Web UI 反向代理，手机直接获得真界面，本插件负责
-  // 移动端体验。host 半边依赖 web-push（已加入 app 闭包 + 插件宿主依赖
-  // 落位，缺省时优雅降级：仅系统推送不可用）。配置沿用上游出厂默认。
-  { id: 'meow-smooth', name: 'meow-smooth', dir: 'dsh-meow-smooth', config: { enabled: true } },
-  // VSCode 风格右侧边栏（文件树 / 编辑器 / 终端 / Git，按会话隔离）。
-  // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
-  // schemastery（已加入 app 闭包，见 package.json）。config 只随缺失的新行写入；
-  // 已有 profile 行会在同步时跳过，保留升级用户的现有默认与自定义设置。
-  { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar', config: { openByDefault: true } },
-  // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：消息 HTML 渲染
-  // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）。EAC 集成通过
-  // conversation.chat.node 的 assistant-step slot 接管，不修改上游压缩 bundle。
-  // bundle 插件：
-  // 必须进 profile bundles（BUNDLED_BUILTIN_PLUGINS / DESKTOP_PROFILE_BUNDLES
-  // 播种），overlay 行会被 removeBundledRowDuplicates 去重，不可写 patch 行。
-  { id: 'dsh-raw-html', name: 'dsh-raw-html', dir: 'dsh-raw-html' },
-  // Trae 风格对话回退：用户消息 hover 出「编辑并回退」，按上一完整回合
-  // 分叉新会话（sessions.fork）并以编辑后内容重发（inputActions）。
-  // 纯客户端实现，host 半边为 no-op。
-  { id: 'message-rewind', name: 'dsh-message-rewind', dir: 'dsh-message-rewind' },
-  // 页面桌宠（npm: dsh-pet 0.1.3）：28 个透明动画的悬浮宠物，即装即用。
-  // assets/ 15MB 播放资源随包分发；peer 依赖全部由 dsh 宿主提供。
-  // V4 关键修复：行必须带 config —— dsh-pet 的 apply 读 config.fullRoot，
-  // 无 config 块的行会让 loader 传 undefined 直接拖垮插件树（v3.1.0 全新
-  // 安装即「启动失败」的根因之一；老用户因市场装过的行带 config 才幸免）。
-  // 值沿用包内 cordis.patch.yml 的出厂默认。
-  // 默认禁用 —— 需要页面桌宠时在「设置 → 插件 → 管理」或「桌宠」分区开启。
-  { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet', config: { size: 260, position: 'bottom-right' }, disabled: true },
-  // 设置页「Skills 与 MCP」分区：Skills 目录浏览（来源徽标/打开目录）+
-  // MCP 服务增删改（读写 profile patch 中的 dsh-mcp-client 行）+ 从
-  // Claude Code / Codex 一键导入 MCP 配置。
-  { id: 'dock-settings', name: 'dsh-dock-settings', dir: 'dsh-dock-settings' },
-  // 外观自定义：字体家族/字号/文字与代码颜色的设置页分区，实时预览，
-  // localStorage 持久化（纯客户端，无宿主半边）。
-  { id: 'font-custom', name: 'dsh-font-custom', dir: 'dsh-font-custom' },
   // 请求路径自动压缩：在模型请求前按真实 Token 压力调用 DSH 原生压缩
   // 引擎；上下文溢出时最多压缩并重试原请求一次，不再模拟输入 /compact。
   { id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' },
   // 插件保护中心 UI：快照列表/一键回滚/健康检查/事故报告，经桌面壳
   // IPC（guard:action）驱动 plugin-guard.js 引擎。
   { id: 'plugin-shield', name: 'dsh-plugin-shield', dir: 'dsh-plugin-shield' },
-  // AI 变更审核（V4，用户建议⑤）：监控官方 fileChanges 投影，手动/自动向
-  // 当前对话发送审核请求，让模型复查自己刚做的改动（正确性/安全性/一致
-  // 性），结论配合「文件」页一键还原。纯客户端实现，host 半边 no-op。
-  { id: 'change-review', name: 'dsh-change-review', dir: 'dsh-change-review' },
-  // —— V4 自上游 dsh_desktop（myYangyunfan）移植的配套插件 ——
-  // 会话浮窗（多窗口分屏）：会话头部「弹出到独立窗口」按钮；窗口由壳层
-  // IPC chrome:float-window / preload 的 __DSH_FLOAT__ 承载。
-  { id: 'float-window', name: '@deepseek-ai/dsh-float-window' },
-  // 对话节点导航条（vlln/dsh-navbar，MIT）：对话区右缘节点串快速跳转
-  // user 消息（悬停预览/点击跳转/滚轮切换）。
-  { id: 'dsh-navbar', name: '@vlln/dsh-navbar', dir: 'dsh-navbar' },
-  // 对话删除与归档管理：会话行菜单「删除对话」+ 设置内归档管理面板。
-  // 前置依赖 scripts/patch-session-manage.js 的官方包运行时补丁
-  // （applySessionManageFix，随启动幂等应用、覆盖 agent overlay）。
-  { id: 'dsh-session-manager', name: 'dsh-session-manager' },
-  // 对话界面微调：隐藏大量工具调用/结果/思考输出（保留每轮最终总结）。
-  { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
-  // 自定义注入提示词：整体替换/追加官方 persona，应用到 standard 预设。
-  { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
-  // 侧边临时会话：浮窗追问、不写主会话、多种回答引擎（Ctrl+Shift+S）。
-  { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
-  // 手机连接（5.2 方案）：LAN 扫码配对 + 完整 Web UI 反向代理（设置页「连接手机」）。
-  // 桥本体在 Tauri 壳 sidecar（phone-bridge.js）；手机端体验由内置喵丝滑
-  // （meow-smooth）提供，自研 mobile-app.html 续聊客户端已退役。
-  { id: 'dsh-phone', name: 'dsh-phone', dir: 'dsh-phone' },
-  // 新增强化功能入口分区（5.1.0 批次）：设置页「增强功能」——为默认关闭的
-  // 内置插件（余额小鲸鱼 / AgentTeams 等）提供一键启用/停用开关。
-  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles', dir: 'dsh-feature-toggles' },
-  // DeepSeek 余额小鲸鱼挂件（MeteorNOX/DeepSeek-Balance-Whale-Widget，MIT）。
-  // 默认关闭：用户到「设置 → 插件 → 管理」或「增强功能」分区自行启用（需 DEEPSEEK_API_KEY 凭据）。
-  { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget', disabled: true },
-  // 多智能体团队协作（NanmiCoder/dsh-agent-teams，MIT）：队长 + 子代理成员 +
-  // 依赖感知任务 DAG + 活动面板。5.3.1 起默认启用（EAC 适配版；对话框
-  // composer dock 有可见入口，设置「增强功能」分区保留停用开关）。
-  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams' },
-  // 输入灵动岛（says693/dsh-composer-dynamic-island 2.1.0，MIT）：把输入区
-  // 选定按钮收纳为向上展开的紧凑岛，不移动宿主 React 节点；仅在已确认的
-  // composer surface 内发现控件，设置只持久化启用状态与控件标识。
-  { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island', dir: 'dsh-composer-dynamic-island' },
-  // 插件选择向导入口（设置页「插件 → 选择向导」分区）：重新打开首次启动的
-  // 内置插件选择向导，按需启用/停用内置插件。纯客户端 UI + 壳层 IPC
-  // （onboard:*），host 半边 no-op；核心插件组内锁定，永不被向导停用。
-  { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
-  // 微信 ClawBot / OpenClaw 桥（openclaw-dsh-bridge v0.7.0，MIT）：设置页
-  // 「ClawBot」栏（扫码绑定微信官方 ClawBot 小程序）+ OpenAI 兼容端点
-  // （/openclaw-bridge/v1/chat/completions）。设置命名空间经 dsh-host-apiproxy
-  // 的 settings.describe 全量暴露（rc.7+ 已移除 WEB_SETTINGS_NAMESPACES 白名单）。
-  { id: 'openclaw-bridge', name: '@deepseek-ai/dsh-openclaw-bridge', dir: 'dsh-openclaw-bridge' },
-  // 崩溃急救/撤销回退（dsh-undo-savepoint，lire1131，MIT）：配置文件 + 插件
-  // 代码树快照、undo/redo、一键安全模式、密钥脱敏 vault。与插件保护中心
-  // （配置面快照）和「文件」还原（会话内改动）互补，覆盖「配置改坏、dsh
-  // 起不来」的急救场景。GitHub 分发锁定拷贝（npm 未发布）。
-  { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
-  // 大肥鱼桌宠（dsh-dafeiyu，QCYTSN；代码 MIT、角色素材按 ASSET_LICENSE.md
-  // 随包分发保留署名）：真实会话状态驱动的原生置顶桌宠（空闲/思考/工作/
-  // 等待/完成/错误 六态 + 项目状态卡）。默认开启 —— 可在「设置 → 插件 →
-  // 管理」或「桌宠」分区关闭（含 49MB PyInstaller helper，按需运行）。
-  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
-  // 桌宠设置分区（V4.2，dsh-pet-settings）：设置页「桌宠」分区，集中管理
-  // 页面桌宠（dsh-pet 开关，重启生效）与大肥鱼桌面伴侣（启用/角色大小/
-  // 空闲微动作频率/减少动态，走 dsh-dafeiyu config 端点即时生效）。
-  { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
-  // 峰谷价格卫士（dsh-offpeak，christophersmith2737-commits，MIT）：DeepSeek
-  // 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）在发送前
-  // 拦截提醒，可一键继续或定时到闲时价自动执行（浏览器不在线也会到点
-  // 执行）。与余额小部件互补（事前拦截 vs 事后显示）；程序化提交
-  // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
-  // 可在「设置 → 插件 → 管理」关闭。
-  { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  // EAC-CORE-SHELL-01：file-drop-eac 已退役 —— 官方 0.2.0 的
-  // `apps/desktop/src/preload-app.ts` 已内置拖入/粘贴 → `@path` 引用
-  // （`__DSH_HOST_PATHS__.pathFor = webUtils.getPathForFile`），功能重叠。
-  // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
-  // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
-  // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
-  // V4.6.1 起侧边栏 display/order 由 nav-custom 单一写者接管，groups 只保留页内折叠。
-  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
   // 设置面板滚轮修复：不绑定 CSS Modules 哈希类名，按设置页语义与真实
   // overflow 尺寸识别导航/内容滚动区；MutationObserver 跟随动态内容，卸载时
   // 完整清理样式、标记与监听器。纯客户端实现（host 半边 no-op）。
   { id: 'settings-scroll-fix', name: 'dsh-settings-scroll-fix', dir: 'dsh-settings-scroll-fix' },
-  // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
-  // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
-  // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。
-  // 默认禁用 —— 与内置 picturereader 的「粘贴即用/图片桥自动分析」入口
-  // 语义重叠，避免粘贴图片时重复/竞争注入。
-  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
-  // 提示词优化（dsh-webui-prompt-optimizer 0.1.0，提取自 statem-li/dsh-webui）：
-  // 输入区右侧优化图标，用当前会话模型流式改写提示词；单轮写回草稿、
-  // 多轮并行出「均衡/精简/详尽」三候选择优迭代，可包装 /goal。
-  // 纯客户端 + host 半边（loopback 路由），peer 依赖全部由 dsh 宿主提供。
-  { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer', dir: 'dsh-webui-prompt-optimizer' },
-  // 本地离线语音识别（dsh-stt 0.3.0，BAIKAI23333，MIT）：sherpa-onnx SenseVoice
-  // 本地推理 —— 输入区麦克风按钮说话，识别文本回填输入框，支持唤醒词激活
-  // 与「发送」语音指令提交。sherpa-onnx 原生引擎不随仓库分发，由 CI 在各
-  // 平台构建时 npm install 拉取对应原生包（install:plugin-engines，三平台
-  // 发行；引擎缺失时插件优雅降级 503 engine_missing，不拖垮插件树）。默认
-  // 禁用 —— 启用后首次使用自动下载 SenseVoice 模型（~230MB）到
-  // ~/.dsh/models/dsh-stt/（用户数据，安装器不清理），GitHub Release 主源
-  // 失败自动切 hf-mirror。5.3.0 曾因模型体积退役，现按用户要求恢复内置
-  // （已同步移出退役清单）；不登记 PLUGIN_UPDATE_SOURCES（manifest x-eac
-  // autoUpdate:false，EAC 托管版本）。
-  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt', disabled: true },
-  // 思考增强（中文）：强制 agent 用中文思考与回复（system-prompt section），
-  // 并把界面残留的硬编码英文（Thinking / Tool Call 等）中文化。
-  // 这是上游 baosfeng/dsh-think-zh-expand 的 EAC 定制派生版
-  // （https://github.com/jing-hy/dsh-think-zh-expand-eac，MIT）：**已移除全部
-  // 接管对话渲染器的显示功能**（assistant-step 渲染器抢占、ThinkBlock 默认
-  // 展开、自绘 SVG 图标与样式表），因此可与 dsh-auto-collapse / dsh-turn-fold
-  // 等折叠插件共存 —— 上游版会与他们抢 conversation.chat.node 座位，导致
-  // 折叠失效且不报错。section 名改为 dsh-think-zh-eac，避免与上游版同层同名
-  // 注册抛错拖垮插件树。
-  // 走 patch 行（非 bundles）：用户可在「设置 → 插件 → 管理」关闭；
-  // 其夹带 patch 是普通 insert 行，本行不会被 removeBundledRowDuplicates 去重。
-  { id: 'think-zh-expand-eac', name: 'dsh-think-zh-expand-eac', dir: 'dsh-think-zh-expand-eac' },
-  // —— EAC-CORE-SHELL-01：皮肤平台（loader + 13 款公约皮肤）已外迁 ——
-  // 宿主最小壳不再随包皮肤/加载器；皮肤改为市场可选包（Market Core 按需
-  // 安装，安装即写 profile bundles）。老 profile 的包副本/patch 行由
-  // RETIRED_BUILTIN_PLUGINS 兜底清理（见下方清单）。
+  // —— 已不随包的插件（ISO-005 收敛出本清单）：不再登记 ——
+  // 收敛前本清单 44 项，其中 35 项自 v6 Task 3.1 剥出 assets/plugins 后已无实物
+  //（每次启动只留一条「配套插件源目录无效，跳过」）。它们不再随包，改由市场按需
+  // 安装（.sync/plugin-distribution.json：15 recommended + 20 external）；旧
+  // profile 残留的行/包副本/依赖由下方 RETIRED_BUILTIN_PLUGINS 兜底清理。
+  // ISO-003：VNext Core Bridge（eac-core-bridge）已退役 —— 它曾在此默认启用，
+  // 但端点由 sidecar 注入的前提从未成立：DSH_EAC_BRIDGE_URL/TOKEN 全仓零
+  // 写入方（lib/desktop/proc.ts 的 childEnv() 不注入），插件读不到端点即提前
+  // return，随包且默认启用只会静默空转（ADR 0003 已随 ADR 0006 裁废）。
+  // 本清单不再登记它；历史 profile 的行/包副本/依赖由 RETIRED_BUILTIN_PLUGINS
+  // 兜底清理（资产目录保留在 assets/plugins/dsh-eac-core-bridge 待接回）。
+  // EAC-CORE-SHELL-01：皮肤平台（loader + 13 款公约皮肤）已外迁为市场可选包，
+  // 同样只留 RETIRED 兜底（见下方清单）。
 ];
 
 export function companionPluginsForPlatform(platform: NodeJS.Platform = 'win32'): CompanionPluginDef[] {
@@ -455,10 +312,10 @@ export function pluginUpdateSources(): { id: string; name: string; assetsDir: st
  * 三条证据任一成立才算残留：市场版依赖（非 link:/file: 自建链接）、
  * **非应用播种**的 bundles 条目、非自写 patch 行。
  *
- * M2/#415：bundles 条目只有在「不是应用自己播种的」时才是证据 —— 皮肤平台
- * （loader + 13 款皮肤）由 EAC 通过 BUNDLED_BUILTIN_PLUGINS 预装进 bundles，
- * 若沿用旧口径，每次启动都会把内置包误判成市场残留并触发「接管」手术
- * （剥 bundles 条目 + 建保护快照），依赖同一次启动里的重新播种才侥幸复原。
+ * ISO-005：bundles 条目只有在「不是应用自己播种的」时才是证据 —— 应用播种
+ * 清单是 BUNDLED_BUILTIN_PLUGINS（profile.ts，当前为空数组：随包插件走配套
+ * 行/包拷贝路径，不经 bundles 播种）。若沿用旧口径，应用自己播种过的条目会
+ * 被误判成市场残留并触发「接管」手术（剥 bundles 条目 + 建保护快照）。
  */
 export function marketDuplicateEvidence(o: {
   name: string;
@@ -492,7 +349,8 @@ export function marketDuplicateEvidence(o: {
 }
 
 // M2/#415：assets/skins/ 皮肤包目录播种已随旧版皮肤切换退役
-// —— assets/skins 自 v6 起已不存在，皮肤改经 ui-skin-loader 公约皮肤包分发。
+// —— assets/skins 自 v6 起已不存在，皮肤平台自 EAC-CORE-SHELL-01 起是市场
+// 可选包（按需安装即写 profile bundles），不再有资产目录播种。
 
 import { copyPluginPackage, readJsonFile } from '../plugin-copy.js';
 
@@ -528,9 +386,10 @@ export function healProfileModules(): void {
 //（`ui-skin-*`，insert 内层行）。旧链退役后这些行指向的包不再随包分发：
 // 「行在包不在」让 loader 找不到 entry、「包在行不在」残留旧皮肤继续加载，
 // 两者都会拖垮插件树。清理按**精确 id + 精确包名**逐条进行（不是作用域/前缀
-// 级联删除）：`@linxin666` / `@dsh-external` 下市场安装的其他插件必须留存，
-// 新皮肤平台（包 `@dsh-eac/ui-skin-loader` + `@dsh-eac/skin-*`，行
-// `dsh-ui-skin-loader` + `dsh-eac-skin-*`）更不得被碰。
+// 级联删除）：`@linxin666` / `@dsh-external` 下市场安装的其他插件必须留存；
+// 公约皮肤平台（包 `@dsh-eac/ui-skin-loader` + `@dsh-eac/skin-*`，行
+// `dsh-ui-skin-loader` + `dsh-eac-skin-*`）自 EAC-CORE-SHELL-01 外迁为市场可选
+// 包，与旧链一样只由下方 RETIRED 清单按精确条目兜底清理。
 // （契约测试锚定本清单与 RETIRED_BUILTIN_PLUGINS 的并集，勿改前缀语义。）
 export const LEGACY_UI_SKIN_RESIDUE: { id: string; name: string }[] = [
   { id: 'ui-skin-blue-fantasy', name: '@linxin666/dsh-client-ui-skin-blue-fantasy' },
@@ -603,6 +462,60 @@ export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
   { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
   { id: 'file-drop-eac', name: 'dsh-file-drop-eac' },
+  // ISO-003：VNext Core Bridge 退役 —— 端点生产者缺失（DSH_EAC_BRIDGE_URL/
+  // TOKEN 全仓零写入方，lib/desktop/proc.ts 的 childEnv() 不注入），该插件
+  // 随包且默认启用却只静默空转；ADR 0003 已随 ADR 0006 裁废，进程隔离接回
+  // 前不再随包/默认启用。老 profile 的行/包副本/依赖项由本清单兜底清理；
+  // 资产目录保留在 assets/plugins/dsh-eac-core-bridge 等接回。
+  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge' },
+  // —— ISO-005：运行时清单收敛（44 → 9）后不再随包、也不再登记的 35 项 ——
+  // 依据：ADR 0006 最简本体（v6 Task 3.1 剥出 assets/plugins 全量资产），
+  // ISO-005 以装配面 stage-resources.mjs 的 BUILTIN_PLUGIN_DIRS（9 项）为唯一
+  // 基准收敛运行时清单；这 35 项改由市场按需安装（.sync/plugin-distribution.json：
+  // 15 recommended + 20 external），但老 profile（≤5.4.1 曾全部随包）里的
+  // patch 行 / node_modules 包副本 / package.json 依赖仍指向已不在包体的包 ——
+  // 「行在包不在」会让 loader 找不到 entry 拖垮插件树，也会与市场安装的推荐版
+  // 撞成 duplicate loader entry id。这里逐条按**精确 id + 精确包名**兜底清理
+  //（不做作用域/前缀级联删除，市场安装的同作用域其他插件必须留存）：id 是
+  // patch 行 id，name 是 node_modules 目录名与依赖键（与 COMPANION_PLUGINS
+  // 收敛前的登记值一致，已与 assets/SOURCES.json 的台账包名逐条核对）。
+  // 分发分级：15 项 official recommended（官方推荐包成员，市场按需安装）。
+  { id: 'balance', name: '@deepseek-ai/dsh-balance' },
+  { id: 'better-sidebar', name: 'dsh-better-sidebar' },
+  { id: 'change-review', name: 'dsh-change-review' },
+  { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island' },
+  { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
+  { id: 'dock-settings', name: 'dsh-dock-settings' },
+  { id: 'dsh-navbar', name: '@vlln/dsh-navbar' },
+  { id: 'dsh-raw-html', name: 'dsh-raw-html' },
+  { id: 'dsh-session-manager', name: 'dsh-session-manager' },
+  { id: 'message-rewind', name: 'dsh-message-rewind' },
+  { id: 'mobile-fix', name: 'dsh-web-mobile-fix' },
+  { id: 'offpeak', name: 'dsh-offpeak' },
+  { id: 'picturereader', name: 'picturereader' },
+  { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
+  { id: 'soul-md', name: 'dsh-soul-md' },
+  // 分发分级：20 项 external（第三方/社区，市场或独立包按需安装）。
+  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams' },
+  { id: 'computer-user', name: 'computer-user' },
+  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu' },
+  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles' },
+  { id: 'dsh-pet', name: 'dsh-pet' },
+  { id: 'dsh-pet-settings', name: 'dsh-pet-settings' },
+  { id: 'dsh-phone', name: 'dsh-phone' },
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt' },
+  { id: 'dsh-undo', name: 'dsh-undo-savepoint' },
+  { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer' },
+  { id: 'dsh-whale-widget', name: 'dsh-whale-widget' },
+  { id: 'float-window', name: '@deepseek-ai/dsh-float-window' },
+  { id: 'font-custom', name: 'dsh-font-custom' },
+  { id: 'image-paste', name: 'dsh-image-paste' },
+  { id: 'meow-smooth', name: 'meow-smooth' },
+  { id: 'openclaw-bridge', name: '@deepseek-ai/dsh-openclaw-bridge' },
+  { id: 'plugin-wizard', name: 'dsh-plugin-wizard' },
+  { id: 'settings-groups', name: 'dsh-settings-groups' },
+  { id: 'side-session', name: '@dsh-external/dsh-side-session' },
+  { id: 'think-zh-expand-eac', name: 'dsh-think-zh-expand-eac' },
 ];
 
 // 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
@@ -643,8 +556,8 @@ function retireRemovedBuiltinPlugins(profileDirP: string): void {
       }
       // bundles 成员同样必须清掉：bundle 成员指向已不在包体的包会让
       // dsh-app-boot 的 bundle 准入失败（或与 L3 默认禁用规划互撞成
-      // duplicate loader entry id），拖垮插件树。外迁的皮肤平台正是
-      // 由 BUNDLED_BUILTIN_PLUGINS 预装进 bundles 的，故必须在此兜底。
+      // duplicate loader entry id），拖垮插件树。外迁的皮肤平台与 ISO-005
+      // 收敛出的 35 项都可能正是由 bundles 成员装载的，故必须在此兜底。
       const bundles = pkg?.dsh?.profile?.bundles;
       if (Array.isArray(bundles)) {
         const next = bundles.filter((entry: unknown) => entry !== p.name);
@@ -721,7 +634,7 @@ export function syncCompanionPlugins(): void {
   // 安装形态（v5.4 单发行版双形态）：精简版只改「新行」默认启停，
   // 已有注册行不重写、用户选择优先（见 lib/desktop/install-profile.ts）。
   const installProfile = readInstallProfile(APP_ROOT);
-  if (installProfile === 'lite') ctx.log('boot', '安装形态 = 精简版：外围配套插件默认停用（设置 → 插件 → 管理 可随时启用）');
+  if (installProfile === 'lite') ctx.log('boot', '安装形态 = 精简版：随包插件均为核心集（默认启用），无默认停用项（设置 → 插件 → 管理 可自行启停）');
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
@@ -778,7 +691,7 @@ export function syncCompanionPlugins(): void {
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending: PendingRow[] = [];
     const removedIds = removedPluginIds();
-    // 市场残留预检的共享输入（循环外读一次）：34 个配套插件逐个 dupPreCheck
+    // 市场残留预检的共享输入（循环外读一次）：9 个随包配套插件逐个 dupPreCheck
     // 会把 profile package.json 与 cordis.patch.yml 各重读一遍（~68 次读）。
     // 迁移手术本身会改写这两个文件 —— 手术后的插件重读一次（按需失效）。
     let precheckPkg = readJsonFile(path.join(profileDirP, 'package.json'));
@@ -875,9 +788,8 @@ export function syncCompanionPlugins(): void {
       }
     }
     // M2/#415：旧版「assets/skins 目录 → profile 皮肤行」播种已退役。
-    // 换肤由 ui-skin-loader 公约皮肤包接管（预装见 COMPANION_PLUGINS 末段的
-    // 皮肤平台清单 + profile.ts 的 BUNDLED_BUILTIN_PLUGINS）；无皮肤激活 =
-    // 宿主原生观感。
+    // 皮肤平台自 EAC-CORE-SHELL-01 外迁为市场可选包（按需安装，安装即写
+    // profile bundles）；无皮肤激活 = 宿主原生观感。
     // 内置插件清单标记：插件市场据此把目录里的同名插件标为「已内置」并
     // 拒绝重复安装 —— 内置包每次启动都被重新同步，市场覆盖安装会产生
     // duplicate loader entry / 模块双实例，必须从源头拦截。
@@ -947,10 +859,9 @@ function ensurePluginHostDeps(profileDirP: string): void {
   if (!fs.existsSync(sharedCosmo)) {
     ensureCopy(path.join('@deepseek-ai', 'cosmokit'), 0);
   }
-  // M2/#415：皮肤加载器与 aurora 的 host 半边直接 import
-  // `@deepseek-ai/schemastery`（vendored loader v1.1.0 的 host 入口只有这一个
-  // 外部 import）。与 cosmokit 同策：共享层已有就不落位，避免遮蔽内核闭包内
-  // 的配套版本；全新隔离 home（共享层尚未由内核重建）时兜底落位。
+  // 与 cosmokit 同策：共享层已有就不落位，避免遮蔽内核闭包内的配套版本；
+  // 全新隔离 home（共享层尚未由内核重建）时兜底落位 —— 下游是声明
+  // schemastery 依赖的插件（scoped 与裸名两种，见冲突审计）。
   const sharedSchemastery = path.join(sharedRoot, '@deepseek-ai', 'schemastery');
   if (!fs.existsSync(sharedSchemastery)) {
     ensureCopy(path.join('@deepseek-ai', 'schemastery'), 0);
@@ -1051,12 +962,12 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // （用户启用过的裸行、市场写入的行）一律保留，用户选择优先。这样
     // `dsh plugin add` 这类 CLI 安装路径也落在「装完默认禁用、手动启用」的
     // 语义内。安全模式不写（与配套行一致）；分级表缺失时规划为空（fail-open）。
-    // M2/#415：配套插件（含 loader 与 13 款皮肤包）已由本函数负责预装，不进
-    // 这一步。规划的 id 空间是 bundle 包名的短名（`@dsh-eac/ui-skin-loader`
-    // → `ui-skin-loader`），与皮肤平台的行 id（`dsh-ui-skin-loader`）不同名，
-    // 因此必须显式排除 —— 否则每个皮肤包都会被写一条 `disabled: true` 行，
-    // 既把 loader 误标成「外部/默认禁用」，又与 bundle 自己的补丁层形成
-    // duplicate loader entry id 风险。
+    // ISO-005：随包配套插件已由本函数负责预装，不进这一步。规划的 id 空间是
+    // bundle 包名的短名（`@deepseek-ai/dsh-file-changes` → `dsh-file-changes`），
+    // 与配套行的行 id（`file-changes`）不同名，因此必须把包名/行 id/canonical
+    // 三种形式都显式排除 —— 否则随包插件会被写一条 `disabled: true` 行，既把
+    // 内置包误标成「外部/默认禁用」，又与包自己的补丁层形成 duplicate loader
+    // entry id 风险。
     const companionBundleIds = COMPANION_PLUGINS.flatMap((p) => [
       p.name,
       p.id,

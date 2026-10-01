@@ -31,10 +31,13 @@ const FORBIDDEN_NAMES = new Set(['node_modules', 'vendor', 'cache']);
 const IGNORED_TREE_NAMES = new Set(['.git', ...FORBIDDEN_NAMES]);
 const HEX_256 = /^[0-9a-f]{64}$/;
 
+// 受控 inventory root 只声明**当前检出树里真实存在**的资产目录：v6 精简树与
+// EAC-CORE-SHELL-01 皮肤平台外迁后，`assets/skins` 与 `assets/sdk-plugins`
+// （以及 agent-presets）都已不在仓库，继续声明会让 `validate` 恒报
+// 「inventory directory missing」。manifest 的 `skins` / `sdkPlugins` 键保留
+// （schema 要求），但不再有对应 root。
 const INVENTORY_ROOTS = [
   { kind: 'plugin', manifestKey: 'plugins', relative: 'dsh-desktop/assets/plugins' },
-  { kind: 'skin', manifestKey: 'skins', relative: 'dsh-desktop/assets/skins' },
-  { kind: 'sdk-plugin', manifestKey: 'sdkPlugins', relative: 'dsh-desktop/assets/sdk-plugins' },
 ];
 const ALLOWED_CLASSES = new Set([
   'follow-upstream',
@@ -536,12 +539,19 @@ export function validateDistribution(project, inventoryEntries) {
       continue;
     }
     const inventory = inventoryById.get(entry?.id);
-    const offInventoryState = (entry?.migration?.state === 'migrated'
-      || entry?.migration?.state === 'retired')
-      && entry?.migration?.current !== 'bundled';
+    // `migration.current`（当前交付通道）是「是否还在安装包内」的唯一诚实信号：
+    // 只要账本声明该插件已不在本包交付（current !== 'bundled'），它就可以只由
+    // 历史账本接续。`migration.state` 描述**来源就绪度与删包授权**，不承担
+    // 「是否在包内」的语义——ADR 0008 §3/§4 要求来源未核实时保持
+    // source-pending，因此「仓库副本已剥离 + 来源未就绪」正是
+    // current=none + state=source-pending 的组合，而不是 migrated。
+    const offInventoryState = entry?.migration?.current !== 'bundled';
     if (!inventory && !offInventoryState) {
       pushError(errors, `${pointer}: id is not present in the current plugin inventory`);
       continue;
+    }
+    if (inventory && entry?.migration?.current === 'none') {
+      pushError(errors, `${pointer}: declares migration.current=none but is present in the current plugin inventory`);
     }
     if (inventory && inventory.path !== historical.path) {
       pushError(errors, `${pointer}: current inventory path does not match plugin inventory history`);
@@ -583,7 +593,11 @@ export function validateDistribution(project, inventoryEntries) {
     if (!distributionIds.has(entry.id)) pushError(errors, `plugin distribution: inventory id ${entry.id} is missing`);
   }
   for (const entry of historyEntries) {
-    if (entry?.id && !distributionIds.has(entry.id)) {
+    if (!entry?.id || distributionIds.has(entry.id)) continue;
+    // ADR 0008 §5：历史账本保存 49 条基线且不得删行；4 个已退役插件（skin-switch /
+    // plugin-manager / terminal / file-drop-eac）退出分发集合后只以
+    // `state=retired` 的历史行接续。非 retired 的历史行必须仍在分发集合内。
+    if (entry.state !== 'retired') {
       pushError(errors, `plugin distribution: inventory history id ${entry.id} is unknown`);
     }
   }
@@ -729,6 +743,14 @@ function validateManifestInternal(project, { checkRuntimeRegistry = true } = {})
     pushError(errors, 'manifest: generatedRegistry must point to the runtime registry');
   }
   if (!isObject(policies)) pushError(errors, 'policies: expected an object');
+
+  // 没有对应 inventory root 的 manifest 集合必须为空：条目不会被目录比对覆盖，
+  // 留着就是「声明存在但无实物」的悬空行（ISO-004 收敛掉的那一类）。
+  for (const key of ['skins', 'sdkPlugins']) {
+    if (Array.isArray(manifestObject[key]) && manifestObject[key].length > 0) {
+      pushError(errors, `manifest: ${key} must be empty while no inventory root is declared for it`);
+    }
+  }
 
   for (const inventory of INVENTORY_ROOTS) {
     const configured = Array.isArray(policies?.inventoryRoots)
@@ -1290,13 +1312,14 @@ export async function main(argv = process.argv.slice(2)) {
   const { flags, positionals } = parseArgs(argv);
   const command = positionals[0];
   const root = path.resolve(String(flags.get('root') || DEFAULT_ROOT));
-  if (!command) fail('a command is required: validate-manifest, validate, generate-registry, generate-lock, sync', 'usage');
+  if (!command) fail('a command is required: validate-manifest, validate, generate-registry, generate-lock|buildLock, sync', 'usage');
   if (command === 'validate-manifest') {
     printManifestReport(validateManifest(root));
     return 0;
   }
   if (command === 'validate') {
-    if (!flags.get('locked')) fail('validate currently requires --locked', 'usage');
+    // `validate` 默认即完整校验（manifest + distribution/history 交叉校验 +
+    // lock + 生成注册表零漂移）。`--locked` 是历史 flag，保留为兼容写法。
     const result = validateLocked(root);
     console.log(`lock valid: entries=${result.counts.entries}`);
     return 0;
@@ -1306,7 +1329,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`${result.checked ? 'generated registry valid' : 'generated registry written'}: ${relativePosix(root, result.file)}`);
     return 0;
   }
-  if (command === 'generate-lock') {
+  if (command === 'generate-lock' || command === 'buildLock') {
     const project = loadProject(root);
     const lock = buildLock(root);
     writeJsonAtomic(project.paths.lock, lock);

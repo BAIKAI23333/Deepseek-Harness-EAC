@@ -1,7 +1,20 @@
 # ADR 0003：插件进程隔离架构（VNext，L2 Supervisor 落位）
 
 日期：2026-08-24
-状态：已接受
+状态：**已被取代（Superseded）**（2026-09-30 裁废，理由见下）
+
+> **裁废横幅（2026-09-30，控制包 `工程控制/EAC-ISOLATION-SYNC-02`，ISO-001）**
+>
+> - **取代者**：`docs/adr/0006-minimal-core-scope.md` v5/v6 —— **当前唯一有效裁决**。
+> - **裁废理由**：本文描述的进程隔离运行时（Supervisor / Extension Host /
+>   恢复中心 / 安全模式）已按 ADR 0006 v3–v6 显式剥出：`tauri-shell/sidecar/`
+>   `server.ts` 的 `MOUNTED` 表不含这些模块；本机残留的编译产物（`.js`）未被
+>   git 跟踪；反向守门测试 `dsh-desktop/test/minimal-core-boundary.test.ts` 已
+>   断言 `lib/{supervisor,extension-host,recovery-center}` 下不得有 `.js` 残留。
+> - **保留说明**：`dsh-desktop/native/{supervisor,snapshot}/`（Rust 源码 +
+>   预编译 `index.node`）是 **git 追踪资产**，本次裁废**不等于删除**；其去留由
+>   `工程控制/EAC-ISOLATION-SYNC-02/tasks/ISO-003.md` 另案裁决。
+> - 本文保留作为历史设计记录，**不再作为实现依据**。
 
 ## 背景
 

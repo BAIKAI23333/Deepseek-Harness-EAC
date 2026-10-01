@@ -3,9 +3,11 @@
  * 插件来源台账校验（零依赖，CI 可直接跑）
  *
  * 校验 assets/SOURCES.json 与仓库实际状态一致：
- *  1. 台账结构：枚举值、必填字段、(id,line) 唯一
+ *  1. 台账结构：枚举值、必填字段、(id,line) 唯一、pathBaseline 格式
  *  2. main 线路径存在性 + package.json 版本/包名一致性
- *  3. 完整性：assets/{plugins,skins,agent-presets,sdk-plugins} 下每个目录都有台账条目
+ *     （带 pathBaseline 的历史基线条目不校验存在性：其 path 相对的是
+ *     该线在指定 commit 的树，条目描述的是已从本检出树剥离/外迁的资产）
+ *  3. 完整性：当前树受控目录（assets/plugins）下每个目录都有台账条目
  *  4. origin 约束：upstream 必须有 upstream.repository；unresolved 必须有 candidates
  *
  * 用法：node scripts/plugin-ledger.mjs [--report]
@@ -23,12 +25,14 @@ const REPORT_ONLY = process.argv.includes('--report');
 const ORIGINS = ['upstream', 'eac-original', 'unresolved', 'unverified'];
 const TYPES = ['plugin', 'skin', 'preset', 'sdk-sample', 'source-copy', 'seed', 'host-fused'];
 const LINES = ['main', 'aio-v1'];
-// main 线受控目录 → 台账必须覆盖
+// path 基准：缺省 = 当前检出树（main 线路径必须存在）；
+// 显式声明 `<line>@<40位 commit>` = path 相对该线在该 commit 的历史树
+// （条目已从当前树剥离/外迁，存在性不再适用，但线别必须与 line 一致）。
+const BASELINE_RE = /^(main|aio-v1)@[0-9a-f]{40}$/;
+// 当前检出树受控目录 → 台账必须覆盖（只声明真实存在的 root；
+// assets/{skins,agent-presets,sdk-plugins} 已随皮肤平台外迁/精简树剥离）
 const SCOPES = [
-  'assets/plugins',
-  'assets/skins',
-  'assets/agent-presets',
-  'assets/sdk-plugins',
+  'dsh-desktop/assets/plugins',
 ];
 
 const errors = [];
@@ -60,6 +64,13 @@ for (const c of comps) {
   if (!TYPES.includes(c.type)) fail(`${tag}: type 非法 "${c.type}"`);
   if (!LINES.includes(c.line)) fail(`${tag}: line 非法 "${c.line}"`);
   if (!c.path && c.type !== 'host-fused') fail(`${tag}: 缺 path`);
+  if (c.pathBaseline !== undefined) {
+    if (typeof c.pathBaseline !== 'string' || !BASELINE_RE.test(c.pathBaseline)) {
+      fail(`${tag}: pathBaseline 非法 "${c.pathBaseline}"（须为 <line>@<40位 commit>）`);
+    } else if (c.pathBaseline.split('@')[0] !== c.line) {
+      fail(`${tag}: pathBaseline 线别 ${c.pathBaseline.split('@')[0]} 与 line ${c.line} 不一致`);
+    }
+  }
   if (c.origin === 'upstream' && !c.upstream?.repository) {
     fail(`${tag}: origin=upstream 必须提供 upstream.repository`);
   }
@@ -68,10 +79,18 @@ for (const c of comps) {
   }
 }
 
-// --- main 线文件系统校验 ---
+// --- main 线文件系统校验（只校验相对当前检出树的路径）---
 let versionChecked = 0;
+let baselinePinned = 0;
+let treeChecked = 0;
 for (const c of comps) {
   if (c.line !== 'main' || !c.path) continue;
+  if (c.pathBaseline) {
+    // 历史基线行：path 相对该线的历史树，目录本就不在当前检出树里。
+    baselinePinned++;
+    continue;
+  }
+  treeChecked++;
   const abs = join(repoRoot, c.path);
   if (!existsSync(abs)) {
     fail(`${c.id}/${c.name}: 路径不存在 ${c.path}`);
@@ -157,6 +176,7 @@ const manifestCount = comps.filter(
 ).length;
 
 console.log(`[plugin-ledger] 组件 ${comps.length} 条（main ${comps.filter((c) => c.line === 'main').length} / aio-v1 ${comps.filter((c) => c.line === 'aio-v1').length}）`);
+console.log(`[plugin-ledger] 路径：当前树校验 ${treeChecked} 条 / 历史基线条目 ${baselinePinned} 条（已剥离出本树，不校验存在性）`);
 console.log(`[plugin-ledger] origin: ${JSON.stringify(byOrigin)}`);
 console.log(`[plugin-ledger] type:   ${JSON.stringify(byType)}`);
 console.log(`[plugin-ledger] 版本校验 ${versionChecked} 个 package.json；manifest 校验 ${manifestChecked} 份 / 共 ${manifestCount} 份随包`);
