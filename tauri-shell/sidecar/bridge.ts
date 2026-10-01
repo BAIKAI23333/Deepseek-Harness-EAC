@@ -826,7 +826,12 @@
           isMainFrame: true,
         };
       }
-      dispatchGuestEvent(el, params.event, extra);
+      // 载荷传入派发（对齐本节头注「载荷键直接挂在事件上」的 Electron 事件形态）：
+      // url/title 随帧挂上同名事件（did-navigate 的 event.url 此前恒 undefined，
+      // 仅 did-fail-load 有载荷键），isMainFrame preset 覆盖 did-start-navigation /
+      // did-navigate-in-page（消费者 client.js:1180-1210 读这两个键）；did-fail-load
+      // 的 errorCode/errorDescription 保持 extra 优先（同键覆盖）。
+      dispatchGuestEvent(el, params.event, extra ? Object.assign({}, payload, extra) : payload);
     }
   }
 
