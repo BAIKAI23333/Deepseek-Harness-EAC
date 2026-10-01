@@ -64,7 +64,14 @@ test('kernel manifest rewrite is restored after success and failure', () => {
 });
 
 test('staging blocks lifecycle scripts and explicitly reapplies dependency patches', () => {
-  assert.match(stageResources, /npm ci --omit=dev --ignore-scripts/);
+  // P0 修订（ADR 0004）：装配不再在 staged 树里跑 npm ci —— lockfile 中
+  // file:vendor/kernel 条目的 integrity 与磁盘 tarball 不一致，npm ci 必然
+  // EINTEGRITY，并在回滚时撞 EPERM。生产依赖改为从 dsh-desktop/node_modules
+  // 离线复制（stage-node-modules.mjs），因此「禁止生命周期脚本」这条约束
+  // 改为断言：装配路径里不存在任何 npm 安装调用，且补丁仍显式重放。
+  assert.doesNotMatch(stageResources, /execSync\(\s*[`'"]npm (ci|install)/, '不得在装配期执行 npm ci/install');
+  assert.doesNotMatch(stageResources, /--ignore-scripts/);
+  assert.match(stageResources, /stageProductionNodeModules/);
   assert.match(stageResources, /patch-deps\.js/);
 });
 

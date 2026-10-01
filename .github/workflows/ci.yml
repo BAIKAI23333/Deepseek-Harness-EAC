@@ -63,9 +63,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # dsh-dpx 是安装环境隔离的唯一实现（ADR 0004，固定提交）。
+          # 不取 submodule 会让隔离测试整片 skip 成「假绿」。
+          submodules: recursive
 
       - name: Verify native runner architecture
         run: node -e "if (process.arch !== '${{ matrix.arch }}') throw new Error('expected ${{ matrix.arch }}, got ' + process.arch)"
+
+      - name: Verify dsh-dpx submodule pin
+        working-directory: ${{ github.workspace }}
+        run: node tauri-shell/check-dpx-pin.mjs
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -159,7 +167,7 @@ jobs:
 
       - name: Prepare Tauri resource directory for Rust tests
         working-directory: ${{ github.workspace }}
-        run: node -e "const fs=require('node:fs'); const root='tauri-shell'; const staged=root+'/staged-resources'; fs.mkdirSync(staged+'/sidecar',{recursive:true}); fs.mkdirSync(staged+'/dsh-desktop',{recursive:true}); fs.copyFileSync(root+'/sidecar/bridge.js',staged+'/sidecar/bridge.js'); fs.cpSync(root+'/artifacts',staged+'/ui-skin-manager',{recursive:true}); fs.copyFileSync(root+'/skin-manager-artifact.lock.json',staged+'/ui-skin-manager/artifact.lock.json')"
+        run: node -e "const fs=require('node:fs'); const root='tauri-shell'; const staged=root+'/staged-resources'; fs.mkdirSync(staged+'/sidecar',{recursive:true}); fs.mkdirSync(staged+'/dsh-desktop',{recursive:true}); fs.copyFileSync(root+'/sidecar/bridge.js',staged+'/sidecar/bridge.js'); fs.cpSync(root+'/artifacts',staged+'/ui-skin-manager',{recursive:true}); fs.copyFileSync(root+'/skin-manager-artifact.lock.json',staged+'/ui-skin-manager/artifact.lock.json'); fs.mkdirSync(staged+'/dpx/src',{recursive:true}); for (const f of ['index.js','desktop-release.js','environment-guide.js','http.js']) fs.copyFileSync('third_party/dsh-dpx/src/'+f, staged+'/dpx/src/'+f); fs.copyFileSync('third_party/dsh-dpx/package.json', staged+'/dpx/package.json'); fs.writeFileSync(staged+'/dpx/LICENSE','dsh-dpx - MIT License\n')"
 
       - name: Set up stable Rust
         uses: dtolnay/rust-toolchain@stable
@@ -225,9 +233,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # dsh-dpx 是安装环境隔离的唯一实现（ADR 0004，固定提交）。
+          # 不取 submodule 会让隔离测试整片 skip 成「假绿」。
+          submodules: recursive
 
       - name: Verify native runner architecture
         run: node -e "if (process.arch !== '${{ matrix.arch }}') throw new Error('expected ${{ matrix.arch }}, got ' + process.arch)"
+
+      - name: Verify dsh-dpx submodule pin
+        working-directory: ${{ github.workspace }}
+        run: node tauri-shell/check-dpx-pin.mjs
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
