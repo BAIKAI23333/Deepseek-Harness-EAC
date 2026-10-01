@@ -117,19 +117,29 @@
   // ---------------------------------------------------------------------------
   // window.dshDesktop（v6 Task 3.1 · 官方契约 + 壳最小控制面）
   //
-  // 面收敛依据（ADR 0006 v5）：只保留「官方保留的接口」——
-  //   1. 官方 dshDesktop 契约（对照内核 apps/desktop/src/ipc.ts 的
-  //      DshDesktopApi：protocolVersion / keyboard / locale / plugins / updates；
-  //      keyboard 为 SYNC-001 接回 —— 官方 shortcuts 包检测到 data-platform
-  //      即硬依赖它）；
-  //      其中 plugins.* 与 updates.* 的能力随最简本体剥出，按官方返回形态
-  //      给出空实现（list → []，check → idle），接回时替换实现体即可。
+  // 面收敛依据（ADR 0006 v5 裁决 + 2026-10-01 SYNC-007 契约勘误，勘误见
+  // ADR 0006「官方契约依据」节）：只保留「官方保留的接口」——
+  //   1. 官方 dshDesktop 契约 = 内核 apps/desktop/src/ipc.ts:71-81 的
+  //      DshDesktopProductApi：protocolVersion / browser / keyboard /
+  //      shortcuts / updates.{status,open,subscribe}（0.2.0 另增 deviceInfo）。
+  //      v5 曾把契约误写为「locale()/plugins.*/updates.{check,install}」——
+  //      官方全包 grep 无此三面消费者，属误读，已勘误。keyboard 为
+  //      SYNC-001 接回（官方 shortcuts 包检测到 data-platform 即硬依赖），
+  //      shortcuts 为 SYNC-005 接回，browser 为 SYNC-006 接回，
+  //      updates.status/subscribe 为 SYNC-005 接回的真实事件源。
   //   2. 壳最小控制面：windowControls（窗口控制，主窗 decorations(false)
   //      自绘标题栏必需）+ boot（拉起/停止/查询 dsh web）。
-  // 其余 EAC 自造面（chrome.init / menu.* / files.* / balance.* / phone.* /
-  // guard.* / rc.* / rescue.* / recovery.* / onboard.* / wizard.* / service.* /
-  // profile.* / float.* / imagePaste / fileDrop / copyText / openExternal /
-  // openPath / getPathForFile）全部移除。
+  // 无主面（官方无、零消费者，SYNC-007 删除）：locale()（职责归官方
+  //      __DSH_LOCALE__，SYNC-002）、plugins.*（与 EAC 自有 pluginManager.*
+  //      重叠，官方插件管理走 host 远程面）、updates.{check,install}
+  //     （官方只有 status/open/subscribe）、getPathForFile（职责归官方
+  //      __DSH_HOST_PATHS__.pathFor，SYNC-003）。
+  // 其余 EAC 自造面（chrome.init / menu.* / rc.* / rescue.* / recovery.* /
+  // onboard.* / wizard.* / service.* / profile.* / float.* / imagePaste /
+  // copyText / phoneBridge / pluginWizard / balance* / pluginUpdates）继续
+  // 退役（STILL_RETIRED 锁定）；fileDrop / pluginManager / guard / getInfo /
+  // revertFiles / openPath / openExternal 为 Task 3.3 接回的 EAC 自有面
+  //（见下方「v6 Task 3.3 接回」区），非官方契约、非无主面。
   // ---------------------------------------------------------------------------
   function unavailable(capability: string): Promise<never> {
     return Promise.reject(new Error('capability "' + capability + '" is not bundled in the v6 minimal core'));
@@ -278,7 +288,7 @@
   // 如实 idle）；subscribe 在 0→1/1→0 时 call('updates.subscribe'/
   // 'updates.unsubscribe') 交 sidecar 启停文件变化监听，状态变化经
   // notify('updates.presentation') 推送。open 保持退役 reject（既有锁定），
-  // check/install 无主面留 SYNC-007 处置。
+  // check/install 无主面已由 SYNC-007 删除（官方无此二方法，全包无消费者）。
   // ---------------------------------------------------------------------------
   var UPDATE_PHASES = ['idle', 'checking', 'available', 'downloading', 'verifying', 'installing', 'ready', 'error'];
   var updateListeners: ((presentation: unknown) => void)[] = [];
@@ -305,6 +315,109 @@
       }
     } catch (e) { /* 通知帧畸形不炸桥 */ }
   });
+
+  // ---------------------------------------------------------------------------
+  // deviceInfo（KERN-004 · 0.2.0 新增官方契约键）
+  //
+  // 契约：内核 apps/desktop/src/ipc.ts:81 DshDesktopProductApi.deviceInfo ——
+  //   `deviceInfo(): Promise<string>`（官方 preload-app.ts:17 即
+  //   ipcRenderer.invoke 透传 Promise<string>）。
+  // 官方消费者调研（0.2.0 ui-settings-account client.js:4357 contactUs）：取
+  //   globalThis.dshDesktop?.deviceInfo 调用一次，结果作为 prefill_device_info
+  //   拼进「联系我们」问卷 URL；桥键缺失回退 navigator.userAgent，Promise
+  //   reject 回退空串。
+  //
+  // 形态决策（任务卡「先看官方 0.2.0 消费者怎么用它再定形态」）：官方主进程
+  //   实现（0.2.0 apps/desktop/src/device-info.ts readDeviceInfo）是机器描述串
+  //   —— `name=value` 字段以 '; ' 连接（platform/os/app_arch/cpu/memory_gib，
+  //   来源不可用即整段省略）；ipc.ts JSDoc 明确「no hostname, user name, or
+  //   serial number」。任务卡原案「壳侧稳定设备 ID（L1 持久化/userData 自持）」
+  //   会把持久标识经第三方问卷（飞书表单）外泄，违背官方隐私语义 —— 不采用，
+  //   对齐官方机器描述形态（任务卡同一行「对齐官方 0.2.0 语义」为准）。
+  //
+  // 实现位置：页面层就地组装，不经 sidecar。sidecar server.ts / Rust main.rs
+  //   不在本任务改动域；且官方五字段中 cpu 型号与物理总内存无页面等价观测
+  //   （hardwareConcurrency 是核数、deviceMemory 是封顶 8GiB 的分桶近似，均非
+  //   官方 cpus()/totalmem() 语义，宁缺勿假），按官方 collect 语义省略；
+  //   platform/os/app_arch 以 navigator.userAgent 复现，app_arch 优先取
+  //   UA-CH 高熵提示（Windows-on-Arm 的 UA 兼容层仍标 Win64; x64，UA-CH 才是
+  //   真实架构）。已知保真度缺口：Windows UA 大版本在 Win10/11 均冻结为
+  //   NT 10.0，真实 build 号（官方 os=10.0.22000）页面层不可观测 —— 如实
+  //   上报可见版本。
+  //
+  // 保底：platform 是官方无条件在首的字段（device-info.ts:11），本实现同构
+  //   —— 任何观测失败也至少返回 platform= 一项且绝不 reject（消费者对
+  //   reject 的降级是空串，比缺字段更差）。
+  // ---------------------------------------------------------------------------
+  function detectDevicePlatform(): string {
+    // 官方标 process.platform 原值（win32/darwin/linux），与 data-platform 的
+    // 归一化值域（windows/macos/linux）不同源，此处映射回官方原值。
+    var normalized = detectShellPlatform();
+    return normalized === 'windows' ? 'win32' : normalized === 'macos' ? 'darwin' : 'linux';
+  }
+
+  // UA 里的 OS 版本（官方 process.getSystemVersion() 的页面等价观测）：
+  // Windows NT x.y / Mac OS X x_y_z / Android x.y / 常见 Linux 发行版 x.y。
+  function deviceOsFromUa(ua: string): string | null {
+    var m: RegExpExecArray | null;
+    var v: string | undefined;
+    m = /Windows NT ([0-9][0-9.]*)/.exec(ua); v = m ? m[1] : undefined; if (v) return v;
+    m = /Mac OS X ([0-9][0-9_]*)/.exec(ua); v = m ? m[1] : undefined; if (v) return v.replace(/_/g, '.');
+    m = /Android ([0-9][0-9.]*)/.exec(ua); v = m ? m[1] : undefined; if (v) return v;
+    m = /(?:Ubuntu|Fedora|Deepin|UOS|openSUSE|Linux Mint)[ /]([0-9][0-9.]*)/.exec(ua); v = m ? m[1] : undefined; if (v) return v;
+    return null; // 官方 collect 语义：来源不可用即省略
+  }
+
+  // 架构映射到官方 process.arch 值域（x64/ia32/arm64/arm）。
+  function mapUaChArch(architecture: unknown, bitness: unknown): string | null {
+    if (typeof architecture !== 'string' || architecture === '') return null;
+    if (architecture === 'x86') {
+      if (bitness === '64') return 'x64';
+      if (bitness === '32') return 'ia32';
+      return null;
+    }
+    if (architecture === 'arm') return bitness === '64' ? 'arm64' : 'arm';
+    return architecture;
+  }
+
+  function deviceArchFromUa(ua: string): string | null {
+    if (/arm64|aarch64/i.test(ua)) return 'arm64';
+    if (/x64|win64|wow64|x86_64|amd64/i.test(ua)) return 'x64';
+    if (/armv[1-7]|arm[;) ]/i.test(ua)) return 'arm';
+    if (/i[3-6]86/.test(ua)) return 'ia32';
+    return null;
+  }
+
+  // 组装（纯函数，vm 单测可直接断言）：官方 device-info.ts readDeviceInfo 的
+  // 同构实现 —— 字段序 platform/os/app_arch/cpu/memory_gib，缺观测整段省略。
+  function composeDeviceInfo(archHint: string | null): string {
+    var fields = ['platform=' + detectDevicePlatform()];
+    try {
+      var os = deviceOsFromUa(String(navigator.userAgent || ''));
+      if (os) fields.push('os=' + os);
+    } catch (e) { /* 无 navigator（vm 单测）即省略 */ }
+    var arch = archHint;
+    if (!arch) {
+      try { arch = deviceArchFromUa(String(navigator.userAgent || '')); } catch (e) { arch = null; }
+    }
+    if (arch) fields.push('app_arch=' + arch);
+    // cpu/memory_gib：页面层无官方语义等价观测，按官方 collect 语义省略。
+    return fields.join('; ');
+  }
+
+  function requestDeviceInfo(): Promise<string> {
+    var uad: any = null;
+    try { uad = (navigator as any).userAgentData || null; } catch (e) { /* vm 无 navigator */ }
+    if (uad && typeof uad.getHighEntropyValues === 'function') {
+      return uad.getHighEntropyValues(['architecture', 'bitness']).then(
+        function (hints: any) {
+          return composeDeviceInfo(mapUaChArch(hints && hints.architecture, hints && hints.bitness));
+        },
+        function () { return composeDeviceInfo(null); },
+      );
+    }
+    return Promise.resolve(composeDeviceInfo(null));
+  }
 
   (window as any).dshDesktop = {
     // ---- 官方 dshDesktop 契约 ----
@@ -377,16 +490,13 @@
         };
       },
     },
-    locale: function () {
-      try { return Promise.resolve(String((navigator && navigator.language) || 'zh-CN')); }
-      catch (e) { return Promise.resolve('zh-CN'); }
-    },
-    plugins: {
-      list: function () { return Promise.resolve([]); },
-      add: function () { return unavailable('plugin-install'); },
-      remove: function () { return unavailable('plugin-install'); },
-      update: function () { return unavailable('plugin-install'); },
-    },
+    // KERN-004：0.2.0 新增官方契约键（ipc.ts:81 DshDesktopProductApi.deviceInfo，
+    // 官方消费者 ui-settings-account client.js:4357 contactUs）—— 反馈问卷的
+    // 本地机器描述。形态与实现位置决策见上方 deviceInfo 区注释。
+    deviceInfo: function (): Promise<string> { return requestDeviceInfo(); },
+    // SYNC-007 删除无主面 locale()/plugins.*：官方 DshDesktopProductApi 无此
+    // 二面且全包零消费者 —— 语言面由官方 __DSH_LOCALE__（SYNC-002，见下方）
+    // 承担，插件管理由 EAC 自有 pluginManager.*（Task 3.3 接回）承担。
     updates: {
       // SYNC-005：真实更新态（sidecar 以真实更新链落盘待办映射官方
       // DesktopUpdatePresentation，见 server.ts updates 区注释）。
@@ -396,10 +506,9 @@
         });
       },
       // 退役语义（ADR 0006 · bridge-preload-parity.test.ts 锁定）：原生确认框
-      // 与更新主面未接回，保持 reject。check/install 无主面，留 SYNC-007。
+      // 与更新主面未接回，保持 reject。check/install 无主面已由 SYNC-007 删除
+      //（官方无此二方法；官方消费者 DesktopUpdateSource 仅用 status/subscribe/open）。
       open: function () { return unavailable('client-update'); },
-      check: function () { return Promise.resolve({ phase: 'idle' }); },
-      install: function () { return unavailable('client-update'); },
       // 订阅真实事件流：sidecar 监听 settings.json 变化（真实更新态来源），
       // 变化经 notify('updates.presentation') 推送；0→1/1→0 交 sidecar 启停
       // 监听。返回 disposer。
@@ -480,8 +589,9 @@
     fileDrop: {
       save: function (payload: Record<string, unknown>) { return call('file-drop.save', payload || {}); },
     },
-    // 浏览器环境无 File 磁盘路径：与 v5 一致返回空串，插件据此降级为可读提示。
-    getPathForFile: function (): string { return ''; },
+    // SYNC-007 删除无主面 getPathForFile：官方路径面是 __DSH_HOST_PATHS__.pathFor
+    //（SYNC-003，见下方），本键 v5 起恒返空串、全包零消费者，已删 —— 插件一律
+    // 走官方面取真实磁盘路径。
     // 壳信息（v6 语义：等同 boot.state；staticPort 恒 0，静态预览服务随
     // 插件面剥出，客户端按既有契约回退宿主路由）。
     getInfo: function () { return call('boot.state', {}); },

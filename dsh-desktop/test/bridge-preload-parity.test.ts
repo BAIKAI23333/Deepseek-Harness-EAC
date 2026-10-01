@@ -95,19 +95,32 @@ const bridgeTree = extractKeyTree(bridge, '(window as any).dshDesktop =');
 //   B. 已接回组 —— 随插件接回恢复的 EAC 面，锁定「接回的不得回退」；
 // 未接回的能力（menu / floatWindow / pluginWizard / balance* / recovery 等）
 // 显式列为「不得出现」，防止以接回为名把 v6 收敛成果整体回退。
-const ALWAYS_PRESENT = ['protocolVersion', 'locale', 'plugins', 'updates', 'windowControls', 'boot',
+// SYNC-007（2026-10-01，控制包 EAC-ISOLATION-SYNC-02）：官方真实契约是
+// DshDesktopProductApi（ipc.ts:71-81）= protocolVersion/browser/keyboard/
+// shortcuts/updates.{status,open,subscribe}——官方没有 locale()/plugins.*/
+// updates.{check,install}/getPathForFile（全包 grep 零消费者），这四个
+// 无主面已从桥上删除（locale→__DSH_LOCALE__、getPathForFile→
+// __DSH_HOST_PATHS__.pathFor 取代），并入「不得出现」组锁定不得回归。
+const ALWAYS_PRESENT = ['protocolVersion', 'updates', 'windowControls', 'boot',
   // SYNC-001：官方 DesktopKeyboardApi —— dsh-client-shortcuts 检测到
   // data-platform 即硬依赖 keyboard（client.js:1854-1855），缺一即 throw。
-  'keyboard'];
-const RESTORED_BY_TASK_3_3 = ['pluginManager', 'guard', 'fileDrop', 'getPathForFile',
+  'keyboard',
+  // KERN-004：0.2.0 新增官方契约键 DshDesktopProductApi.deviceInfo
+  // （ipc.ts:81），官方消费者 ui-settings-account client.js:4357 contactUs
+  // 读取（缺失回退 navigator.userAgent）—— 账号页反馈问卷依赖。
+  'deviceInfo'];
+const RESTORED_BY_TASK_3_3 = ['pluginManager', 'guard', 'fileDrop',
   'getInfo', 'revertFiles', 'openPath', 'openExternal'];
 // 依据 metaone01 2026-09-19 的裁决（按 ADR 0006）：
 //  - balance 不作内置，转为推荐插件（Task 4 范围）；其 balance* RPC 面不接回；
 //  - plugin-wizard 因后续会与其它插件管理功能冲突，明确不接入。
 // 因此下面这些键为**终态契约**（不再是"待裁决"状态），不得回归。
+// SYNC-007 追加：locale/plugins 为 v5 误认的「官方契约」，实为无主面，已删。
 const STILL_RETIRED = ['menu', 'floatWindow', 'phoneBridge', 'pluginUpdates', 'imagePaste',
   'balancePrices', 'balanceModels', 'refreshBalance', 'restartService', 'copyText',
-  'pluginWizard', 'recovery', 'rescue'];
+  'pluginWizard', 'recovery', 'rescue',
+  // SYNC-007：官方无此二面（真实契约见 ALWAYS_PRESENT 注释），零消费者已删。
+  'locale', 'plugins'];
 
 test('bridge dshDesktop exposes the required namespaces（preload 退役后的单侧契约）', () => {
   // 基线锚点：防止解析器写歪导致解析出空树「假绿」。
@@ -123,6 +136,116 @@ test('bridge dshDesktop exposes the required namespaces（preload 退役后的�
     assert.ok(!tops.includes(dead), `bridge 不得回退已收敛能力: ${dead}`);
   }
   assert.ok(bridgeTree.windowControls.length >= 5, 'windowControls subkeys parsed');
+});
+
+test('SYNC-007: masterless faces must not regress（官方无此面的键一律不得回桥）', async () => {
+  // SYNC-007（2026-10-01，控制包 EAC-ISOLATION-SYNC-02）删除的四个无主面：
+  // 官方 DshDesktopProductApi（内核 apps/desktop/src/ipc.ts:71-81）没有
+  // locale()/plugins.*/updates.{check,install}/getPathForFile，0.1.7 与
+  // 0.2.0 全包 grep 零消费者（v5 曾把前三者误当官方契约，ADR 0006 已勘误）。
+  // 职责去向：locale → __DSH_LOCALE__（SYNC-002）；getPathForFile →
+  // __DSH_HOST_PATHS__.pathFor（SYNC-003）；插件管理 → EAC 自有
+  // pluginManager.*（Task 3.3 接回）；updates 只留官方 status/open/subscribe。
+  // 静态键集：顶层与 updates 命名空间均不得再出现（连同上测 STILL_RETIRED）。
+  assert.ok(!('locale' in bridgeTree), 'locale must stay removed（SYNC-007）');
+  assert.ok(!('plugins' in bridgeTree), 'plugins must stay removed（SYNC-007）');
+  assert.ok(!bridgeTree.updates.includes('check'), 'updates.check must stay removed（SYNC-007）');
+  assert.ok(!bridgeTree.updates.includes('install'), 'updates.install must stay removed（SYNC-007）');
+
+  // 运行时键面：等价 WebView2 注入序列，桥跑完后逐键验证不存在。
+  const window: any = {
+    addEventListener() {},
+    __DSH_WS_RPC__: () => ({ onNotify() {}, send() {}, call: async () => ({}) }),
+  };
+  runInNewContext(stripTypeScriptTypes(bridge), {
+    window,
+    document: { readyState: 'loading', documentElement: { setAttribute() {} }, addEventListener() {} },
+    navigator: { platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+    setInterval() {},
+    setTimeout() {},
+  });
+  const dsh = window.dshDesktop;
+  assert.equal(dsh.locale, undefined,
+    'dshDesktop.locale must stay removed（SYNC-007：语言面由 __DSH_LOCALE__ 承担）');
+  assert.equal(dsh.plugins, undefined,
+    'dshDesktop.plugins must stay removed（SYNC-007：插件管理由 EAC 自有 pluginManager.* 承担）');
+  assert.equal(dsh.updates.check, undefined,
+    'dshDesktop.updates.check must stay removed（SYNC-007：官方只有 status/open/subscribe）');
+  assert.equal(dsh.updates.install, undefined,
+    'dshDesktop.updates.install must stay removed（SYNC-007：同上）');
+  assert.equal(dsh.getPathForFile, undefined,
+    'dshDesktop.getPathForFile must stay removed（SYNC-007：路径面由 __DSH_HOST_PATHS__.pathFor 承担）');
+
+  // 删除不造成能力真空：官方替代面必须同批在场且可用。
+  assert.equal(typeof window.__DSH_LOCALE__?.read, 'function',
+    '__DSH_LOCALE__.read must remain (replaces locale())');
+  assert.equal(typeof window.__DSH_HOST_PATHS__?.pathFor, 'function',
+    '__DSH_HOST_PATHS__.pathFor must remain (replaces getPathForFile)');
+  // updates 面恰为官方三方法，open 保持退役 reject。
+  assert.deepEqual(Object.keys(dsh.updates).sort(), ['open', 'status', 'subscribe']);
+  await assert.rejects(dsh.updates.open(), /capability "client-update"/);
+});
+
+test('KERN-004: deviceInfo returns the official 0.2.0 machine-description form', async () => {
+  // 官方契约：DshDesktopProductApi.deviceInfo（0.2.0 ipc.ts:81）—— 反馈问卷的
+  // 本地机器描述，`name=value` 字段以 '; ' 连接，且「no hostname, user name,
+  // or serial number」（ipc.ts JSDoc）。官方消费者 ui-settings-account
+  // client.js:4357 contactUs 调用一次拼 prefill_device_info，缺失回退
+  // navigator.userAgent，reject 回退空串。官方主进程实现见 0.2.0
+  // apps/desktop/src/device-info.ts（platform 无条件在首，来源不可用整段省略）。
+  const run = (navigatorObj: Record<string, unknown>) => {
+    const window: any = {
+      addEventListener() {},
+      __DSH_WS_RPC__: () => ({ onNotify() {}, send() {}, call: async () => ({}) }),
+    };
+    runInNewContext(stripTypeScriptTypes(bridge), {
+      window,
+      document: { readyState: 'loading', documentElement: { setAttribute() {} }, addEventListener() {} },
+      navigator: navigatorObj,
+      setInterval() {},
+      setTimeout() {},
+    });
+    return window.dshDesktop;
+  };
+
+  // 1) 形态：Windows WebView2 UA → platform=os=app_arch 三字段，'; ' 连接，
+  //    值域与官方 process.platform/process.arch 一致（win32/x64）。
+  const win = run({ platform: 'Win32', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0' });
+  assert.equal(typeof win.deviceInfo, 'function', 'dshDesktop.deviceInfo must be exposed（ipc.ts:81）');
+  assert.equal(await win.deviceInfo(), 'platform=win32; os=10.0; app_arch=x64');
+
+  // 2) UA-CH 优先：Windows-on-Arm 的 UA 兼容层仍标 Win64; x64，UA-CH 才是
+  //    真实架构（x86+64 → x64 / arm+64 → arm64，官方 process.arch 值域）。
+  //    注：hints 断言在 mock 外做 —— mock 内抛错会走桥的 reject 降级路径，
+  //    把断言失败伪装成降级成功。
+  let requestedHints: unknown = null;
+  const uach = run({
+    platform: 'Win32',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    userAgentData: { getHighEntropyValues: async (hints: unknown) => {
+      requestedHints = hints;
+      return { architecture: 'arm', bitness: '64' };
+    } },
+  });
+  assert.equal(await uach.deviceInfo(), 'platform=win32; os=10.0; app_arch=arm64');
+  // vm realm 数组原型与宿主不同 —— 先 JSON 归一再比（同 keyboard 测试先例）。
+  assert.deepEqual(JSON.parse(JSON.stringify(requestedHints)), ['architecture', 'bitness'],
+    'UA-CH must request exactly architecture+bitness');
+
+  // 3) 降级：UA 不可观测的字段整段省略（官方 collect 语义），platform 恒在
+  //    （官方 device-info.ts:11 无条件首字段），绝不 reject。
+  const bare = run({ platform: 'Win32' });
+  assert.equal(await bare.deviceInfo(), 'platform=win32');
+
+  // 4) 隐私契约：任何路径都不得返回 hostname/用户名/序列号形态的持久标识
+  //    （ipc.ts JSDoc「no hostname, user name, or serial number」；本实现
+  //    纯由 UA/UA-CH 组装，无持久化来源）。
+  for (const dsh of [win, uach, bare]) {
+    const info = await dsh.deviceInfo();
+    assert.ok(!/hostname|user(name)?=|serial|uuid|[0-9a-f]{8}-[0-9a-f]{4}/i.test(info),
+      `deviceInfo must not carry persistent identifiers: ${info}`);
+    assert.match(info, /^platform=(win32|darwin|linux)/, 'platform must lead the description');
+  }
 });
 
 test('bridge keeps the introspection escape hatch for shell pages', () => {
@@ -476,14 +599,15 @@ test('rc.2 settings update consumer can initialize with the desktop bridge', asy
   const updates = window.dshDesktop.updates;
   const consumer = new Consumer(updates);
   // SYNC-005：status 改为经 WS call（真实更新态）→ 桥侧归一，比旧恒 idle 桩多
-  // 一层微任务 —— 宏任务 setTimeout(0) 等回包链跑完再断言（open 拒绝与 check
-  // 形态的锁定不变）。
+  // 一层微任务 —— 宏任务 setTimeout(0) 等回包链跑完再断言（open 拒绝锁定
+  // 不变；check/install 无主面已由 SYNC-007 删除，见下方断言）。
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(consumer.store.getSnapshot().presentation.phase, 'idle');
   assert.equal(consumer.store.getSnapshot().failed, false);
   assert.equal(typeof updates.open, 'function');
   await assert.rejects(updates.open(), /capability "client-update"/);
-  assert.equal((await updates.check()).phase, 'idle');
+  assert.equal(updates.check, undefined,
+    'updates.check must stay removed（SYNC-007：官方无此面，消费者仅用 status/subscribe/open）');
   consumer.dispose();
 });
 
@@ -494,9 +618,9 @@ test('SYNC-005: shortcuts namespace locked to the official DesktopShortcutsApi c
   assert.match(bridge, /\bshortcuts: \{/, 'bridge must expose window.dshDesktop.shortcuts（官方 ipc.ts:75 同名同层）');
   assert.deepEqual([...bridgeTree.shortcuts].sort(), ['edit', 'get', 'recording', 'subscribe'],
     `shortcuts namespace drift: ${bridgeTree.shortcuts.join(',')}`);
-  // updates 键面不漂移：真实 status/subscribe（SYNC-005）+ 退役 open + 无主面
-  // check/install（SYNC-007 处置）。
-  assert.deepEqual([...bridgeTree.updates].sort(), ['check', 'install', 'open', 'status', 'subscribe'],
+  // updates 键面不漂移：真实 status/subscribe（SYNC-005）+ 退役 open；
+  // 无主面 check/install 已由 SYNC-007 删除（官方 updates 恰为三方法）。
+  assert.deepEqual([...bridgeTree.updates].sort(), ['open', 'status', 'subscribe'],
     `updates namespace drift: ${bridgeTree.updates.join(',')}`);
   // updates.open 退役语义锁定（不得改回任何实现形态）。
   assert.match(bridge, /open: function \(\) \{ return unavailable\('client-update'\); \}/,

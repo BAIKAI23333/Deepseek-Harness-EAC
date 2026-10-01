@@ -89,8 +89,17 @@ function patchSettingsNavScroll(): void {
 //      自身滚动约束，panel 的 overflow:auto 不会产生意外滚动条；min-width
 //      防拖到不可用。幂等标记 dsh-desktop-panel-resize。
 const PANEL_RESIZE_MARKER = 'dsh-desktop-panel-resize';
+// 0.1.7 世代：z-index → background → width → max-width → height → … → overflow。
 const PANEL_RE =
   /\.([A-Za-z0-9_-]+)_panel\{(z-index:1;background:var\(--dsw-alias-bg-layer-2\);)width:800px;(max-width:[^;]+;height:[^;]+;[^{}]*?display:flex;position:relative;)overflow:hidden\}/;
+// 0.2.0 世代（KERN-004）：官方重构了属性序与高度公式（width:800px → height:
+// min(800px, calc(100vh - 2*max(24px, var(--dsh-frame-overlay-top,24px)))) →
+// border-radius → background → max-width → box-shadow → scrollbar vars →
+// display:flex;position:relative;overflow:hidden）。功能未官方化（panel 仍固定
+// 800px 宽 + overflow:hidden），只做锚点适配：宽匹配块 + 守卫（display:flex;
+// position:relative 与 max-width: 必须在块内，确保命中的是设置弹窗 panel 本体）。
+const PANEL_RE_V2 =
+  /\.([A-Za-z0-9_-]+)_panel\{([^{}]*?)width:800px;([^{}]*?)overflow:hidden\}/;
 
 function patchSettingsPanelResize(): void {
   const file = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-ui-settings-general', 'lib', 'client.js');
@@ -105,7 +114,23 @@ function patchSettingsPanelResize(): void {
   }
   const m = PANEL_RE.exec(src);
   if (!m) {
-    console.log('[patch-deps] 设置弹窗未匹配到 panel CSS（上游版本可能已修复/更新），跳过');
+    // KERN-004：0.2.0 世代锚点（属性序重构，功能未官方化 —— panel 仍固定
+    // width:800px + overflow:hidden，见 PANEL_RE_V2 注释）。
+    const v2 = PANEL_RE_V2.exec(src);
+    const v2Pre = v2?.[2];
+    const v2Post = v2?.[3];
+    if (!v2 || !v2Pre || !v2Post
+      || !(v2Pre + v2Post).includes('display:flex;position:relative;')
+      || !(v2Pre + v2Post).includes('max-width:')) {
+      console.log('[patch-deps] 设置弹窗未匹配到 panel CSS（上游版本可能已修复/更新），跳过');
+      return;
+    }
+    const next =
+      '.' + v2[1] + '_panel{' + v2[2] + 'width:min(75vw,1280px);' + v2[3] +
+      'overflow:auto;resize:horizontal;min-width:640px;/*' + PANEL_RESIZE_MARKER + '*/}';
+    src = src.replace(v2[0], next);
+    writeFileAtomic(file, src);
+    console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
     return;
   }
   const next =
@@ -527,12 +552,17 @@ function patchAgentPresetMenu(file?: string): boolean {
   const seatTail = seatStart >= 0 ? src.indexOf(AGENT_PRESET_SEAT_TAIL, seatStart) : -1;
   const rowStart = src.indexOf(AGENT_PRESET_ROW_START);
   const rowTail = rowStart >= 0 ? src.indexOf(AGENT_PRESET_ROW_TAIL, rowStart) : -1;
-  if (seatStart < 0 || seatTail < 0 || rowStart < 0 || rowTail < 0 || !src.includes(AGENT_PRESET_ZH_ANCHOR) || !src.includes(AGENT_PRESET_EN_ANCHOR)) {
+  // KERN-004 判定：0.2.0 把设置页的 preset 行菜单官方化为内建/自定义分组卡片
+  // 列表（AgentPresetSection.tsx，原生分组渲染），ROW 锚点随之消失 —— 行面
+  // 官方化；composer 座位菜单（AgentPresetSeat.tsx:161 state.options.map）锚点
+  // 仍在，第三方收进二级菜单的能力对 seat 面仍是真漂移。行替换改为可选：
+  // 锚点在则照旧（≤0.1.7 世代），不在则 seat-only 落补丁，不再整体跳过。
+  const rowApplicable = rowStart >= 0 && rowTail >= 0;
+  if (seatStart < 0 || seatTail < 0 || !src.includes(AGENT_PRESET_ZH_ANCHOR) || !src.includes(AGENT_PRESET_EN_ANCHOR)) {
     console.log('[patch-deps] agent-preset 未匹配到目标代码（版本可能已更新），跳过');
     return false;
   }
   const seatBody = src.slice(seatStart + AGENT_PRESET_SEAT_START.length, seatTail);
-  const rowBody = src.slice(rowStart + AGENT_PRESET_ROW_START.length, rowTail);
   // composer 座位：官方保留主列表，第三方收进「第三方模式」submenu。
   // submenu 子项复用两行渲染体，但 Menu 的 submenu item 是 flex-row center，
   // 会压扁两行结构导致字体重叠 —— 给子项 item span 加内联纵向布局覆盖。
@@ -561,9 +591,11 @@ function patchAgentPresetMenu(file?: string): boolean {
     '\n\t\t\t\t\t\t})\n' +
     '\t\t\t\t\t}];\n' +
     '\t\t\t\t}())],\n\t\t\t\tselectedId: state.current,';
-  // 设置行（PresetMenu，纯文本 label）：同样收进 submenu，组内不再带「· 自定义」后缀
-  const rowNew =
-    'items: [...options.filter((option) => option.trust !== "user").map((option) => {' + rowBody +
+  // 设置行（PresetMenu，纯文本 label）：同样收进 submenu，组内不再带「· 自定义」后缀。
+  // 0.2.0 起该面已被官方卡片列表替代（rowApplicable=false 时整段跳过）。
+  const rowBody = rowApplicable ? src.slice(rowStart + AGENT_PRESET_ROW_START.length, rowTail) : '';
+  const rowNew = rowApplicable
+    ? 'items: [...options.filter((option) => option.trust !== "user").map((option) => {' + rowBody +
     '\n\t\t\t\t}), ...(function () {\n' +
     '\t\t\t\t\tconst user = options.filter((option) => option.trust === "user");\n' +
     '\t\t\t\t\tif (user.length === 0) return [];\n' +
@@ -575,17 +607,20 @@ function patchAgentPresetMenu(file?: string): boolean {
     '\t\t\t\t\t\t\treturn { id: option.id, label: name };\n' +
     '\t\t\t\t\t\t})\n' +
     '\t\t\t\t\t}];\n' +
-    '\t\t\t\t}())],\n\t\t\t\tselectedId,';
+    '\t\t\t\t}())],\n\t\t\t\tselectedId,'
+    : '';
   const zhDictAdd = '\n\t\t\t"menu.thirdPartyMode": "第三方模式",\n\t\t\t"menu.thirdPartyModeHint": "自定义与 EAC 内置的 Agent 预设",';
   const enDictAdd = '\n\t\t\t"menu.thirdPartyMode": "Third-party modes",\n\t\t\t"menu.thirdPartyModeHint": "Custom and EAC-bundled agent presets",';
   // 先做 items 替换（用旧索引的 slice），再注入词典（词典锚点在 items 之前，不受 items 替换影响）
+  src = src.replace(src.slice(seatStart, seatTail + AGENT_PRESET_SEAT_TAIL.length), seatNew);
+  if (rowApplicable) src = src.replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew);
   src = src
-    .replace(src.slice(seatStart, seatTail + AGENT_PRESET_SEAT_TAIL.length), seatNew)
-    .replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew)
     .replace(AGENT_PRESET_ZH_ANCHOR, AGENT_PRESET_ZH_ANCHOR + zhDictAdd)
     .replace(AGENT_PRESET_EN_ANCHOR, AGENT_PRESET_EN_ANCHOR + enDictAdd);
   writeFileAtomic(target, src);
-  console.log('[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单');
+  console.log(rowApplicable
+    ? '[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单'
+    : '[patch-deps] 已补丁 agent-preset（seat 面）：第三方模式收进二级菜单；设置行菜单已官方化为卡片列表，跳过行面');
   return true;
 }
 
@@ -643,6 +678,13 @@ const SUBMENU_BTN_ANCHOR_012 = 'd.jsxs("button",{type:"button",role:"menuitem",c
 const SUBMENU_BTN_NEW_012 = 'd.jsxs("button",{type:"button",role:"menuitem",className:Pe.item,style:{alignItems:"flex-start",flexShrink:0},disabled:fe.disabled';
 const SUBMENU_LABEL_ANCHOR_012 = 'd.jsx("span",{className:Pe.itemLabel,children:fe.label})';
 const SUBMENU_LABEL_NEW_012 = 'd.jsx("span",{className:Pe.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:fe.label})';
+// 0.2.0 产物形态（KERN-004 第三代：l.jsxs/l.jsx + 类对象 Ee + 子项 he，新增
+// "aria-keyshortcuts" 属性插在 disabled 之后 —— 锚点截到 disabled:he.disabled
+// 为止不受影响）。submenu 项两行布局修复仍被 agent-preset seat 子菜单需要。
+const SUBMENU_BTN_ANCHOR_020 = 'l.jsxs("button",{type:"button",role:"menuitem",className:Ee.item,disabled:he.disabled';
+const SUBMENU_BTN_NEW_020 = 'l.jsxs("button",{type:"button",role:"menuitem",className:Ee.item,style:{alignItems:"flex-start",flexShrink:0},disabled:he.disabled';
+const SUBMENU_LABEL_ANCHOR_020 = 'l.jsx("span",{className:Ee.itemLabel,children:he.label})';
+const SUBMENU_LABEL_NEW_020 = 'l.jsx("span",{className:Ee.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:he.label})';
 
 function patchMenuSubmenuScroll(file?: string): boolean {
   let target: string | undefined = file;
@@ -724,12 +766,13 @@ function patchMenuSubmenuScroll(file?: string): boolean {
     console.log('[patch-deps] 已补丁主 bundle：二级菜单悬停离开延迟关闭（移回一级菜单保持）');
   }
   if (!src.includes(SUBMENU_ITEM_MARKER)) {
-    // 双候选：rc.2（Re/he/f）与 0.1.2（Pe/fe/d）两代产物形态。
-    const use012 = src.includes(SUBMENU_BTN_ANCHOR_012) && src.includes(SUBMENU_LABEL_ANCHOR_012);
-    const btnAnchor = use012 ? SUBMENU_BTN_ANCHOR_012 : SUBMENU_BTN_ANCHOR;
-    const btnNew = use012 ? SUBMENU_BTN_NEW_012 : SUBMENU_BTN_NEW;
-    const labelAnchor = use012 ? SUBMENU_LABEL_ANCHOR_012 : SUBMENU_LABEL_ANCHOR;
-    const labelNew = use012 ? SUBMENU_LABEL_NEW_012 : SUBMENU_LABEL_NEW;
+    // 三候选：0.2.0（l/Ee/he）、rc.2（Re/he/f）与 0.1.2（Pe/fe/d）三代产物形态。
+    const use020 = src.includes(SUBMENU_BTN_ANCHOR_020) && src.includes(SUBMENU_LABEL_ANCHOR_020);
+    const use012 = !use020 && src.includes(SUBMENU_BTN_ANCHOR_012) && src.includes(SUBMENU_LABEL_ANCHOR_012);
+    const btnAnchor = use020 ? SUBMENU_BTN_ANCHOR_020 : use012 ? SUBMENU_BTN_ANCHOR_012 : SUBMENU_BTN_ANCHOR;
+    const btnNew = use020 ? SUBMENU_BTN_NEW_020 : use012 ? SUBMENU_BTN_NEW_012 : SUBMENU_BTN_NEW;
+    const labelAnchor = use020 ? SUBMENU_LABEL_ANCHOR_020 : use012 ? SUBMENU_LABEL_ANCHOR_012 : SUBMENU_LABEL_ANCHOR;
+    const labelNew = use020 ? SUBMENU_LABEL_NEW_020 : use012 ? SUBMENU_LABEL_NEW_012 : SUBMENU_LABEL_NEW;
     const btnIdx = src.indexOf(btnAnchor);
     const labelIdx = btnIdx >= 0 ? src.indexOf(labelAnchor, btnIdx) : -1;
     if (btnIdx < 0 || labelIdx < 0) {
