@@ -1176,6 +1176,7 @@
       "origin": "upstream",
       "version": "0.6.0",
       "path": "openclaw-dsh-bridge",
+      "pathBaseline": "main@e01d2e2a27b43e76aa3558d9729d5db3f05346ae",
       "registryStatus": "注册表默认启用",
       "audit": {
         "verdict": "catalog-miss",
