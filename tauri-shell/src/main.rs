@@ -701,7 +701,9 @@ fn shell_settings_dir() -> std::path::PathBuf {
         let home = std::env::var_os("HOME")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        home.join("Library").join("Application Support").join("deepseek-harness-eac")
+        home.join("Library")
+            .join("Application Support")
+            .join("deepseek-harness-eac")
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -760,7 +762,9 @@ fn shell_prefers_chinese() -> bool {
 /// 非法 tag 静默丢弃（官方 main.ts:713 对非 string 亦直接 return）。
 fn locale_tag_is_well_formed(tag: &str) -> bool {
     let mut segments = tag.split('-');
-    let Some(primary) = segments.next() else { return false };
+    let Some(primary) = segments.next() else {
+        return false;
+    };
     let primary_len = primary.len();
     if !(2..=8).contains(&primary_len) || !primary.bytes().all(|b| b.is_ascii_alphabetic()) {
         return false;
@@ -831,7 +835,8 @@ fn build_tray_menu(
         true,
         None::<&str>,
     )?;
-    let quit = tauri::menu::MenuItem::with_id(app, "quit", text("退出", "Quit"), true, None::<&str>)?;
+    let quit =
+        tauri::menu::MenuItem::with_id(app, "quit", text("退出", "Quit"), true, None::<&str>)?;
     let sep1 = tauri::menu::PredefinedMenuItem::separator(app)?;
     tauri::menu::Menu::with_items(app, &[&show, &sep1, &restart, &feedback, &quit])
 }
@@ -842,20 +847,21 @@ fn build_tray_menu(
 fn rebuild_tray_menu(app: &tauri::AppHandle) {
     let zh = shell_prefers_chinese();
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || {
-        match build_tray_menu(&handle, zh) {
-            Ok(menu) => match handle.tray_by_id(TRAY_ID) {
-                Some(tray) => {
-                    if let Err(e) = tray.set_menu(Some(menu)) {
-                        eprintln!("[shell] tray menu rebuild failed: {}", e);
-                    } else {
-                        println!("[shell] tray menu rebuilt (locale: {})", if zh { "zh" } else { "en" });
-                    }
+    let _ = app.run_on_main_thread(move || match build_tray_menu(&handle, zh) {
+        Ok(menu) => match handle.tray_by_id(TRAY_ID) {
+            Some(tray) => {
+                if let Err(e) = tray.set_menu(Some(menu)) {
+                    eprintln!("[shell] tray menu rebuild failed: {}", e);
+                } else {
+                    println!(
+                        "[shell] tray menu rebuilt (locale: {})",
+                        if zh { "zh" } else { "en" }
+                    );
                 }
-                None => eprintln!("[shell] tray not ready for locale rebuild"),
-            },
-            Err(e) => eprintln!("[shell] tray menu build failed: {}", e),
-        }
+            }
+            None => eprintln!("[shell] tray not ready for locale rebuild"),
+        },
+        Err(e) => eprintln!("[shell] tray menu build failed: {}", e),
     });
 }
 
@@ -981,7 +987,10 @@ fn publish_host_path_entries(entries: Vec<HostPathEntry>) {
         }
     }
     if !empty {
-        eprintln!("[shell] host-paths: staged {} clipboard file(s)", entries.len());
+        eprintln!(
+            "[shell] host-paths: staged {} clipboard file(s)",
+            entries.len()
+        );
     }
     let _ = shell_notify().send(serde_json::json!({
         "method": "win.host-paths",
@@ -1001,11 +1010,17 @@ mod clipboard_ffi {
 
     #[link(name = "user32")]
     extern "system" {
-        pub fn OpenClipboard(hwndnewowner: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+        pub fn OpenClipboard(
+            hwndnewowner: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::BOOL;
         pub fn CloseClipboard() -> windows_sys::core::BOOL;
         pub fn GetClipboardData(uformat: u32) -> windows_sys::Win32::Foundation::HANDLE;
-        pub fn AddClipboardFormatListener(hwnd: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
-        pub fn RemoveClipboardFormatListener(hwnd: windows_sys::Win32::Foundation::HWND) -> windows_sys::core::BOOL;
+        pub fn AddClipboardFormatListener(
+            hwnd: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::BOOL;
+        pub fn RemoveClipboardFormatListener(
+            hwnd: windows_sys::Win32::Foundation::HWND,
+        ) -> windows_sys::core::BOOL;
     }
 }
 
@@ -1013,7 +1028,7 @@ mod clipboard_ffi {
 /// 区分「确认无文件」(Some(空)) 与「瞬态读不到」(None，保留旧快照)）。
 #[cfg(windows)]
 unsafe fn read_clipboard_host_paths() -> Option<Vec<HostPathEntry>> {
-    use clipboard_ffi::{CF_HDROP, CloseClipboard, GetClipboardData, OpenClipboard};
+    use clipboard_ffi::{CloseClipboard, GetClipboardData, OpenClipboard, CF_HDROP};
     use windows_sys::Win32::UI::Shell::{DragQueryFileW, HDROP};
 
     // 剪贴板可能被其它进程短暂持有：有限重试打开（打开失败不动旧快照，
@@ -1081,11 +1096,13 @@ fn spawn_clipboard_path_listener() {
 
 #[cfg(windows)]
 unsafe fn clipboard_listener_main() {
-    use clipboard_ffi::{AddClipboardFormatListener, RemoveClipboardFormatListener, WM_CLIPBOARDUPDATE};
+    use clipboard_ffi::{
+        AddClipboardFormatListener, RemoveClipboardFormatListener, WM_CLIPBOARDUPDATE,
+    };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-        TranslateMessage, MSG, WNDCLASSW, WM_DESTROY,
+        TranslateMessage, MSG, WM_DESTROY, WNDCLASSW,
     };
 
     unsafe extern "system" fn clip_host_wndproc(
@@ -1153,7 +1170,6 @@ unsafe fn clipboard_listener_main() {
         DispatchMessageW(&msg);
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // 视口失同步自愈（issue：全屏窗口只有左侧 ~208px 条带被绘制、其余黑屏，
@@ -1877,11 +1893,9 @@ fn browser_guest_data_dir(app: &tauri::AppHandle, dir_name: &str) -> Option<Path
 /// 应用自身源判定（隔离策略第二条款：guest 绝不承载内核 Web UI）。
 fn is_app_origin_url(url: &str) -> bool {
     match (current_web_url(), tauri::Url::parse(url)) {
-        (Some(app_url), Ok(parsed)) => {
-            tauri::Url::parse(&app_url)
-                .map(|a| a.origin().ascii_serialization() == parsed.origin().ascii_serialization())
-                .unwrap_or(false)
-        }
+        (Some(app_url), Ok(parsed)) => tauri::Url::parse(&app_url)
+            .map(|a| a.origin().ascii_serialization() == parsed.origin().ascii_serialization())
+            .unwrap_or(false),
         _ => false,
     }
 }
@@ -2171,8 +2185,10 @@ async fn handle_shell_method(
         |result: Value| serde_json::json!({"jsonrpc":"2.0","id":id,"result":result}).to_string();
     // JSON-RPC error 回复（形态与 sidecar 路径一致：ws-jsonrpc-client 以
     // Error(message) reject，页面 Promise 走 catch）。
-    let reply_error =
-        |message: String| serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":message}}).to_string();
+    let reply_error = |message: String| {
+        serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":message}})
+            .to_string()
+    };
     match method {
         "win.minimize" => {
             if let Some(w) = app.get_webview_window("main") {
@@ -2410,7 +2426,9 @@ async fn handle_shell_method(
                 )));
             };
             let destroyed = destroy_guest(lease);
-            Ok(Some(reply(serde_json::json!({ "ok": true, "destroyed": destroyed }))))
+            Ok(Some(reply(
+                serde_json::json!({ "ok": true, "destroyed": destroyed }),
+            )))
         }
         // guest 导航（call 型）：隔离策略与 on_navigation 同一条纪律的另一入口
         //（地址栏 loadURL）。navigate 走 Webview::navigate（提交后事件链由
@@ -2442,10 +2460,14 @@ async fn handle_shell_method(
             };
             let guests = browser_guests().lock().ok();
             let Some(guests) = guests else {
-                return Ok(Some(reply_error("browser.guest-load-url: guest table poisoned".into())));
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: guest table poisoned".into(),
+                )));
             };
             let Some(entry) = guests.get(lease) else {
-                return Ok(Some(reply_error("browser.guest-load-url: unknown lease".into())));
+                return Ok(Some(reply_error(
+                    "browser.guest-load-url: unknown lease".into(),
+                )));
             };
             match entry.webview.navigate(parsed) {
                 Ok(()) => Ok(Some(reply(serde_json::json!({ "ok": true })))),
@@ -2461,8 +2483,12 @@ async fn handle_shell_method(
             };
             let cmd = params.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
             let guests = browser_guests().lock().ok();
-            let Some(mut guests) = guests else { return Ok(None) };
-            let Some(entry) = guests.get_mut(lease) else { return Ok(None) };
+            let Some(mut guests) = guests else {
+                return Ok(None);
+            };
+            let Some(entry) = guests.get_mut(lease) else {
+                return Ok(None);
+            };
             match cmd {
                 "goBack" if entry.back_depth > 1 => {
                     entry.pending_dir = -1;
@@ -2497,8 +2523,12 @@ async fn handle_shell_method(
             let num = |key: &str| params.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0);
             let (x, y, w, h) = (num("x"), num("y"), num("w"), num("h"));
             let guests = browser_guests().lock().ok();
-            let Some(mut guests) = guests else { return Ok(None) };
-            let Some(entry) = guests.get_mut(lease) else { return Ok(None) };
+            let Some(mut guests) = guests else {
+                return Ok(None);
+            };
+            let Some(entry) = guests.get_mut(lease) else {
+                return Ok(None);
+            };
             if !w.is_finite() || !h.is_finite() || w < 1.0 || h < 1.0 {
                 if entry.visible {
                     entry.visible = false;
@@ -2552,7 +2582,9 @@ async fn handle_shell_method(
             if generation.is_empty() {
                 return Ok(None);
             }
-            let changed = match PAGE_GENERATION.get_or_init(|| RwLock::new(String::new())).write()
+            let changed = match PAGE_GENERATION
+                .get_or_init(|| RwLock::new(String::new()))
+                .write()
             {
                 Ok(mut slot) => {
                     let changed = slot.as_str() != generation;
@@ -2571,7 +2603,10 @@ async fn handle_shell_method(
                     Err(_) => Vec::new(),
                 };
                 for lease in stale {
-                    eprintln!("[shell] browser page generation changed: reclaiming {}", lease);
+                    eprintln!(
+                        "[shell] browser page generation changed: reclaiming {}",
+                        lease
+                    );
                     destroy_guest(&lease);
                 }
             }
