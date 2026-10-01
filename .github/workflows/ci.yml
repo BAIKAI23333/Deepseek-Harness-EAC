@@ -151,6 +151,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 下面的「Prepare Tauri resource directory」要复制 third_party/dsh-dpx/src/*，
+          # 不取 submodule 会 ENOENT（实测：rust-shell 四个平台全红）。
+          # src/*.js 是主仓 clone 出来的源码，不在 npm 依赖里，必须由 submodule 提供。
+          submodules: recursive
 
       - name: Verify native runner architecture
         run: node -e "if (process.arch !== '${{ matrix.arch }}') throw new Error('expected ${{ matrix.arch }}, got ' + process.arch)"
