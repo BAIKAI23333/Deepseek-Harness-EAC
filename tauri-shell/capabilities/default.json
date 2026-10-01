@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "EAC 壳层页面的最小权限面。只授权壳桥端口段上的页面（/loading、/died）所需的 L1 命令；内核 Web UI 在动态端口上，不受权。",
+  "windows": ["main"],
+  "local": false,
+  "remote": {
+    "urls": ["http://127.0.0.1:(1987[3-9]|1988[0-9]|1989[0-8])/*"]
+  },
+  "permissions": [
+    "core:default",
+    "allow-shell-ping",
+    "allow-sidecar-call",
+    "allow-diagnose-environment",
+    "allow-repair-environment"
+  ]
+}

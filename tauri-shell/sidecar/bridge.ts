@@ -586,6 +586,20 @@
     guard: {
       action: function (action: string, value?: unknown) { return call('guard.action', { action: action, value: value }); },
     },
+    // P1：安装环境运维面（诊断 / 移除）。Web UI 与支持人员用这两个入口
+    // 判断「本次启动是否隔离」「环境是否损坏」「如何清理」。
+    // 注意：这里只暴露**只读诊断**与**显式移除**；修复语义由 dsh-dpx 的
+    // 幂等创建承担，UI 不提供「静默重建注册表」这类危险动作。
+    environment: {
+      status: function () { return call('environment.status', {}); },
+      remove: function (options?: { purge?: boolean; dryRun?: boolean }) {
+        return call('environment.remove', {
+          purge: !!(options && options.purge),
+          dryRun: !!(options && options.dryRun),
+        });
+      },
+      repair: function () { return call('environment.repair', {}); },
+    },
     fileDrop: {
       save: function (payload: Record<string, unknown>) { return call('file-drop.save', payload || {}); },
     },

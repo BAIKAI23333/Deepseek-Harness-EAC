@@ -25,7 +25,18 @@ test('EAC no longer carries an editable default skin source or active registry',
   }
   const tracked = read('tauri-shell', 'src', 'main.rs');
   const staging = read('tauri-shell', 'stage-resources.mjs');
-  assert.doesNotMatch(tracked, /ui_skin_registry|registry/);
+  // 意图：**皮肤**注册表必须彻底退役（既是可编辑源，也是运行时活跃注册表）。
+  // 早期这里写的是裸禁词 /registry/ —— 那在当时等价，因为代码里唯一的
+  // "registry" 概念就是皮肤注册表。但 ADR 0004 引入了**另一个**完全不同的
+  // 概念：dsh 的机器级「安装环境注册表」（registry.json / DPX_HOME），它必须
+  // 存在，且其诊断文案会合法地出现 "registry"。所以断言收窄到皮肤语义：
+  //   - 皮肤注册表的标识符/路径一个都不许有；
+  //   - main.rs 不得出现任何皮肤注册表装配面。
+  assert.doesNotMatch(tracked, /ui_skin_registry/i, '皮肤注册表标识符必须退役');
+  assert.doesNotMatch(tracked, /skin[-_]?registry/i, '皮肤注册表标识符必须退役');
+  assert.doesNotMatch(tracked, /assets[/\\]ui-skin/, '不得引用可编辑皮肤源目录');
+  // 反向护栏：环境注册表（ADR 0004）的存在是预期的，不得被误当成皮肤面删掉。
+  assert.match(tracked, /environment[-_]?diagnose|environment-panel/, '安装环境隔离面应保留');
   assert.doesNotMatch(staging, /assets.*ui-skin/);
   assert.doesNotMatch(staging, /shell-skin|aio-v1/);
 });
