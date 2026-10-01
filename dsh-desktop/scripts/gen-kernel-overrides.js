@@ -48,6 +48,12 @@ function packageNameOf(filename) {
  * 生成器把它们从 dependencies/overrides 一并剔除；白名单外的缓存缺失仍然
  * 硬错误，防止把真实漂移静默吞掉。EAC 自有代码对这些包零 import
  * （dsh-agent-presets 仅存于注释与 dsh-compact 的陈旧 peer，后者另行清理）。
+ *
+ * 0.2.0-rc.2 复核（2026-10-01）：tarball 名单 323 → 327，0 移除 / 4 新增
+ * （dsh-client-product-analytics、dsh-client-ui-settings-session-log、
+ * dsh-experimental-schedule-bundle、dsh-otel——均为上游 dependencies 正常
+ * 声明，随安装闭包传递安装，无需进 KERNEL_DEP_GAPS）。本白名单成员不变，
+ * 保留供降级回 0.1.7 或下次升版比对。
  */
 const KERNEL_REMOVED_PACKAGES = [
     '@deepseek-ai/dsh-code-runtime',
