@@ -404,8 +404,10 @@ mod shell_tests {
         assert!(page.contains("onclick=\"purgeEnvironment()\""));
         // 无法自动清理时必须给出人工出路（注册表损坏场景实测会卡住）。
         assert!(page.contains("data-control-name=\"system.default.environment-hint\""));
+        // 该文案经 ui_text(zh, en) 按壳语言**择一**，所以断言必须同时接受两种
+        //（否则中文开发机本地绿、英文 CI 红 —— 实测踩过）。
         assert!(
-            page.contains("环境无法自动清理"),
+            page.contains("环境无法自动清理") || page.contains("cannot be cleaned automatically"),
             "必须给出可执行的人工恢复提示"
         );
     }
