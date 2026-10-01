@@ -60,6 +60,7 @@ build/*
 /tauri-shell/sidecar/server.js
 /lib/desktop/proc.js
 /lib/desktop/runtime-paths.js
+/lib/desktop/environment.js
 /lib/desktop/platform.js
 /lib/desktop/file-roots.js
 /lib/desktop/profile.js

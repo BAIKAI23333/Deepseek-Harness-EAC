@@ -235,7 +235,7 @@
         "packageName": "dsh-unified-market",
         "packageVersion": "0.4.0",
         "path": "dsh-desktop/assets/plugins/dsh-unified-market",
-        "treeSha256": "b724e58151402ac99007012f615746ac81b930ae4bf04548573dfa34bc51a48d"
+        "treeSha256": "73e6296e102b16e6391d7fbc9207d50cdde939749e8ca90b5a3d808e888c3e1f"
       },
       "manifestEntrySha256": "ae25457e39ddf76a4eb2c86feaaf021915433a007fa0ca034347d735f611c04d",
       "patchFiles": [],
@@ -247,7 +247,7 @@
         "kind": "npm",
         "name": "dsh-unified-market",
         "repository": "git+https://github.com/jing-hy/dsh-unified-market.git",
-        "sha256": "b724e58151402ac99007012f615746ac81b930ae4bf04548573dfa34bc51a48d",
+        "sha256": "73e6296e102b16e6391d7fbc9207d50cdde939749e8ca90b5a3d808e888c3e1f",
         "version": "0.4.0"
       },
       "sourceCommit": null
