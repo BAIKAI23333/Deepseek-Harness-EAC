@@ -64,6 +64,29 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const dpxRoot = path.join(repoRoot, 'third_party', 'dsh-dpx');
 const dpxAvailable = fs.existsSync(path.join(dpxRoot, 'src', 'index.js'));
 
+// ---- 真实落盘测试必须跟随**宿主平台**（不能注入别的平台） --------------------
+//
+// 原因：dpx 的路径解析用的是 `node:path` 的**默认导出**（宿主平台实现），
+// `platform` 参数**不参与路径解析** —— 它只决定：
+//   1. `environmentDirectories()` 是否创建 `desktopHome`（仅 win32）；
+//   2. 是否写 Windows 发现指针；
+//   3. `PATH` 分隔符（且它读的是 `process.platform`，连参数都不看）。
+// 因此「在 Linux 上用 win32 语义跑真实 dpx」做不到：适配器用 path.win32 把一个
+// POSIX 路径（如 os.tmpdir() 的 /tmp/...）解析成 "D:\tmp\..."，而 dpx 在 Linux
+// 上仍用 posix.isAbsolute 检查它 → 抛 "must be an absolute path"。
+//
+// 纯推导测试（不落盘、不调 dpx）不受此限，仍可固定 'win32' / 'linux'
+// 来验证各自的路径规则 —— 这样一次 CI 运行就能覆盖两个平台的推导逻辑。
+const HOST_PLATFORM = process.platform;
+const HOST_PATH: typeof path.win32 = HOST_PLATFORM === 'win32' ? path.win32 : (path.posix as unknown as typeof path.win32);
+/** 真实落盘的环境应当创建哪些骨架目录（desktopHome 仅 Windows）。 */
+function expectedEnvironmentDirs(paths: { desktopHome: string } & Record<string, string>): string[] {
+  const base = ['dshHome', 'home', 'workspace', 'npmPrefix'] as const;
+  const dirs = base.map((k) => paths[k]);
+  if (HOST_PLATFORM === 'win32') dirs.push(paths.desktopHome);
+  return dirs;
+}
+
 const tempDirs: string[] = [];
 function tempRoot(label: string): string {
   // 目录名刻意含空格与中文：路径必须整个链路都撑得住（ADR 0004）。
@@ -224,7 +247,7 @@ test('显式 DSH_DPX_ROOT 缺失 dpx 模块时必须 fail closed，不回退仓�
     /dsh-dpx 模块缺失/,
   );
   assert.throws(
-    () => environment.ensureEacEnvironment(isolatedEnv(productRoot, { DSH_DPX_ROOT: missing }), 'win32'),
+    () => environment.ensureEacEnvironment(isolatedEnv(productRoot, { DSH_DPX_ROOT: missing }), HOST_PLATFORM),
     /dsh-dpx 模块缺失/,
   );
 });
@@ -244,10 +267,10 @@ test('B: 真实 dpx API —— 创建环境、可复用、marker 与产品数据
   const productRoot = tempRoot('create');
   const env = isolatedEnv(productRoot);
 
-  const first = environment.ensureEacEnvironment(env, 'win32');
-  const api = path.win32;
-  assert.equal(api.resolve(first.paths.root), api.resolve(environment.environmentRoot(env, 'win32')));
-  assert.equal(api.resolve(first.paths.root), api.resolve(path.win32.join(first.storageRoot, 'dsh-environments', 'eac-beta')));
+  const first = environment.ensureEacEnvironment(env, HOST_PLATFORM);
+  const api = HOST_PATH;
+  assert.equal(api.resolve(first.paths.root), api.resolve(environment.environmentRoot(env, HOST_PLATFORM)));
+  assert.equal(api.resolve(first.paths.root), api.resolve(HOST_PATH.join(first.storageRoot, 'dsh-environments', 'eac-beta')));
   assert.equal(first.rootExistedBefore, false);
   assert.equal(first.channel, 'beta');
   assert.equal(first.name, 'eac-beta');
@@ -258,9 +281,14 @@ test('B: 真实 dpx API —— 创建环境、可复用、marker 与产品数据
   assert.equal(manifest.name, 'eac-beta');
   assert.equal(api.resolve(manifest.root), api.resolve(first.paths.root));
 
-  // dpx 会为隔离 profile 建好目录骨架（含 Windows Desktop，避免原生选目录弹窗）。
-  for (const dir of [first.paths.dshHome, first.paths.home, first.paths.workspace, first.paths.npmPrefix, first.paths.desktopHome]) {
+  // dpx 会为隔离 profile 建好目录骨架。desktopHome（USERPROFILE\Desktop）**仅
+  // 在 Windows 上创建**（dpx `environmentDirectories()` 里 `platform === 'win32'`
+  // 才 push）—— 所以这里按宿主平台断言，而不是无条件要求它存在。
+  for (const dir of expectedEnvironmentDirs(first.paths as never)) {
     assert.ok(fs.existsSync(dir), `目录应存在：${dir}`);
+  }
+  if (HOST_PLATFORM !== 'win32') {
+    assert.ok(!fs.existsSync(first.paths.desktopHome), '非 Windows 不应创建 desktopHome');
   }
 
   // runtime 变量绑定到隔离根内，且不含 npm 重定向变量。
@@ -284,7 +312,7 @@ test('B: 真实 dpx API —— 创建环境、可复用、marker 与产品数据
   assert.ok(String(runtime.PATH).includes(first.paths.npmPrefix), 'PATH 应前置 npm-prefix');
 
   // 重复创建 = 复用同一环境根（同通道升级复用），且此时根已存在。
-  const again = environment.ensureEacEnvironment(env, 'win32');
+  const again = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   assert.equal(api.resolve(again.paths.root), api.resolve(first.paths.root));
   assert.equal(again.rootExistedBefore, true);
   const instance = again.record.instance as { instanceId?: string } | undefined;
@@ -294,31 +322,31 @@ test('B: 真实 dpx API —— 创建环境、可复用、marker 与产品数据
 test('B: 注册表损坏时 fail closed（不静默重建、不丢用户数据）', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('corrupt-registry');
   const env = isolatedEnv(productRoot);
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
 
   const registryFile = path.join(ensured.registryHome, 'registry.json');
   assert.ok(fs.existsSync(registryFile));
   const good = fs.readFileSync(registryFile, 'utf8');
   fs.writeFileSync(registryFile, '{ 这不是合法 JSON');
 
-  assert.throws(() => environment.ensureEacEnvironment(env, 'win32'), /dsh-dpx 环境初始化失败/);
+  assert.throws(() => environment.ensureEacEnvironment(env, HOST_PLATFORM), /dsh-dpx 环境初始化失败/);
   // fail closed 的要点：环境根本身不被破坏，修复注册表后仍能复用同一根。
   assert.ok(fs.existsSync(ensured.paths.manifest), '损坏注册表不得删除既有环境');
 
   fs.writeFileSync(registryFile, good);
-  const repaired = environment.ensureEacEnvironment(env, 'win32');
-  assert.equal(path.win32.resolve(repaired.paths.root), path.win32.resolve(ensured.paths.root));
+  const repaired = environment.ensureEacEnvironment(env, HOST_PLATFORM);
+  assert.equal(HOST_PATH.resolve(repaired.paths.root), HOST_PATH.resolve(ensured.paths.root));
 });
 
 test('B: 非空且未注册的环境目录必须拒绝认领', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('non-empty');
   const env = isolatedEnv(productRoot);
-  const strayRoot = environment.environmentRoot({ ...env, DSH_EAC_CHANNEL: 'stray' }, 'win32');
+  const strayRoot = environment.environmentRoot({ ...env, DSH_EAC_CHANNEL: 'stray' }, HOST_PLATFORM);
   fs.mkdirSync(strayRoot, { recursive: true });
   fs.writeFileSync(path.join(strayRoot, 'user-data.txt'), '不能被静默接管');
 
   assert.throws(
-    () => environment.ensureEacEnvironment({ ...env, DSH_EAC_CHANNEL: 'stray' }, 'win32'),
+    () => environment.ensureEacEnvironment({ ...env, DSH_EAC_CHANNEL: 'stray' }, HOST_PLATFORM),
     /dsh-dpx 环境初始化失败/,
   );
   // 未注册目录里的内容必须原样保留（fail closed = 不动别人的数据）。
@@ -333,7 +361,7 @@ test('B: 宿主旧 .dsh 只做存在性提示，不迁移、不覆盖', { skip: 
   const legacyMarker = path.join(legacyProfile, 'legacy-plugin.txt');
   fs.writeFileSync(legacyMarker, '旧插件');
 
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   assert.equal(ensured.legacyProfileDetected, true);
   assert.equal(path.resolve(ensured.legacyDshHome), path.resolve(path.join(String(env.USERPROFILE), '.dsh')));
   // 隔离根与宿主旧 profile 必须完全分离。
@@ -347,11 +375,11 @@ test('B: 宿主旧 .dsh 只做存在性提示，不迁移、不覆盖', { skip: 
 test('B: 空格与中文路径下创建的环境可用（无 shell 转义中间态）', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('cjk-space');
   assert.ok(/[\s\u4e00-\u9fff]/.test(productRoot), `测试路径应含空格或中文：${productRoot}`);
-  const ensured = environment.ensureEacEnvironment(isolatedEnv(productRoot), 'win32');
+  const ensured = environment.ensureEacEnvironment(isolatedEnv(productRoot), HOST_PLATFORM);
   assert.ok(ensured.paths.root.includes('产品 Data Root'), '环境根应保留原始空格/中文目录名');
   assert.ok(fs.existsSync(ensured.paths.dshHome));
-  const again = environment.ensureEacEnvironment(isolatedEnv(productRoot), 'win32');
-  assert.equal(path.win32.resolve(again.paths.root), path.win32.resolve(ensured.paths.root));
+  const again = environment.ensureEacEnvironment(isolatedEnv(productRoot), HOST_PLATFORM);
+  assert.equal(HOST_PATH.resolve(again.paths.root), HOST_PATH.resolve(ensured.paths.root));
 });
 
 // ---------------------------------------------------------------------------
@@ -370,9 +398,9 @@ test('B: 空格与中文路径下创建的环境可用（无 shell 转义中间�
 test('P1: 诊断报告健康环境的完整身份与路径', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('diag-healthy');
   const env = isolatedEnv(productRoot);
-  environment.ensureEacEnvironment(env, 'win32');
+  environment.ensureEacEnvironment(env, HOST_PLATFORM);
 
-  const diagnosis = environment.diagnoseEacEnvironment(env, 'win32');
+  const diagnosis = environment.diagnoseEacEnvironment(env, HOST_PLATFORM);
   assert.equal(diagnosis.name, 'eac-beta');
   assert.equal(diagnosis.channel, 'beta');
   assert.equal(diagnosis.registered, true);
@@ -382,22 +410,22 @@ test('P1: 诊断报告健康环境的完整身份与路径', { skip: !dpxAvailab
   assert.deepEqual(diagnosis.problems, [], '健康环境不应有问题');
   assert.equal(diagnosis.rootExists, true);
   assert.ok(fs.existsSync(diagnosis.registryFile), '诊断应给出注册表实际文件路径');
-  assert.equal(path.win32.resolve(diagnosis.expectedRoot), path.win32.resolve(diagnosis.registryHome.replace(/[\\/]registry$/, '').replace(/[\\/]D\?S\?H.*$/, '')) === '' ? diagnosis.expectedRoot : diagnosis.expectedRoot);
+  assert.equal(HOST_PATH.resolve(diagnosis.expectedRoot), HOST_PATH.resolve(diagnosis.registryHome.replace(/[\\/]registry$/, '').replace(/[\\/]D\?S\?H.*$/, '')) === '' ? diagnosis.expectedRoot : diagnosis.expectedRoot);
   // 诊断不得产生副作用：再诊断一次结果必须一致。
-  assert.deepEqual(environment.diagnoseEacEnvironment(env, 'win32').problems, []);
+  assert.deepEqual(environment.diagnoseEacEnvironment(env, HOST_PLATFORM).problems, []);
 });
 
 test('P1: 注册表损坏可被诊断，且标记为不可移除（fail closed 不静默重建）', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('diag-damaged');
   const env = isolatedEnv(productRoot);
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
 
   const registryFile = path.join(ensured.registryHome, 'registry.json');
   const good = fs.readFileSync(registryFile, 'utf8');
   fs.writeFileSync(registryFile, '{ 这不是合法 JSON');
 
   // 诊断本身不抛 —— 损坏正是它要报告的内容。
-  const diagnosis = environment.diagnoseEacEnvironment(env, 'win32');
+  const diagnosis = environment.diagnoseEacEnvironment(env, HOST_PLATFORM);
   assert.equal(diagnosis.registryReadable, false, '损坏注册表必须报 registryReadable=false');
   assert.equal(diagnosis.removable, false, '注册表不可读时不得允许移除（无法安全定位记录）');
   assert.ok(diagnosis.problems.length >= 1, '必须给出至少一个问题');
@@ -407,18 +435,18 @@ test('P1: 注册表损坏可被诊断，且标记为不可移除（fail closed �
   // 环境数据未被破坏（诊断是只读的）。
   assert.ok(fs.existsSync(ensured.paths.manifest), '诊断不得删除既有环境');
   fs.writeFileSync(registryFile, good);
-  assert.deepEqual(environment.diagnoseEacEnvironment(env, 'win32').problems, [], '恢复后应无问题');
+  assert.deepEqual(environment.diagnoseEacEnvironment(env, HOST_PLATFORM).problems, [], '恢复后应无问题');
 });
 
 test('P1: 移除计划（dry run）不落盘，且给出会删什么', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('remove-plan');
   const env = isolatedEnv(productRoot);
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   fs.writeFileSync(path.join(ensured.paths.dshHome, 'keep-me.txt'), '用户数据');
 
   const registryFile = path.join(ensured.registryHome, 'registry.json');
   const before = fs.readFileSync(registryFile, 'utf8');
-  const result = environment.removeEacEnvironment({ purge: true, dryRun: true }, env, 'win32');
+  const result = environment.removeEacEnvironment({ purge: true, dryRun: true }, env, HOST_PLATFORM);
 
   assert.equal(result.removed, false, 'dry run 不得移除');
   assert.equal(result.purged, false);
@@ -431,22 +459,22 @@ test('P1: 移除计划（dry run）不落盘，且给出会删什么', { skip: !
 test('P1: purge=false 只摘记录并保留环境根数据；purge=true 才删根', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('remove-modes');
   const env = isolatedEnv(productRoot);
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   const marker = path.join(ensured.paths.dshHome, 'user-data.txt');
   fs.writeFileSync(marker, '用户数据');
 
-  const keep = environment.removeEacEnvironment({ purge: false }, env, 'win32');
+  const keep = environment.removeEacEnvironment({ purge: false }, env, HOST_PLATFORM);
   assert.equal(keep.removed, true);
   assert.equal(keep.purged, false);
   assert.equal(keep.rootStillExists, true, 'purge=false 必须保留环境根');
   assert.equal(fs.readFileSync(marker, 'utf8'), '用户数据', 'purge=false 不得删用户数据');
-  assert.equal(environment.diagnoseEacEnvironment(env, 'win32').registered, false, '记录应已摘除');
+  assert.equal(environment.diagnoseEacEnvironment(env, HOST_PLATFORM).registered, false, '记录应已摘除');
 
   // 摘记录后，该目录变成「非空且未注册」——dpx 刻意拒绝静默重新认领
   //（Refusing to adopt non-empty environment directory）。这是正确的 fail-closed
   // 语义：数据还在但身份没了，就不该被自动接管。用户的出路是显式 purge。
   assert.throws(
-    () => environment.ensureEacEnvironment(env, 'win32'),
+    () => environment.ensureEacEnvironment(env, HOST_PLATFORM),
     /Refusing to adopt non-empty environment directory/,
     '摘记录后重新认领非空目录必须被拒绝',
   );
@@ -456,9 +484,9 @@ test('P1: purge=false 只摘记录并保留环境根数据；purge=true 才删�
   // purge 清理必须发生在摘记录**之前**。下面重建一个独立场景验证 purge 删根。
   const purgeRoot = tempRoot('remove-purge');
   const purgeEnv = isolatedEnv(purgeRoot);
-  const purgeTarget = environment.ensureEacEnvironment(purgeEnv, 'win32');
+  const purgeTarget = environment.ensureEacEnvironment(purgeEnv, HOST_PLATFORM);
   fs.writeFileSync(path.join(purgeTarget.paths.dshHome, 'user-data.txt'), '待清理');
-  const purged = environment.removeEacEnvironment({ purge: true }, purgeEnv, 'win32');
+  const purged = environment.removeEacEnvironment({ purge: true }, purgeEnv, HOST_PLATFORM);
   assert.equal(purged.purged, true, 'purge=true 应删除环境根');
   assert.equal(purged.rootStillExists, false, 'purge=true 后环境根不得存在');
   assert.equal(fs.existsSync(purgeTarget.paths.manifest), false);
@@ -470,21 +498,21 @@ test('P1: purge=false 只摘记录并保留环境根数据；purge=true 才删�
 test('P1: 未登记的非空目录在移除计划与执行两个阶段都被拒绝接管', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('untakeover');
   const env = isolatedEnv(productRoot);
-  const strayRoot = environment.environmentRoot({ ...env, DSH_EAC_CHANNEL: 'stray' }, 'win32');
+  const strayRoot = environment.environmentRoot({ ...env, DSH_EAC_CHANNEL: 'stray' }, HOST_PLATFORM);
   fs.mkdirSync(strayRoot, { recursive: true });
   const strayFile = path.join(strayRoot, 'user-data.txt');
   fs.writeFileSync(strayFile, '不能被静默接管');
 
   const strayEnv = { ...env, DSH_EAC_CHANNEL: 'stray' };
   // 创建阶段：拒绝认领。
-  assert.throws(() => environment.ensureEacEnvironment(strayEnv, 'win32'), /dsh-dpx/);
+  assert.throws(() => environment.ensureEacEnvironment(strayEnv, HOST_PLATFORM), /dsh-dpx/);
   // 移除计划阶段：未登记 → 不给计划。
   assert.throws(
-    () => environment.removeEacEnvironment({ purge: true, dryRun: true }, strayEnv, 'win32'),
+    () => environment.removeEacEnvironment({ purge: true, dryRun: true }, strayEnv, HOST_PLATFORM),
     /未登记|拒绝/,
   );
   // 移除执行阶段：拒绝。
-  assert.throws(() => environment.removeEacEnvironment({ purge: true }, strayEnv, 'win32'), /dsh-dpx/);
+  assert.throws(() => environment.removeEacEnvironment({ purge: true }, strayEnv, HOST_PLATFORM), /dsh-dpx/);
   // 内容必须原样保留（绝不删别人的数据）。
   assert.equal(fs.readFileSync(strayFile, 'utf8'), '不能被静默接管');
 });
@@ -492,16 +520,16 @@ test('P1: 未登记的非空目录在移除计划与执行两个阶段都被拒�
 test('P2: 重复安装复用同一实例（instanceId 稳定、不重建根）', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
   const productRoot = tempRoot('reuse-instance');
   const env = isolatedEnv(productRoot);
-  const first = environment.ensureEacEnvironment(env, 'win32');
+  const first = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   const firstId = (first.record.instance as { instanceId?: string } | undefined)?.instanceId;
   const marker = path.join(first.paths.dshHome, 'state-marker.txt');
   fs.writeFileSync(marker, 'first-run');
 
-  const second = environment.ensureEacEnvironment(env, 'win32');
+  const second = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   const secondId = (second.record.instance as { instanceId?: string } | undefined)?.instanceId;
   assert.equal(secondId, firstId, '重复安装必须复用同一实例 id');
   assert.equal(second.rootExistedBefore, true);
-  assert.equal(path.win32.resolve(second.paths.root), path.win32.resolve(first.paths.root));
+  assert.equal(HOST_PATH.resolve(second.paths.root), HOST_PATH.resolve(first.paths.root));
   assert.equal(fs.readFileSync(marker, 'utf8'), 'first-run', '复用实例不得清空既有数据');
 });
 
@@ -511,9 +539,9 @@ test('P2: channel 隔离——不同通道是不同环境根，互不干扰', { 
   const betaEnv = { ...base, DSH_EAC_CHANNEL: 'beta' };
   const rcEnv = { ...base, DSH_EAC_CHANNEL: 'rc' };
 
-  const beta = environment.ensureEacEnvironment(betaEnv, 'win32');
-  const rc = environment.ensureEacEnvironment(rcEnv, 'win32');
-  assert.notEqual(path.win32.resolve(beta.paths.root), path.win32.resolve(rc.paths.root), '不同通道必须不同环境根');
+  const beta = environment.ensureEacEnvironment(betaEnv, HOST_PLATFORM);
+  const rc = environment.ensureEacEnvironment(rcEnv, HOST_PLATFORM);
+  assert.notEqual(HOST_PATH.resolve(beta.paths.root), HOST_PATH.resolve(rc.paths.root), '不同通道必须不同环境根');
   assert.equal(beta.name, 'eac-beta');
   assert.equal(rc.name, 'eac-rc');
 
@@ -522,11 +550,11 @@ test('P2: channel 隔离——不同通道是不同环境根，互不干扰', { 
   assert.equal(fs.existsSync(path.join(rc.paths.dshHome, 'beta-only.txt')), false, '通道间必须隔离');
 
   // 各通道注册表里各有一条自己的记录，移除一个不影响另一个。
-  assert.equal(environment.diagnoseEacEnvironment(betaEnv, 'win32').registered, true);
-  assert.equal(environment.diagnoseEacEnvironment(rcEnv, 'win32').registered, true);
-  environment.removeEacEnvironment({ purge: true }, betaEnv, 'win32');
-  assert.equal(environment.diagnoseEacEnvironment(betaEnv, 'win32').registered, false);
-  assert.equal(environment.diagnoseEacEnvironment(rcEnv, 'win32').registered, true, '移除 beta 不得影响 rc');
+  assert.equal(environment.diagnoseEacEnvironment(betaEnv, HOST_PLATFORM).registered, true);
+  assert.equal(environment.diagnoseEacEnvironment(rcEnv, HOST_PLATFORM).registered, true);
+  environment.removeEacEnvironment({ purge: true }, betaEnv, HOST_PLATFORM);
+  assert.equal(environment.diagnoseEacEnvironment(betaEnv, HOST_PLATFORM).registered, false);
+  assert.equal(environment.diagnoseEacEnvironment(rcEnv, HOST_PLATFORM).registered, true, '移除 beta 不得影响 rc');
   assert.ok(fs.existsSync(rc.paths.root), 'rc 环境根必须完好');
 });
 
@@ -543,7 +571,7 @@ test('P2: 环境变量清理——dpx runtime 是权威，被清理的继承变�
     NPM_CONFIG_PREFIX: '/host/prefix',
     NPM_CONFIG_CACHE: '/host/cache',
   });
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   const { runtime } = ensured;
 
   for (const key of ['NODE_OPTIONS', 'NODE_PATH', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NPM_CONFIG_PREFIX', 'NPM_CONFIG_CACHE']) {
@@ -571,12 +599,12 @@ test('P2: 路径含空格与中文时创建/诊断/移除全链路可用', { ski
   assert.ok(/[\s\u4e00-\u9fff]/.test(productRoot), `测试路径应含空格或中文：${productRoot}`);
   const env = isolatedEnv(productRoot);
 
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   assert.ok(ensured.paths.root.includes('产品 Data Root'), '环境根应保留原始空格/中文目录名');
-  const diagnosis = environment.diagnoseEacEnvironment(env, 'win32');
+  const diagnosis = environment.diagnoseEacEnvironment(env, HOST_PLATFORM);
   assert.equal(diagnosis.registered, true);
   assert.equal(diagnosis.problems.length, 0);
-  const removed = environment.removeEacEnvironment({ purge: true }, env, 'win32');
+  const removed = environment.removeEacEnvironment({ purge: true }, env, HOST_PLATFORM);
   assert.equal(removed.purged, true, '空格/中文路径下 purge 也必须成功');
   assert.equal(removed.rootStillExists, false);
 });
@@ -591,11 +619,11 @@ test('P2: 显式 DSH_DPX_ROOT 指向的 payload 缺文件时必须 fail closed',
 
   const env = isolatedEnv(productRoot, { DSH_DPX_ROOT: fakeRoot });
   assert.throws(() => environment.dpxModuleFile(env), /dsh-dpx 模块缺失/);
-  assert.throws(() => environment.ensureEacEnvironment(env, 'win32'), /dsh-dpx 模块缺失/);
+  assert.throws(() => environment.ensureEacEnvironment(env, HOST_PLATFORM), /dsh-dpx 模块缺失/);
   // 诊断也必须 fail closed（不能静默报告 healthy）。
-  assert.throws(() => environment.diagnoseEacEnvironment(env, 'win32'), /dsh-dpx 模块缺失/);
+  assert.throws(() => environment.diagnoseEacEnvironment(env, HOST_PLATFORM), /dsh-dpx 模块缺失/);
   // 移除同样 fail closed（不能「以为删了」）。
-  assert.throws(() => environment.removeEacEnvironment({ purge: true }, env, 'win32'), /dsh-dpx 模块缺失/);
+  assert.throws(() => environment.removeEacEnvironment({ purge: true }, env, HOST_PLATFORM), /dsh-dpx 模块缺失/);
 });
 
 test('P2: DSH_DPX_ROOT 显式覆盖优先于 DSH_RESOURCE_ROOT 与仓库副本', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
@@ -621,9 +649,9 @@ test('P2: 打包态 DSH_RESOURCE_ROOT 下装配的 dpx payload 可直接用于�
   fs.copyFileSync(path.join(dpxRoot, 'package.json'), path.join(resources, 'dpx', 'package.json'));
 
   const env = isolatedEnv(productRoot, { DSH_RESOURCE_ROOT: resources });
-  const ensured = environment.ensureEacEnvironment(env, 'win32');
+  const ensured = environment.ensureEacEnvironment(env, HOST_PLATFORM);
   assert.ok(fs.existsSync(ensured.paths.manifest), '装配态 dpx 必须能真正创建环境');
-  assert.equal(environment.diagnoseEacEnvironment(env, 'win32').registered, true);
+  assert.equal(environment.diagnoseEacEnvironment(env, HOST_PLATFORM).registered, true);
 });
 
 test('P2: 非隔离模式（显式 DSH_HOME）下诊断明确报未隔离，不伪造状态', { skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化' }, () => {
@@ -631,4 +659,35 @@ test('P2: 非隔离模式（显式 DSH_HOME）下诊断明确报未隔离，不�
   // 会用到哪」，不是「已隔离」。侧车用 isolatedMode 判定是否真的隔离。
   const env: NodeJS.ProcessEnv = { DSH_HOME: path.join('D:', 'dev', 'dsh-home') };
   assert.equal(path.resolve(environment.activeEnvironmentRoot(env)), path.resolve(path.join('D:', 'dev')));
+});
+
+test('真实落盘测试的平台语义约束：必须传宿主平台，不得跨平台模拟', () => {
+  // 锁定本文件的一条**设计约束**（2026-10-01 由 Linux CI 暴露）：
+  // `ensureEacEnvironment` 等真实落盘 API 的 platform 参数只能传宿主平台。
+  //
+  // 为什么：dpx 的路径解析用 `node:path` 的默认导出（宿主平台实现），
+  // `platform` 参数不参与解析。实测（Linux 容器）若在 Linux 上传 'win32'：
+  //     path.win32.resolve('/tmp/xxx')  →  '\tmp\xxx'      ← 无盘符（Linux 的
+  //                                                          win32 实现不知道 "C:"）
+  //     path.posix.isAbsolute('\tmp\xxx') →  false         ← dpx 据此拒绝
+  // → 抛 "Environment storage root must be an absolute path."
+  // 这不是 dpx 的缺陷，而是「不能跨平台模拟真实落盘」。
+  //
+  // 断言方式：不"跑一次并期待失败"（会把错误吞掉），而是直接钉住上述机制，
+  // 后人若把 HOST_PLATFORM 改成写死的跨平台值，这里会红。
+  assert.equal(
+    HOST_PLATFORM,
+    process.platform,
+    '真实落盘测试必须跟随宿主平台（dpx 的 platform 参数不改变路径解析规则）',
+  );
+  const probe = path.join(os.tmpdir(), 'eac-platform-probe');
+  assert.ok(HOST_PATH.isAbsolute(probe), 'HOST_PATH 必须能把 os.tmpdir() 的路径判定为绝对路径');
+  // 反向护栏：非 Windows 上，用 win32 语义解析一个 POSIX 路径会得到**非绝对**
+  // 的结果（对 dpx 而言）—— 这正是 CI 上翻车的机制。
+  if (HOST_PLATFORM !== 'win32') {
+    assert.ok(
+      !path.posix.isAbsolute(path.win32.resolve(probe)),
+      'POSIX 路径经 win32 解析后对 posix 不是绝对路径 —— 跨平台模拟真实落盘的失败机制',
+    );
+  }
 });
