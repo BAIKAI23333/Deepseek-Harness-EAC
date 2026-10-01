@@ -27,7 +27,7 @@ concurrency:
 env:
   NODE_VERSION: '24'
   PNPM_VERSION: '11.7.0'
-  KERNEL_VERSION: '0.1.7-rc.2'
+  KERNEL_VERSION: '0.2.0-rc.2'
 
 jobs:
   packages:
