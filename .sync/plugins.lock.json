@@ -43,7 +43,7 @@
         "packageName": "dsh-compact",
         "packageVersion": "1.0.0",
         "path": "dsh-desktop/assets/plugins/dsh-compact",
-        "treeSha256": "545997f51c0a8001ce6d9d446368b04d30d92d600ad8197d3a14ba9ae96063b5"
+        "treeSha256": "3784c09eb98338b95053cb68ff7b6410c7ae760f1ab15fe2b8df47b5cbed2a86"
       },
       "manifestEntrySha256": "2cf65bbbf0a3240bd02fc40d42dc564446219a88f6d972da681a64370bd666c5",
       "patchFiles": [],
@@ -53,7 +53,7 @@
       "runtimeUpdate": "disabled",
       "source": {
         "kind": "unknown",
-        "sha256": "545997f51c0a8001ce6d9d446368b04d30d92d600ad8197d3a14ba9ae96063b5",
+        "sha256": "3784c09eb98338b95053cb68ff7b6410c7ae760f1ab15fe2b8df47b5cbed2a86",
         "version": "1.0.0"
       },
       "sourceCommit": null
@@ -207,7 +207,7 @@
         "packageName": "dsh-settings-scroll-fix",
         "packageVersion": "2.0.2",
         "path": "dsh-desktop/assets/plugins/dsh-settings-scroll-fix",
-        "treeSha256": "02425ba0e9bb6b425e466f3fb6ca4fd98160544ce731da49ae13710730f0db23"
+        "treeSha256": "ddcd4fae89769829e568ceceb4a1bd37e1c0991417a1dddd2cb1960ec34cf6a1"
       },
       "manifestEntrySha256": "9c94c889b1dad6c6bbd91c0b85bd35dc45aa27cf83431672df1ef7c0fd733607",
       "patchFiles": [],
@@ -218,7 +218,7 @@
       "source": {
         "kind": "internal",
         "name": "dsh-settings-scroll-fix",
-        "sha256": "02425ba0e9bb6b425e466f3fb6ca4fd98160544ce731da49ae13710730f0db23",
+        "sha256": "ddcd4fae89769829e568ceceb4a1bd37e1c0991417a1dddd2cb1960ec34cf6a1",
         "version": "2.0.2"
       },
       "sourceCommit": null
@@ -235,7 +235,7 @@
         "packageName": "dsh-unified-market",
         "packageVersion": "0.4.0",
         "path": "dsh-desktop/assets/plugins/dsh-unified-market",
-        "treeSha256": "0f4a1df1bf3b4099f87ad30cb6228f586c638dcf4f6d69c6456c4e9a7927249e"
+        "treeSha256": "b724e58151402ac99007012f615746ac81b930ae4bf04548573dfa34bc51a48d"
       },
       "manifestEntrySha256": "ae25457e39ddf76a4eb2c86feaaf021915433a007fa0ca034347d735f611c04d",
       "patchFiles": [],
@@ -247,7 +247,7 @@
         "kind": "npm",
         "name": "dsh-unified-market",
         "repository": "git+https://github.com/jing-hy/dsh-unified-market.git",
-        "sha256": "0f4a1df1bf3b4099f87ad30cb6228f586c638dcf4f6d69c6456c4e9a7927249e",
+        "sha256": "b724e58151402ac99007012f615746ac81b930ae4bf04548573dfa34bc51a48d",
         "version": "0.4.0"
       },
       "sourceCommit": null

@@ -118,8 +118,32 @@ export function sha256Text(value) {
   return sha256Bytes(Buffer.from(String(value), 'utf8'));
 }
 
+/**
+ * 换行归一化后再取字节——**文本文件**的哈希必须与检出平台的换行风格无关。
+ *
+ * 为什么需要：`treeSha256` / `sha256File` 直接 `readFileSync` 取字节，而
+ * `.gitattributes` 只给带扩展名的类型（`*.js` / `*.json` / `*.md` …）声明了
+ * `text eol=lf`；**无扩展名的文本（`LICENSE`、`.gitignore`）没有该规则**，
+ * 于是 `core.autocrlf=true` 的 Windows 检出会写成 CRLF、Linux/CI 检出写成 LF，
+ * 同一份内容算出两个不同的 digest —— dev 上 CI 红灯而本地"全绿"，正是此因。
+ *
+ * 边界：只对**文本**归一化。二进制按原字节哈希（否则会破坏二进制的完整性
+ * 语义）。判定用「是否含 NUL 字节」这一与编码无关的启发式：Git 自身也用同样
+ * 规则区分文本与二进制。
+ */
+export function normalizeEolForHash(buffer) {
+  if (!Buffer.isBuffer(buffer)) return buffer;
+  if (buffer.includes(0)) return buffer;
+  return Buffer.from(buffer.toString('utf8').replaceAll('\r\n', '\n'), 'utf8');
+}
+
+/** 读文件并按文本语义归一化换行后取字节（见 normalizeEolForHash）。 */
+export function readFileForHash(file) {
+  return normalizeEolForHash(readFileSync(file));
+}
+
 function sha256File(file) {
-  return sha256Bytes(readFileSync(file));
+  return sha256Bytes(readFileForHash(file));
 }
 
 function byteCompare(a, b) {
@@ -178,7 +202,7 @@ export function treeSha256(directory) {
   for (const file of collectTreeFiles(directory).files) {
     digest.update(Buffer.from(`file\0${file.relativePath}\0`, 'utf8'));
     if (file.type === 'symlink') digest.update(Buffer.from(`symlink:${file.target}`, 'utf8'));
-    else digest.update(readFileSync(file.absolutePath));
+    else digest.update(readFileForHash(file.absolutePath));
     digest.update(Buffer.from('\0', 'utf8'));
   }
   return digest.digest('hex');
@@ -190,7 +214,7 @@ export function treeSnapshot(directory) {
   for (const file of result.files) {
     digest.update(Buffer.from(`file\0${file.relativePath}\0`, 'utf8'));
     if (file.type === 'symlink') digest.update(Buffer.from(`symlink:${file.target}`, 'utf8'));
-    else digest.update(readFileSync(file.absolutePath));
+    else digest.update(readFileForHash(file.absolutePath));
     digest.update(Buffer.from('\0', 'utf8'));
   }
   return {
@@ -261,7 +285,7 @@ export function patchSetSha256(root, patches = []) {
   const digest = createHash('sha256');
   for (const file of [...unique.values()].sort((a, b) => byteCompare(a.relativePath, b.relativePath))) {
     digest.update(Buffer.from(`patch\0${file.relativePath}\0`, 'utf8'));
-    digest.update(readFileSync(file.absolutePath));
+    digest.update(readFileForHash(file.absolutePath));
     digest.update(Buffer.from('\0', 'utf8'));
   }
   return digest.digest('hex');
@@ -1138,7 +1162,9 @@ export function buildLock(root = DEFAULT_ROOT) {
       manifestEntrySha256: sha256Text(stableJson(entry)),
     };
   }
-  const manifestBytes = readFileSync(project.paths.manifest);
+  // 与 validate 侧（sha256File）同口径：换行归一化后再哈希，避免 CRLF/LF
+  // 检出差异造成 generate 与 validate 互相打架。
+  const manifestBytes = readFileForHash(project.paths.manifest);
   return {
     schemaVersion: 1,
     manifest: '.sync/plugins.json',
