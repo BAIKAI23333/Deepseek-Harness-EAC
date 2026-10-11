@@ -26,6 +26,8 @@ const REQUIRED_FILES = [
   'dsh-desktop/vendor/pnpm/bin/pnpm.mjs',
   'dsh-desktop/vendor/pnpm/dist/pnpm.mjs',
   'dsh-desktop/vendor/pnpm/package.json',
+  'dsh-desktop/vendor/npm/bin/npm-cli.js',
+  'dsh-desktop/vendor/npm/package.json',
   'dsh-desktop/lib/desktop/profile.js',
   'dsh-desktop/lib/desktop/runtime-patches.js',
   'dsh-desktop/lib/desktop/boot-server.js',
@@ -107,6 +109,8 @@ export function verifyStagedRuntime(stageRoot) {
   }
 
   const require = createRequire(import.meta.url);
+  const { bundledNpmCli } = require(path.join(desktop, 'lib/desktop/package-manager.js'));
+  bundledNpmCli(desktop);
   const { verifyBundle } = require(path.join(desktop, 'bundle-integrity.js'));
   const bundle = verifyBundle(path.join(desktop, 'node_modules'), manifest);
   if (!bundle?.ok) {

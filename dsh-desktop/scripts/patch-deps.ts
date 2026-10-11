@@ -1,6 +1,6 @@
 'use strict';
 // 依赖层小补丁（幂等）：目录选择器 worker 无消息退出时，把真实退出码/信号带进
-// 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
+// 错误文案。由 postinstall / pack / dist 应用；兼容补丁漂移告警，安全补丁漂移硬失败。
 import fs = require('node:fs');
 import path = require('node:path');
 // 内核补丁文件一旦截断 = 用户机启动期 MODULE_NOT_FOUND/语法损坏且无自愈：
@@ -1076,14 +1076,64 @@ function patchClientModulesResolve(targetFile = CLIENT_MODULES_RESOLVE_TARGET): 
   return true;
 }
 
+
+// Advisory-fixed 4.3.0 still permits max-stale to bypass security-zeroed lifetimes.
+// Keep this fail-closed until upstream covers the installed behavior regressions.
+const CACHE_SECURITY_MARKER = 'EAC_CACHE_SECURITY_ZEROED_V1';
+const CACHE_EVALUATE_ANCHOR = '    evaluateRequest(req) {\n        this._assertRequestHasHeaders(req);';
+const CACHE_ERROR_ANCHOR = '    _useStaleIfError() {';
+const CACHE_SWR_ANCHOR = '    useStaleWhileRevalidate() {';
+const CACHE_SECURITY_HELPER = [
+  '    /* EAC_CACHE_SECURITY_ZEROED_V1 */',
+  '    _securityZeroLifetime() {',
+  '        return !this.storable() || this._rescc["no-cache"] ||',
+  '            this._resHeaders.vary === "*" ||',
+  '            (this._isShared && (this._rescc["proxy-revalidate"] ||',
+  '                (this._resHeaders["set-cookie"] && !this._rescc.public && !this._rescc.immutable)));',
+  '    }',
+  '',
+].join('\n');
+const CACHE_SECURITY_EVALUATE = CACHE_EVALUATE_ANCHOR + '\n        if (this._securityZeroLifetime()) return this._evaluateRequestMissResult(req);';
+const CACHE_SECURITY_ERROR = CACHE_ERROR_ANCHOR + '\n        if (this._securityZeroLifetime()) return false;';
+const CACHE_SECURITY_SWR = CACHE_SWR_ANCHOR + '\n        if (this._securityZeroLifetime()) return false;';
+
+function patchHttpCacheSemanticsSource(source: string): string {
+  if (source.includes(CACHE_SECURITY_MARKER)) {
+    if (![CACHE_SECURITY_HELPER, CACHE_SECURITY_EVALUATE, CACHE_SECURITY_ERROR, CACHE_SECURITY_SWR].every(block => source.includes(block))) {
+      throw new Error('http-cache-semantics security patch marker exists but its guards are incomplete');
+    }
+    return source;
+  }
+  for (const anchor of [CACHE_EVALUATE_ANCHOR, CACHE_ERROR_ANCHOR, CACHE_SWR_ANCHOR]) {
+    if (source.split(anchor).length !== 2) throw new Error('http-cache-semantics security anchor drift: ' + anchor);
+  }
+  return source.replace(CACHE_EVALUATE_ANCHOR, CACHE_SECURITY_HELPER + CACHE_SECURITY_EVALUATE)
+    .replace(CACHE_ERROR_ANCHOR, CACHE_SECURITY_ERROR)
+    .replace(CACHE_SWR_ANCHOR, CACHE_SECURITY_SWR);
+}
+
+function patchHttpCacheSemantics(targetFile = path.join(root, 'node_modules', 'http-cache-semantics', 'index.js')): boolean {
+  if (!fs.existsSync(targetFile)) throw new Error('http-cache-semantics security target missing: ' + targetFile);
+  const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(targetFile), 'package.json'), 'utf8')) as { version?: string };
+  if (pkg.version !== '4.3.0') throw new Error('http-cache-semantics security patch requires reviewed version 4.3.0');
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchHttpCacheSemanticsSource(source);
+  if (patched === source) return false;
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] http-cache-semantics security-zeroed cache cannot serve stale responses');
+  return true;
+}
+
 function main(): void {
   // 退出码三态语义（审核定案）：
   //   全部命中            → exit 0
   //   锚点未命中（内核升级后的预期路径）→ exit 0 + 日志 + marker 缺失，
   //     由 test/patch-anchor-regression.test.ts 的安装树绊网在测试期变红报警
   //   意外崩溃（IO 错误 / 部分应用风险）→ exit 1，postinstall 硬失败
+  // 安全补丁缺失或漂移直接抛错，不适用上述兼容补丁的告警降级。
   // 每个补丁独立 try/catch：单个崩溃不跳过其余补丁；任一崩溃则进程非零退出。
-  const patches: Array<[string, () => boolean]> = [
+  const patches: Array<[string, () => void]> = [
+    ['http-cache-security', patchHttpCacheSemantics],
     ['picker-worker', patchPickerWorker],
     ['settings-nav-scroll', patchSettingsNavScroll],
     ['settings-panel-resize', patchSettingsPanelResize],
@@ -1115,6 +1165,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  patchHttpCacheSemanticsSource,
+  patchHttpCacheSemantics,
   patchAgentPresetMenu,
   patchMenuSubmenuScroll,
   patchClientModulesResolve,

@@ -379,8 +379,8 @@ copyRequired(path.join(dd, 'package.json'), path.join(staged, 'dsh-desktop', 'pa
 copyRequired(path.join(dd, 'package-lock.json'), path.join(staged, 'dsh-desktop', 'package-lock.json'), 'package-lock.json');
 copyRequired(path.join(dd, '.npmrc'), path.join(staged, 'dsh-desktop', '.npmrc'), '.npmrc');
 
-// 安装形态标记（v5.4 双形态）：随包默认「完整版」；NSIS 安装器按用户选择
-// 覆写为 lite（installer-hooks.nsh POSTINSTALL）。便携包保持缺省完整版。
+// 兼容历史插件启停策略：保留 full 标记，不代表 Full 已安装。
+// 本仓库完整产物是 EAC Lite；Full 需要另行实际安装 EAC-Pack 包。
 writeFileSync(path.join(staged, 'dsh-desktop', 'profile.txt'), 'full\n');
 writeFileSync(
   path.join(staged, 'dsh-desktop', 'environment-policy.json'),
@@ -496,6 +496,8 @@ if (targetPlatform === 'linux' || targetPlatform === 'darwin') {
 }
 // vendor/npm 与 vendor/node、vendor/kernel 同为必需项：随包 node 运行内核需要
 // npm，静默跳过会产出缺 npm 的坏树 —— 与其他 vendor 项一致 fail-fast。
+const { bundledPackageManager, bundledNpmCli } = await import('../dsh-desktop/lib/desktop/package-manager.js');
+bundledNpmCli(dd);
 const npmCache = path.join(dd, 'vendor', 'npm');
 if (existsSync(npmCache)) {
   cpSync(npmCache, path.join(staged, 'dsh-desktop', 'vendor', 'npm'), { recursive: true });
@@ -505,7 +507,7 @@ if (existsSync(npmCache)) {
 
 // The Web plugin manager and market share the kernel's pnpm transactions.
 // Validate the exact version and JS entry before copying, never use global pnpm.
-const { bundledPackageManager } = await import('../dsh-desktop/lib/desktop/package-manager.js');
+bundledNpmCli(path.join(staged, 'dsh-desktop'));
 bundledPackageManager(dd, path.join(dd, 'vendor', 'node', runtimeName));
 cpSync(path.join(dd, 'vendor', 'pnpm'), path.join(staged, 'dsh-desktop', 'vendor', 'pnpm'), { recursive: true });
 

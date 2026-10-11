@@ -27,3 +27,32 @@ test('kernel override regeneration preserves application security overrides', ()
   assert.match(generator, /\^\\d\+\\\.\\d\+\\\.\\d\+\(\?:-\[0-9A-Za-z\.\]\+\)\?\$/,
     'vendor/kernel/.build and other work directories must not be treated as versions');
 });
+
+const securityPins = {
+  '@modelcontextprotocol/client': '2.2.0',
+  'brace-expansion': '2.1.7',
+  fflate: '0.8.3',
+  'http-cache-semantics': '4.3.0',
+  sharp: '0.35.5',
+  'source-map-js': '1.2.2',
+};
+
+test('security pins cover every installed lock location, including nested exact dependencies', () => {
+  for (const [name, version] of Object.entries(securityPins)) {
+    assert.equal(manifest.overrides[name], version, name + ' must have an application security override');
+    const entries = Object.entries(lock.packages).filter(([location]) =>
+      location === 'node_modules/' + name || location.endsWith('/node_modules/' + name));
+    assert.ok(entries.length, name + ' must materialize in the lock');
+    for (const [location, entry] of entries) {
+      assert.equal((entry as { version: string }).version, version, location);
+    }
+  }
+  assert.equal(lock.packages['node_modules/@modelcontextprotocol/core'].version, '2.2.0');
+});
+
+test('bundled pnpm uses a fixed runtime version even though its install dependency is dev-only', () => {
+  assert.equal(manifest.devDependencies.pnpm, '11.28.2');
+  assert.equal(lock.packages['node_modules/pnpm'].version, '11.28.2');
+  const manager = readFileSync(join(ROOT, 'lib/desktop/package-manager.ts'), 'utf8');
+  assert.match(manager, /PNPM_VERSION = '11\.28\.2'/);
+});

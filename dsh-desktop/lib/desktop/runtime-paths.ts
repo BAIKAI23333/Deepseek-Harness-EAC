@@ -7,6 +7,7 @@
 import path = require('node:path');
 import fs = require('node:fs');
 import { nodeExecutableName } from './platform';
+import { bundledNpmCli, validateNpmRuntime } from './package-manager';
 
 // 应用根目录（本模块位于 <root>/lib/desktop/ 下）。
 export const APP_ROOT = path.resolve(__dirname, '..', '..');
@@ -74,12 +75,11 @@ export function nodeExe(): string {
 }
 
 export function npmCli(): string {
-  const tauriBundled = path.resolve(appRoot(), 'vendor', 'npm', 'bin', 'npm-cli.js');
-  if (isPackaged()) {
-    if (fs.existsSync(tauriBundled)) return tauriBundled;
-    return path.join(resourcesDir(), 'npm', 'bin', 'npm-cli.js');
-  }
-  return tauriBundled;
+  const root = path.join(appRoot(), 'vendor', 'npm');
+  if (!isPackaged() || fs.existsSync(root)) return bundledNpmCli(appRoot());
+  const legacy = path.join(resourcesDir(), 'npm');
+  validateNpmRuntime(legacy);
+  return path.join(legacy, 'bin', 'npm-cli.js');
 }
 
 export function pnpmCli(): string {

@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, copyFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { verifyStagedRuntime } from '../scripts/verify-staged-runtime.mjs';
+import { NPM_VERSION, NPM_SECURITY_PINS } from '../lib/desktop/package-manager.js';
 import { followTokenRedirect, requireMethodNotFound } from '../scripts/minimal-boot-smoke.mjs';
 
 function createStageFixture(): string {
@@ -52,7 +53,20 @@ function createStageFixture(): string {
   writeFileSync(join(desktop, 'vendor', 'pnpm', 'bin', 'pnpm.mjs'), '');
   mkdirSync(join(desktop, 'vendor', 'pnpm', 'dist'), { recursive: true });
   writeFileSync(join(desktop, 'vendor', 'pnpm', 'dist', 'pnpm.mjs'), '');
-  writeFileSync(join(desktop, 'vendor', 'pnpm', 'package.json'), '{"version":"11.7.0"}');
+  writeFileSync(join(desktop, 'vendor', 'pnpm', 'package.json'), '{"version":"11.28.2"}');
+  copyFileSync(join(import.meta.dirname, '../lib/desktop/package-manager.js'), join(desktop, 'lib/desktop/package-manager.js'));
+  const npm = join(desktop, 'vendor/npm');
+  mkdirSync(join(npm, 'bin'), { recursive: true });
+  mkdirSync(join(npm, 'lib'), { recursive: true });
+  writeFileSync(join(npm, 'bin/npm-cli.js'), '');
+  writeFileSync(join(npm, 'lib/cli.js'), '');
+  writeFileSync(join(npm, 'package.json'), JSON.stringify({ name: 'npm', version: NPM_VERSION }));
+  for (const [name, version] of Object.entries(NPM_SECURITY_PINS)) {
+    mkdirSync(join(npm, 'node_modules', name), { recursive: true });
+    writeFileSync(join(npm, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
+  }
+  writeFileSync(join(npm, 'node_modules/http-cache-semantics/index.js'),
+    readFileSync(join(import.meta.dirname, '../node_modules/http-cache-semantics/index.js'), 'utf8'));
   return root;
 }
 
@@ -62,7 +76,7 @@ test('staged runtime verifier accepts the minimal runtime closure', () => {
     const result = verifyStagedRuntime(root);
     assert.equal(result.bundle.ok, true);
     // v6 Task 3.3：治理闭包（32）+ 阶段 3 的 file-roots（33）。
-    assert.equal(result.requiredFiles, 41);
+    assert.equal(result.requiredFiles, 43);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -109,4 +123,22 @@ test('token redirect helper requires 303 then authenticated 200', async () => {
 test('retired RPC assertion accepts only JSON-RPC method-not-found', () => {
   assert.doesNotThrow(() => requireMethodNotFound('rc.action', { error: { code: -32601, message: 'method not found: rc.action' } }));
   assert.throws(() => requireMethodNotFound('rc.action', { result: { unavailable: true } }), /must return -32601/);
+});
+
+
+test('staged verifier rejects a vulnerable private npm dependency even when the kernel manifest is valid', () => {
+  const root = createStageFixture();
+  try {
+    writeFileSync(join(root, 'dsh-desktop/vendor/npm/node_modules/undici/package.json'), JSON.stringify({ name: 'undici', version: '6.27.0' }));
+    assert.throws(() => verifyStagedRuntime(root), /undici must be/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('staged verifier rejects a missing npm cache security guard', () => {
+  const root = createStageFixture();
+  try {
+    const cache = join(root, 'dsh-desktop/vendor/npm/node_modules/http-cache-semantics/index.js');
+    writeFileSync(cache, readFileSync(cache, 'utf8').replace('if (this._securityZeroLifetime()) return false;', ''));
+    assert.throws(() => verifyStagedRuntime(root), /cache security guards missing/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
