@@ -396,12 +396,12 @@ test('SYNC-002: __DSH_LOCALE__ bridge locked to the official LocaleBridge contra
   assert.equal(typeof localeApi.read, 'function');
   assert.equal(typeof localeApi.onChange, 'function');
 
-  // read()：languages = navigator.languages 优先 + L1 系统标签兜底（去重），
+  // read()：languages = L1 系统标签优先 + navigator.languages 补充（去重），
   // preference 透传。形态必须过 parseLocaleBootstrap（client.js:18-19）：
   // languages 为非空 string[]、preference 为 string|null（键必须存在）。
   const boot = await localeApi.read();
   assert.deepEqual(JSON.parse(JSON.stringify(boot)), {
-    languages: ['en-US', 'en', 'zh-CN'],
+    languages: ['zh-CN', 'en-US', 'en'],
     preference: null,
   });
   const bootstrapCall = calls.find((c) => c.method === 'locale.bootstrap');

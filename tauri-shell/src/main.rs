@@ -48,6 +48,9 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AMutex};
 use tokio_tungstenite::tungstenite::Message;
 
+#[cfg(any(windows, test))]
+mod webview_recovery;
+
 const BRIDGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/bridge-bundle.js"));
 const WS_PORT: u16 = 19873;
 
@@ -381,8 +384,8 @@ mod shell_tests {
         // 无法自动清理时必须给出人工出路（注册表损坏场景实测会卡住）。
         assert!(page.contains("data-control-name=\"system.default.environment-hint\""));
         assert!(
-            page.contains("环境无法自动清理"),
-            "必须给出可执行的人工恢复提示"
+            page.contains("此环境不可自动清理") && page.contains("不要直接删除未登记的目录"),
+            "必须给出保留数据并确认归属的人工恢复提示"
         );
     }
 
@@ -1120,7 +1123,7 @@ fn locale_tag_is_well_formed(tag: &str) -> bool {
 
 /// 系统语言标签（locale.bootstrap 的 L1 languages 来源 = 官方
 /// app.getPreferredSystemLanguages 的 EAC 等价物；页面侧 navigator.languages
-/// 由桥合并优先，L1 单标签兜底）。
+/// 仅由桥用作补充；桌面首选 L1 系统标签）。
 #[cfg(windows)]
 fn system_language_tag() -> String {
     use windows_sys::Win32::Globalization::GetUserDefaultLocaleName;
@@ -1750,6 +1753,35 @@ fn resolve_node() -> String {
     executable.to_string()
 }
 
+fn sidecar_rpc_timeout_secs(method: &str, params: &Value) -> u64 {
+    if method == "guard.action" && params.get("action").and_then(Value::as_str) == Some("restore") {
+        650
+    } else {
+        180
+    }
+}
+
+#[cfg(test)]
+mod restore_rpc_timeout_tests {
+    use super::*;
+    #[test]
+    fn only_guard_restore_gets_the_bounded_recovery_budget() {
+        assert_eq!(
+            sidecar_rpc_timeout_secs("guard.action", &serde_json::json!({"action":"restore"})),
+            650
+        );
+        assert_eq!(
+            sidecar_rpc_timeout_secs("guard.action", &serde_json::json!({"action":"status"})),
+            180
+        );
+        assert_eq!(
+            sidecar_rpc_timeout_secs("boot.start", &serde_json::json!({"action":"restore"})),
+            180
+        );
+        assert_eq!(sidecar_rpc_timeout_secs("guard.action", &Value::Null), 180);
+    }
+}
+
 /// L1 ↔ L2 sidecar 异步客户端：行分隔 JSON-RPC over stdio。
 struct Sidecar {
     // 退出兜底需经 Arc 共享句柄轮询/击杀进程：tokio Child::kill/try_wait 要求
@@ -1869,6 +1901,7 @@ impl Sidecar {
     }
 
     async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        let timeout_secs = sidecar_rpc_timeout_secs(method, &params);
         let id = self.next_id.fetch_add(1, Ordering::SeqCst) + 1;
         let req = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
         let (tx, rx) = oneshot::channel();
@@ -1890,7 +1923,7 @@ impl Sidecar {
             self.pending.lock().await.remove(&id);
             return Err(e);
         }
-        match tokio::time::timeout(std::time::Duration::from_secs(180), rx).await {
+        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(_)) => {
                 self.pending.lock().await.remove(&id);
@@ -1898,7 +1931,7 @@ impl Sidecar {
             }
             Err(_) => {
                 self.pending.lock().await.remove(&id);
-                Err("sidecar call timeout (180s)".into())
+                Err(format!("sidecar call timeout ({timeout_secs}s)"))
             }
         }
     }
@@ -2000,11 +2033,26 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
     }
 }
 
+fn exit_dialog_script(chinese: bool) -> String {
+    format!("{}({});", include_str!("exit-overlay.js"), chinese)
+}
+
+#[cfg(test)]
+mod exit_dialog_tests {
+    use super::exit_dialog_script;
+
+    #[test]
+    fn exit_script_receives_native_language_choice() {
+        assert!(exit_dialog_script(true).trim_end().ends_with("(true);"));
+        assert!(exit_dialog_script(false).trim_end().ends_with("(false);"));
+    }
+}
+
 /// 注入退出确认 overlay 到主窗（无新窗口，不替换现有内容）。
 fn open_exit_dialog(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(win) = app.get_webview_window("main") {
-        win.eval(include_str!("exit-overlay.js")).ok();
+        win.eval(&exit_dialog_script(shell_prefers_chinese())).ok();
     }
 }
 
@@ -2640,10 +2688,11 @@ async fn handle_shell_method(
             Ok(None) // send 型
         }
         "win.reload" => {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.eval("location.reload()");
-            }
-            Ok(Some(reply(serde_json::json!({"ok":true}))))
+            let result = app
+                .get_webview_window("main")
+                .ok_or_else(|| "main window unavailable".to_string())
+                .and_then(|w| w.reload().map_err(|e| e.to_string()));
+            Ok(Some(reply(native_action_result(result))))
         }
         "win.devtools" => {
             if let Some(w) = app.get_webview_window("main") {
@@ -2722,7 +2771,7 @@ async fn handle_shell_method(
         }
         // SYNC-002：官方 __DSH_LOCALE__ 面（preload-app.ts:102-105）。localeBootstrap
         //（官方 main.ts:703）返回 {languages, preference}；languages 给 L1 系统标签
-        //（页面侧 navigator.languages 由桥合并优先），preference 透传持久化值
+        //（页面侧 navigator.languages 由桥补充），preference 透传持久化值
         //（string | null，null = 自动选择）。
         "locale.bootstrap" => {
             let preference = load_locale_preference();
@@ -3249,36 +3298,143 @@ mod ws_handshake_tests {
     }
 }
 
+async fn peek_bridge_header(
+    stream: &TcpStream,
+    timeout: std::time::Duration,
+) -> std::io::Result<String> {
+    // peek 不消费字节；等待完整分段头，但无字节连接也必须受同一截止时间约束。
+    let mut buf = [0u8; 16384];
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "bridge handshake timed out",
+            ));
+        }
+        let n = tokio::time::timeout_at(deadline, stream.peek(&mut buf))
+            .await
+            .map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "bridge handshake timed out")
+            })??;
+        if n == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "bridge connection closed before its header",
+            ));
+        }
+        let head = String::from_utf8_lossy(&buf[..n]).to_string();
+        if head.contains("\r\n\r\n") {
+            return Ok(head);
+        }
+        if n >= buf.len() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "bridge handshake header exceeds 16 KiB",
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+#[cfg(test)]
+mod bridge_header_tests {
+    use super::*;
+    use std::time::Duration;
+
+    async fn connected_pair() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let client = TcpStream::connect(listener.local_addr().expect("listener address"))
+            .await
+            .expect("connect test client");
+        let (server, _) = listener.accept().await.expect("accept test client");
+        (client, server)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn idle_connection_obeys_header_deadline() {
+        let (_client, server) = connected_pair().await;
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            peek_bridge_header(&server, Duration::from_millis(50)),
+        )
+        .await
+        .expect("idle peek must not remain pending")
+        .expect_err("idle header must time out");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn incomplete_header_obeys_total_deadline() {
+        let (mut client, server) = connected_pair().await;
+        client
+            .write_all(b"GET /ws HTTP/1.1\r\n")
+            .await
+            .expect("write partial header");
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            peek_bridge_header(&server, Duration::from_millis(50)),
+        )
+        .await
+        .expect("partial peek must not remain pending")
+        .expect_err("partial header must time out");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn fragmented_header_is_preserved_without_consuming_stream() {
+        let (mut client, mut server) = connected_pair().await;
+        let expected = "GET /ws HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        client
+            .write_all(b"GET /ws HTTP/1.1\r\nHost: localhost")
+            .await
+            .expect("write first part");
+        let read = peek_bridge_header(&server, Duration::from_secs(2));
+        let write = async {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            client
+                .write_all(b"\r\n\r\n")
+                .await
+                .expect("write terminator");
+        };
+        let (head, ()) = tokio::join!(read, write);
+        assert_eq!(head.expect("read fragmented header"), expected);
+        let mut bytes = vec![0; expected.len()];
+        tokio::io::AsyncReadExt::read_exact(&mut server, &mut bytes)
+            .await
+            .expect("header remains readable");
+        assert_eq!(bytes, expected.as_bytes());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn closed_connection_and_oversized_header_are_rejected() {
+        let (client, server) = connected_pair().await;
+        drop(client);
+        let error = peek_bridge_header(&server, Duration::from_secs(2))
+            .await
+            .expect_err("closed peer");
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        let (mut client, server) = connected_pair().await;
+        client
+            .write_all(&vec![b'x'; 16384])
+            .await
+            .expect("write oversized header");
+        let error = peek_bridge_header(&server, Duration::from_secs(2))
+            .await
+            .expect_err("oversized header");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+}
+
 async fn handle_conn(
     stream: TcpStream,
     state: BridgeState,
     app: tauri::AppHandle,
 ) -> std::io::Result<()> {
-    // 先窥探请求头：决定 WS 升级还是极简 HTTP。（peek 取 &self，不消耗流）
-    // peek 是「当前到达多少看多少」：握手头可能分段到达（cookie 头大时
-    // 必然 —— 浏览器 cookie 按域名不按端口隔离，127.0.0.1 上内核设置的
-    // dsh-auth JWT 会被带回桥端口，握手头轻松超 4KB）。单段 peek + 4KB 缓冲
-    // 会把「头未收全」误判为「头部截断」永久拒绝（装机版实测 152 连拒、
-    // 页内桥全灭）。循环 peek 至见 \r\n\r\n；16KB 上限 + 3s 超时兜底。
     let (req_path, wants_upgrade, head) = {
-        let mut buf = [0u8; 16384];
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let head = loop {
-            let n = stream.peek(&mut buf).await?;
-            let h = String::from_utf8_lossy(&buf[..n]).to_string();
-            if h.contains("\r\n\r\n") {
-                break h;
-            }
-            if n >= buf.len() || std::time::Instant::now() >= deadline {
-                // 头超 16KB 或 3s 未收全：拒绝（保持旧截断语义的 fail-closed）。
-                eprintln!(
-                    "[ws] handshake header incomplete/oversized ({}B peeked), rejecting",
-                    n
-                );
-                return Ok(());
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        };
+        let head = peek_bridge_header(&stream, std::time::Duration::from_secs(3)).await?;
         let first = head.lines().next().unwrap_or("");
         let path = first.split_whitespace().nth(1).unwrap_or("/").to_string();
         (
@@ -3501,13 +3657,21 @@ fn died_page(log_path: &str, code: &str) -> String {
            host.textContent='';\
            (list||[]).forEach(function(item){{var d=document.createElement('div');d.setAttribute('data-control-name','system.default.environment-problem');d.textContent=item.text||item.code||'';host.appendChild(d);}});\
          }}\
+         function environmentUnavailable(e){{\
+           setEnvState('unavailable');\
+           var s=document.getElementById('env-summary');if(s){{s.textContent=String(e);}}\
+           var b=document.getElementById('env-purge');if(b){{b.disabled=true;b.setAttribute('data-state','hidden');}}\
+           var h=document.getElementById('env-hint');if(h){{h.textContent='';h.setAttribute('data-state','hidden');}}\
+           renderProblems([]);\
+         }}\
          function refreshEnvironment(){{\
            var invoke=window.dshShell&&window.dshShell.invoke;\
-           if(!invoke){{setEnvState('unavailable');return;}}\
+           if(!invoke){{environmentUnavailable({21:?});return;}}\
            invoke('diagnose_environment').then(function(res){{\
-             var d=(res&&res.diagnosis)||{{}};\
+             var d=res&&res.diagnosis;\
+             if(!res||res.ok!==true||!d||typeof d.expectedRoot!=='string'||!d.expectedRoot.trim()||typeof d.registered!=='boolean'||typeof d.removable!=='boolean'||!Array.isArray(d.problems)){{throw new Error((res&&res.error)||{21:?});}}\
              var summary=document.getElementById('env-summary');\
-             var problems=d.problems||[];\
+             var problems=d.problems;\
              if(summary){{summary.textContent=(d.expectedRoot||'')+' · '+({14:?})+' '+(d.registered?({15:?}):({16:?}));}}\
              renderProblems(problems);\
              setEnvState(problems.length?'damaged':'healthy');\
@@ -3518,7 +3682,7 @@ fn died_page(log_path: &str, code: &str) -> String {
                hint.textContent=d.removable?'':({20:?});\
                hint.setAttribute('data-state',d.removable?'hidden':'idle');\
              }}\
-           }}).catch(function(e){{setEnvState('unavailable');var s=document.getElementById('env-summary');if(s){{s.textContent=String(e);}}}});\
+           }}).catch(environmentUnavailable);\
          }}\
          function purgeEnvironment(){{\
            var b=document.getElementById('env-purge');if(!b){{return;}}\
@@ -3526,13 +3690,13 @@ fn died_page(log_path: &str, code: &str) -> String {
            b.textContent={18:?};b.disabled=true;b.setAttribute('data-state','running');\
            var invoke=window.dshShell&&window.dshShell.invoke;\
            if(!invoke){{b.textContent={19:?};return;}}\
-           invoke('repair_environment',{{purge:true}}).then(function(){{location.reload();}})\
+           invoke('repair_environment',{{purge:true}}).then(function(res){{if(!res||res.ok!==true){{throw new Error((res&&res.error)||{19:?});}}location.reload();}})\
              .catch(function(e){{b.textContent={19:?};b.disabled=false;b.setAttribute('data-state','error');var s=document.getElementById('env-summary');if(s){{s.textContent=String(e);}}}});\
          }}\
          refreshEnvironment();\
          function retry(){{\
            var b=document.querySelector('[data-control-name=\"system.default.restart-button\"]');b.textContent={9:?};b.disabled=true;b.setAttribute('data-state','running');\
-           window.dshDesktop._call('boot.start',{{}}).then(function(){{location.reload();}})\
+           window.dshDesktop._call('boot.start',{{}}).then(function(res){{if(!res||res.ok!==true){{throw new Error((res&&res.error)||{10:?});}}}})\
              .catch(function(e){{b.textContent={10:?};b.disabled=false;b.setAttribute('data-state','error');}});\
          }}</script></body></html>",
         ui_text("zh-CN", "en"),
@@ -3551,19 +3715,17 @@ fn died_page(log_path: &str, code: &str) -> String {
         ui_text("安装环境", "Install environment"),
         ui_text("正在检查隔离环境…", "Checking the isolated environment..."),
         ui_text("清理并重建环境", "Clean and rebuild environment"),
-        ui_text("已注册", "registered"),
+        ui_text("注册状态：", "Registration:"),
         ui_text("已登记", "registered"),
         ui_text("未登记", "not registered"),
         ui_text("将删除该隔离环境下的全部数据（会话/配置/插件），且不可恢复。继续？", "This deletes all data in this isolated environment (sessions, config, plugins) and cannot be undone. Continue?"),
         ui_text("正在清理…", "Cleaning..."),
         ui_text("清理失败，请查看日志", "Cleanup failed; check the log"),
-        // 无法自动清理时的出路（注册表损坏 / 目录被外部占用）：dpx 拒绝在
-        // 不可信的注册表上做删除（正确的 fail-closed），所以这里给手工路径，
-        // 而不是留一个点不动的按钮让人干瞪眼。
         ui_text(
-            "环境无法自动清理（注册表不可读或目录被占用）。可手动把上面那条路径整个删掉或改名，然后重启本应用。",
-            "This environment cannot be cleaned automatically (unreadable registry or the directory is in use). Manually delete or rename the path shown above, then restart the app.",
+            "此环境不可自动清理。请保留数据并查看诊断日志，确认环境归属后再处理；不要直接删除未登记的目录。",
+            "Automatic cleanup is unavailable. Keep the data and check the diagnostic log and environment ownership; do not delete an unregistered directory.",
         ),
+        ui_text("环境诊断不可用，请查看日志", "Environment diagnosis is unavailable; check the log"),
     )
 }
 
@@ -3582,6 +3744,100 @@ fn encode_query(v: &str) -> String {
         }
     }
     out
+}
+
+// Query parsing must mirror encode_query, including UTF-8, reserved characters and '+'.
+fn died_query(path: &str) -> (String, String) {
+    let mut code = "unknown".to_string();
+    let mut log = String::new();
+    if let Ok(url) = tauri::Url::parse(&format!("http://127.0.0.1{path}")) {
+        for (key, value) in url.query_pairs() {
+            match key.as_ref() {
+                "code" => code = value.into_owned(),
+                "log" => log = value.into_owned(),
+                _ => {}
+            }
+        }
+    }
+    (code, log)
+}
+
+fn server_exit_code(params: &Value) -> String {
+    match params.get("code") {
+        Some(Value::String(code)) => code.clone(),
+        Some(Value::Number(code)) => code.to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+// Navigation still uses the full URL; logs never persist local bearer tokens.
+fn log_web_origin(url: &str) -> String {
+    tauri::Url::parse(url)
+        .map(|url| url.origin().ascii_serialization())
+        .unwrap_or_else(|_| "[invalid URL]".to_string())
+}
+
+#[cfg(test)]
+mod recovery_page_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn query_round_trips_unicode_and_reserved_characters() {
+        let log = r#"C:\用户 空格\日志&a=#b+%\server.log"#;
+        let code = "sidecar-exited";
+        let (parsed_code, parsed_log) = died_query(&format!(
+            "/died?code={}&log={}",
+            encode_query(code),
+            encode_query(log)
+        ));
+        assert_eq!(parsed_code, code);
+        assert_eq!(parsed_log, log);
+        let page = died_page(&parsed_log, &parsed_code);
+        assert!(page.contains("日志&amp;a=#b+%"));
+        assert!(!page.contains("%22sidecar"));
+    }
+
+    #[test]
+    fn query_supports_legacy_plus_and_lowercase_escapes() {
+        assert_eq!(
+            died_query("/died?code=42&log=C%3a%5cfoo+bar%26baz"),
+            ("42".into(), "C:\\foo bar&baz".into())
+        );
+        assert_eq!(died_query("/died"), ("unknown".into(), String::new()));
+    }
+
+    #[test]
+    fn exit_code_does_not_json_quote_strings() {
+        assert_eq!(
+            server_exit_code(&json!({"code": "sidecar-exited"})),
+            "sidecar-exited"
+        );
+        assert_eq!(server_exit_code(&json!({"code": 7})), "7");
+        assert_eq!(server_exit_code(&json!({"code": null})), "unknown");
+        assert_eq!(server_exit_code(&json!({"code": {"bad": true}})), "unknown");
+    }
+
+    #[test]
+    fn environment_cli_failures_are_not_transport_successes() {
+        assert!(environment_action_result(json!({"ok": true}), true).is_ok());
+        assert_eq!(
+            environment_action_result(json!({"ok": false, "error": "locked"}), false).unwrap_err(),
+            "locked"
+        );
+        assert!(environment_action_result(json!({"ok": false}), true).is_err());
+        assert!(environment_action_result(json!({"ok": true}), false).is_err());
+        assert!(environment_action_result(json!({}), true).is_err());
+    }
+
+    #[test]
+    fn navigation_log_keeps_only_origin() {
+        assert_eq!(
+            log_web_origin("http://user:secret@127.0.0.1:1234/private?token=secret#secret"),
+            "http://127.0.0.1:1234"
+        );
+        assert_eq!(log_web_origin("not a URL secret"), "[invalid URL]");
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -3805,25 +4061,7 @@ async fn http_serve(mut stream: TcpStream, path: &str) -> std::io::Result<()> {
     } else if path.starts_with("/loading") {
         (loading_page(), "text/html; charset=utf-8")
     } else if path.starts_with("/died") {
-        // /died?code=..&log=..（查询参数由 boot.server-died 处理方拼好）
-        let mut code = "unknown".to_string();
-        let mut log = "".to_string();
-        if let Some(q) = path.split_once('?') {
-            for kv in q.1.split('&') {
-                if let Some((k, v)) = kv.split_once('=') {
-                    let v = v
-                        .replace("%3A", ":")
-                        .replace("%5C", "\\")
-                        .replace("%2F", "/")
-                        .replace('+', " ");
-                    if k == "code" {
-                        code = v;
-                    } else if k == "log" {
-                        log = v;
-                    }
-                }
-            }
-        }
+        let (code, log) = died_query(path);
         (died_page(&log, &code), "text/html; charset=utf-8")
     } else {
         let page = format!(
@@ -3965,13 +4203,26 @@ fn run_environment_action(action: &str, purge: bool) -> Result<Value, String> {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     // 脚本约定：成功与失败都以单行 JSON 输出，便于这里原样透传给页面。
     match serde_json::from_str::<Value>(&stdout) {
-        Ok(value) => Ok(value),
+        Ok(value) => environment_action_result(value, output.status.success()),
         Err(_) => Err(format!(
             "环境诊断返回了非 JSON 数据（exit={:?}）：stdout={} stderr={}",
             output.status.code(),
             truncate_for_ui(&stdout, 400),
             truncate_for_ui(&stderr, 400),
         )),
+    }
+}
+
+// Transport success does not imply the diagnostic CLI completed its action.
+fn environment_action_result(value: Value, exit_success: bool) -> Result<Value, String> {
+    if exit_success && value.get("ok").and_then(Value::as_bool) == Some(true) {
+        Ok(value)
+    } else {
+        Err(value
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("环境操作未成功完成，请查看诊断日志")
+            .to_string())
     }
 }
 
@@ -4045,7 +4296,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
         "boot.web-ready" => {
             if let Some(url) = params.get("webUrl").and_then(|u| u.as_str()) {
                 set_current_web_url(url);
-                println!("[shell] web-ready → navigate: {}", url);
+                println!("[shell] web-ready → navigate: {}", log_web_origin(url));
                 let url = url.to_string();
                 let app2 = app.clone();
                 let _ = app.run_on_main_thread(move || {
@@ -4059,10 +4310,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             }
         }
         "boot.server-died" => {
-            let code = params
-                .get("code")
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "unknown".into());
+            let code = server_exit_code(&params);
             let log = params
                 .get("logPath")
                 .and_then(|l| l.as_str())
@@ -4225,6 +4473,8 @@ fn main() {
                                     match builder.build() {
                                         Ok(win) => {
                                             apply_window_icon(&win, &app_win);
+                                            #[cfg(windows)]
+                                            webview_recovery::install(&win);
                                             if sim_max {
                                                 let _ = win.maximize();
                                             }
@@ -4244,7 +4494,7 @@ fn main() {
                                 match sc.call("boot.start", serde_json::json!({})).await {
                                     Ok(r) => {
                                         let url = r.get("webUrl").and_then(|u| u.as_str()).unwrap_or("").to_string();
-                                        println!("[shell] boot.start ok: {}", url);
+                                        println!("[shell] boot.start ok: {}", log_web_origin(&url));
                                         if !url.is_empty() {
                                             set_current_web_url(&url);
                                             let app3 = app_nav.clone();
@@ -4317,6 +4567,8 @@ fn main() {
                                         match builder.build() {
                                             Ok(win) => {
                                                 apply_window_icon(&win, &app_died);
+                                                #[cfg(windows)]
+                                                webview_recovery::install(&win);
                                                 if sim_max {
                                                     let _ = win.maximize();
                                                 }

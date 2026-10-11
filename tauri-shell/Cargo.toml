@@ -33,6 +33,8 @@ http = "1"
 # Windows 原生外链/文件打开、语言环境检测及任务栏 Big 图标（WM_SETICON）：
 # 经 ShellExecuteW、Globalization API 和 USER32 直接调用。版本对齐依赖树既有 0.61.x。
 [target.'cfg(windows)'.dependencies]
+# Reuse Tauri's locked COM bindings for the native ProcessFailed callback.
+webview2-com = "=0.38.2"
 windows-sys = { version = "0.61", features = [
   "Win32_Globalization",
   "Win32_UI_Shell",

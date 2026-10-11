@@ -78,7 +78,7 @@ async function installBridge(page: any, slots: Record<string, string>) {
     Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
     (window as any).__DSH_UI_SKIN_MANAGER__ = { enabled: true, generation: 1, slots: skinSlots };
     (window as any).__DSH_WS_RPC__ = () => ({
-      send() {}, onNotify() {},
+      send() {}, onNotify(fn: any) { (window as any).__auditShellNotify = fn; },
       call: async (method: string) => method === 'win.is-maximized' ? false : {
         iconDataUri: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>',
       },
@@ -166,4 +166,110 @@ test('shell recovery pages do not acquire host theme boundaries', browserOptions
   await installBridge(page, assets.slots);
   assert.equal(await page.locator('[data-dsh-host-theme]').count(), 0);
   assert.equal(await page.locator('#__dsh_host_theme__').count(), 0);
+});
+
+test('Windows host sidebar caption actions stay clickable above shell chrome', browserOptions, async t => {
+  const assets = loadAssets();
+  const page = await pageFor(t);
+  const sidebarSource = readFileSync(join(assetsRoot, 'dsh-desktop/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js'), 'utf8');
+  const sidebar = JSON.parse(sidebarSource.match(/const css = ("(?:[^"\\]|\\.)*");/)![1]);
+  const root = sidebar.match(/\.([\w-]+_root)\{/)[1];
+  const toggle = sidebar.match(/\.([\w-]+_toggle)\{/)[1];
+  const collapsed = sidebar.match(/\.([\w-]+_collapsed)\{/)[1];
+  const newSession = sidebar.match(/\.([\w-]+_newSession)\{/)[1];
+  await page.setContent(`<style>${assets.base}</style><style>${assets.layout}</style><style>${sidebar}</style>
+    <div id="root"><div data-slot="root"><div class="${assets.frame}" data-sidebar-collapsed="true" style="grid-template-columns:0px 1fr">
+    <div data-slot="sidebar"><div class="${root} ${collapsed}">
+    <button id="toggle-sidebar" class="${toggle}" aria-label="Open sidebar">Open</button>
+    <button id="new-session" class="${newSession}" aria-label="New session">New</button>
+    </div></div><div class="${assets.center}">session</div></div></div></div>`);
+  await installBridge(page, assets.slots);
+  await page.evaluate(() => {
+    for (const id of ['toggle-sidebar', 'new-session']) document.getElementById(id)!.addEventListener('click', () => {
+      document.documentElement.setAttribute('data-clicked', id);
+    });
+  });
+  for (const viewport of [{ width: 800, height: 600 }, { width: 1280, height: 800 }]) {
+    await page.setViewportSize(viewport);
+    for (const id of ['toggle-sidebar', 'new-session']) {
+      const button = page.locator('#' + id);
+      const bounds = await button.boundingBox();
+      assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 && bounds.y + bounds.height <= 36);
+      const hit = await button.evaluate((el: Element) => {
+        const r = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+      });
+      assert.equal(hit, true, id + ' must not be covered by the EAC titlebar');
+      assert.equal(await button.evaluate((el: Element) => getComputedStyle(el).color), 'rgb(223, 230, 255)', 'host caption controls must use the shell foreground, not the light-theme grey');
+      await button.click();
+      assert.equal(await page.locator('html').getAttribute('data-clicked'), id);
+    }
+    const title = await page.locator('#__dsh_desktop_chrome__ [data-control-name="sidebar-content"]').boundingBox();
+    const last = await page.locator('#new-session').boundingBox();
+    const padding = await page.locator('#__dsh_desktop_chrome__ [data-control-name="sidebar-content"]').evaluate((el: Element) => parseFloat(getComputedStyle(el).paddingLeft));
+    assert.ok(title && last && title.x + padding >= last.x + last.width, 'shell branding must leave room for host caption buttons');
+  }
+  await page.evaluate(() => {
+    document.querySelector('[data-sidebar-collapsed]')!.removeAttribute('data-sidebar-collapsed');
+    document.querySelector('[data-slot="sidebar"] > div')!.className = '';
+  });
+  assert.notEqual(await page.locator('#new-session').evaluate((el: Element) => getComputedStyle(el).zIndex), '2147483001', 'ordinary expanded-sidebar buttons must not rise over settings dialogs');
+});
+
+test('settings scroll repair leaves shortcut headers fixed and content scrollable', browserOptions, async t => {
+  const assets = loadAssets();
+  const page = await pageFor(t);
+  const source = readFileSync(join(assetsRoot, 'dsh-desktop/node_modules/@deepseek-ai/dsh-client-ui-shortcuts/lib/client.js'), 'utf8');
+  const css = JSON.parse(source.match(/const css = ("(?:[^"\\]|\\.)*");/)![1]);
+  const shortcutClass = (name: string) => {
+    const match = css.match(new RegExp('\\.([\\w-]+_' + name + ')\\{'));
+    assert.ok(match, `actual shortcuts CSS must contain ${name}`);
+    return match[1];
+  };
+  await page.setContent(`<style>${assets.base}</style><style>${css}</style>
+    <section role="dialog" data-dsh-settings-root style="display:flex;flex-direction:column;width:480px;height:600px">
+      <header id="shortcut-header" class="${shortcutClass('header')}">
+        <h2 class="${shortcutClass('title')}">Keyboard shortcuts</h2>
+        <button id="shortcut-close" class="${shortcutClass('close')}" aria-label="Close shortcuts">×</button>
+      </header>
+      <div id="shortcut-list" class="${shortcutClass('list')}">
+        <div style="height:1400px">General settings keyboard shortcuts</div>
+      </div>
+      <footer id="shortcut-footer" class="${shortcutClass('footer')}">Restore defaults</footer>
+    </section>`);
+  await page.evaluate(() => {
+    (window as any).__ModuleLoader__ = { load(definition: any) {
+      (window as any).__auditScrollFix = definition.factory();
+    } };
+  });
+  await page.addScriptTag({ content: readFileSync(join(sourceRoot, 'dsh-desktop/assets/plugins/dsh-settings-scroll-fix/lib/client.js'), 'utf8') });
+  await page.evaluate(() => { (window as any).__auditDisposeScrollFix = (window as any).__auditScrollFix.apply(); });
+  await page.waitForFunction(() => document.querySelector('#shortcut-list')?.hasAttribute('data-dssf-scrollable'));
+  const header = page.locator('#shortcut-header');
+  assert.ok(await header.evaluate((el: HTMLElement) => el.scrollHeight > el.clientHeight), 'actual kernel close button overflows the 46px header');
+  assert.equal(await header.getAttribute('data-dssf-scrollable'), null, 'caption overflow must not introduce a header scrollbar');
+  assert.equal(await page.locator('#shortcut-close').getAttribute('data-dssf-scrollable'), null);
+  assert.equal(await page.locator('#shortcut-footer').getAttribute('data-dssf-scrollable'), null);
+  assert.equal(await page.locator('#shortcut-list').evaluate((el: HTMLElement) => {
+    el.scrollTop = 100;
+    return el.scrollTop;
+  }), 100, 'real content must remain scrollable');
+  await page.evaluate(() => (window as any).__auditDisposeScrollFix());
+  assert.equal(await page.locator('[data-dssf-scrollable]').count(), 0, 'unload removes scroll marks');
+});
+
+
+test('caption labels follow active native locale without losing maximize state', browserOptions, async t => {
+  const page = await pageFor(t); const assets = loadAssets();
+  await page.setContent('<div id="root">host content</div>'); await installBridge(page, assets.slots);
+  const labels = () => page.locator('#__dsh_desktop_chrome__ [data-act]').evaluateAll((buttons: Element[]) => buttons.map(b => [b.getAttribute('title'), b.getAttribute('aria-label')]));
+  await page.evaluate(() => (window as any).__DSH_LOCALE__.onChange('en'));
+  assert.deepEqual(await labels(), [['Minimize', 'Minimize'], ['Maximize', 'Maximize'], ['Close', 'Close']]);
+  await page.evaluate(() => (window as any).__auditShellNotify('win.maximized', { maximized: true }));
+  assert.deepEqual((await labels())[1], ['Restore', 'Restore']);
+  await page.evaluate(() => (window as any).__DSH_LOCALE__.onChange('zh-CN'));
+  assert.deepEqual(await labels(), [['最小化', '最小化'], ['还原', '还原'], ['关闭', '关闭']]);
+  assert.equal(await page.locator('[data-act="max"]').getAttribute('aria-pressed'), 'true');
+  await page.evaluate(() => (window as any).__DSH_LOCALE__.onChange('en'));
+  assert.deepEqual((await labels())[1], ['Restore', 'Restore']);
 });
