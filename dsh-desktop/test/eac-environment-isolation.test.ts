@@ -704,3 +704,13 @@ test('真实落盘测试的平台语义约束：必须传宿主平台，不得�
     );
   }
 });
+
+
+test('native shell development resource root resolves its pinned repository submodule', {
+  skip: !dpxAvailable && 'third_party/dsh-dpx submodule 未初始化',
+}, () => {
+  assert.equal(
+    path.resolve(environment.dpxModuleFile({ DSH_RESOURCE_ROOT: repoRoot })),
+    path.resolve(path.join(dpxRoot, 'src', 'index.js')),
+  );
+});
