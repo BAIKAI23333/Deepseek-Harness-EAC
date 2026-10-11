@@ -106,41 +106,26 @@
   Pop $R1
 !macroend
 
-;   4. 安装形态选择（v5.4 单发行版双形态）：同一个安装包，安装时选
-;      「完整版 / 精简版」。PREINSTALL 弹窗询问（静默安装 /S 默认完整版），
-;      POSTINSTALL 把选择写入 $INSTDIR\dsh-desktop\profile.txt；companion-sync
-;      启动时读取，精简版仅改变外围插件的「新行默认启停」（用户选择优先，
-;      随时可在设置里启用全部）。文件缺失/脏值 = 完整版，永不阻塞启动。
+;   4. 基础安装包只初始化既有形态标记，不再提供无实际差异的选择。
+;      full/lite 是历史默认启停策略，不代表资源安装档位。当前完整产物为 EAC Lite，
+;      Full 需要实际安装 EAC-Pack 包，不能靠切换标记或启用未安装插件获得。
+;      保留 full 标记与读取契约，不改变已保存的插件启停或用户数据。
 Var DshProfileChoice
 
 !macro DSH_AskInstallProfile
   StrCpy $DshProfileChoice "full"
-  ; 本文件禁用任何管道符（installer-nsh-pipe 守护测试）：MessageBox 组合标志
-  ; 需要管道符，故只用单一 MB_YESNO，不叠加图标位。
-  MessageBox MB_YESNO \
-    "请选择要安装的版本：$\n$\n\
-    【是】完整版 —— 全部内置插件（多智能体 / 手机桥 / 桌宠等）$\n\
-    【否】精简版 —— 精选插件，界面更简洁（后续可在「设置 → 插件 → 管理」$\n\
-    一键启用全部功能，无需重装）$\n$\n\
-    升级安装会重新询问，用户数据不受影响。" \
-    /SD IDYES IDYES dsh_profile_full IDNO dsh_profile_lite
-  dsh_profile_full:
-    StrCpy $DshProfileChoice "full"
-    Goto dsh_profile_done
-  dsh_profile_lite:
-    StrCpy $DshProfileChoice "lite"
-  dsh_profile_done:
+  DetailPrint "DSH EAC: 安装 EAC Lite；Full 需另行安装 EAC-Pack 包"
 !macroend
 
 !macro DSH_WriteProfileMarker
   ClearErrors
   FileOpen $R9 "$INSTDIR\dsh-desktop\profile.txt" w
   ${If} ${Errors}
-    DetailPrint "DSH EAC: 写入安装形态标记失败（按默认完整版处理）"
+    DetailPrint "DSH EAC: 写入兼容启停策略标记失败（不改变 EAC Lite 交付范围）"
   ${Else}
     FileWrite $R9 "$DshProfileChoice"
     FileClose $R9
-    DetailPrint "DSH EAC: 安装形态 = $DshProfileChoice"
+    DetailPrint "DSH EAC: 兼容启停策略标记 = $DshProfileChoice（不代表 Full 已安装）"
   ${EndIf}
 !macroend
 
@@ -168,7 +153,7 @@ Var DshProfileChoice
   ; 不在安装/升级阶段删除 ~/.dsh 下的任何用户数据。退役 dsh-stt 的插件行与
   ; profile 包副本仍由应用内的精确迁移处理；模型缓存可能是 CLI 或其他产品
   ; 共用资产，只能由用户明确确认后单独清理。
-  ; 安装形态：解压前询问（精简版/完整版），选择暂存到 $DshProfileChoice。
+  ; 初始化兼容形态标记，不展示没有实际资源差异的 Full/Lite 选择。
   !insertmacro DSH_AskInstallProfile
 !macroend
 
