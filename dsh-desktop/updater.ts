@@ -69,8 +69,7 @@ function overlayBinPath(ctx: UpdaterCtx): string {
 }
 
 function overlayVersion(ctx: UpdaterCtx): string | null {
-  try { return require(path.join(overlayDir(ctx), 'node_modules', PKG, 'package.json')).version; }
-  catch { return null; }
+  return agentVersionIn(overlayDir(ctx));
 }
 
 function bundledVersion(): string | null {

@@ -91,3 +91,18 @@ test('sidecar 在真实启动失败后停止残留进程、隔离 overlay 并重
   assert.ok(stopAt >= 0 && stopAt < quarantineAt && quarantineAt < retryAt, '失败后必须先停进程，再隔离，最后重试');
   assert.doesNotMatch(server, /ensureHealthyOverlay|\.eac-agent-health\.json/);
 });
+
+
+test('overlay version reads mutable metadata freshly after replacement and removal', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'overlay-version-fresh-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  makeOverlay(root, '9.9.7', 'console.log("fixture");');
+  const updater = require('../updater.js');
+  const ctx = { userDataDir: root, nodeExe: () => process.execPath, npmCli: () => '', log: () => {} };
+  assert.equal(updater.overlayVersion(ctx), '9.9.7');
+  const metadata = path.join(root, 'agent/node_modules/@deepseek-ai/dsh/package.json');
+  fs.writeFileSync(metadata, JSON.stringify({ name: '@deepseek-ai/dsh', version: '9.9.8' }));
+  assert.equal(updater.overlayVersion(ctx), '9.9.8');
+  fs.rmSync(metadata);
+  assert.equal(updater.overlayVersion(ctx), null);
+});
