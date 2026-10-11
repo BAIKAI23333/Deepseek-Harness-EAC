@@ -115,6 +115,16 @@ Assert-Fixture -Name 'dependency-patch-chain' -Condition (
     @($dependencyPatch.data.unmatchedCodeFiles).Count -eq 0
 ) -Failure ($dependencyPatch.raw)
 
+$dependencyPatchTs = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/scripts/patch-deps.ts"]')
+)
+Assert-Fixture -Name 'dependency-patch-typescript-package-gate' -Condition (
+    $dependencyPatchTs.exitCode -eq 0 -and
+    $dependencyPatchTs.data.minimumValidation -eq 'package' -and
+    'dependency-patches' -in @($dependencyPatchTs.data.matchedRules)
+) -Failure ($dependencyPatchTs.raw)
+
 $projectTypeScript = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64',
@@ -154,6 +164,19 @@ Assert-Fixture -Name 'desktop-package-classification' -Condition (
     @($desktopManifest.data.unmatchedCodeFiles).Count -eq 0
 ) -Failure ($desktopManifest.raw)
 
+$npmRuntimeManifest = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/scripts/npm-runtime/package.json","dsh-desktop/scripts/npm-runtime/package-lock.json"]')
+)
+Assert-Fixture -Name 'npm-runtime-manifest-requires-package-validation' -Condition (
+    $npmRuntimeManifest.exitCode -eq 0 -and
+    $npmRuntimeManifest.data.status -eq 'ready' -and
+    $npmRuntimeManifest.data.minimumValidation -eq 'package' -and
+    'desktop-package-manifest' -in @($npmRuntimeManifest.data.matchedRules) -and
+    'test/npm-runtime.test.ts' -in @($npmRuntimeManifest.data.suggestedTests) -and
+    @($npmRuntimeManifest.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($npmRuntimeManifest.raw)
+
 $shellSkin = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64',
@@ -171,15 +194,29 @@ Assert-Fixture -Name 'shell-skin-classification' -Condition (
 $tauriPackaging = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64',
-    (ConvertTo-FilesJsonBase64 '["tauri-shell/audit-linux-bundle.mjs","tauri-shell/stage-platform-cache.mjs","tauri-shell/tauri.linux.conf.json","tauri-shell/gen/schemas/linux-schema.json"]')
+    (ConvertTo-FilesJsonBase64 '["tauri-shell/audit-linux-bundle.mjs","tauri-shell/stage-platform-cache.mjs","tauri-shell/stage-node-modules.mjs","tauri-shell/tauri.linux.conf.json","tauri-shell/gen/schemas/linux-schema.json"]')
 )
 Assert-Fixture -Name 'tauri-packaging-root-files' -Condition (
     $tauriPackaging.exitCode -eq 0 -and
     $tauriPackaging.data.status -eq 'ready' -and
     $tauriPackaging.data.minimumValidation -eq 'package' -and
     'packaging' -in @($tauriPackaging.data.matchedRules) -and
+    'test/stage-node-modules.test.ts' -in @($tauriPackaging.data.suggestedTests) -and
     @($tauriPackaging.data.unmatchedCodeFiles).Count -eq 0
 ) -Failure ($tauriPackaging.raw)
+
+$sourceLedger = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/assets/SOURCES.json"]')
+)
+Assert-Fixture -Name 'plugin-source-ledger-classification' -Condition (
+    $sourceLedger.exitCode -eq 0 -and
+    $sourceLedger.data.status -eq 'ready' -and
+    $sourceLedger.data.minimumValidation -eq 'full' -and
+    'plugin-source-ledger' -in @($sourceLedger.data.matchedRules) -and
+    'test/minimal-core-boundary.test.ts' -in @($sourceLedger.data.suggestedTests) -and
+    @($sourceLedger.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($sourceLedger.raw)
 
 $unknownCode = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
@@ -201,6 +238,28 @@ Assert-Fixture -Name 'documentation-rule' -Condition (
     'documentation' -in @($documentation.data.matchedRules)
 ) -Failure ($documentation.raw)
 
+$auditEvidence = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["docs/audits/evidence/2026-10-11-base/security-validation-summary.json"]')
+)
+Assert-Fixture -Name 'audit-json-evidence-is-documentation' -Condition (
+    $auditEvidence.exitCode -eq 0 -and
+    $auditEvidence.data.status -eq 'ready' -and
+    $auditEvidence.data.minimumValidation -eq 'targeted' -and
+    'audit-evidence' -in @($auditEvidence.data.matchedRules) -and
+    @($auditEvidence.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($auditEvidence.raw)
+
+$unknownJson = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["experimental/runtime-config.json","docs/product/runtime-config.json"]')
+)
+Assert-Fixture -Name 'audit-evidence-rule-does-not-allow-unknown-json-config' -Condition (
+    $unknownJson.exitCode -eq 2 -and
+    $unknownJson.data.status -eq 'blocked' -and
+    @($unknownJson.data.unmatchedCodeFiles).Count -eq 2
+) -Failure ($unknownJson.raw)
+
 $typescriptTest = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
     '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/test/credentials-heal.test.ts"]')
@@ -211,6 +270,19 @@ Assert-Fixture -Name 'typescript-test-path' -Condition (
     'test/credentials-heal.test.ts' -in @($typescriptTest.data.suggestedTests) -and
     @($typescriptTest.data.missingSuggestedTests).Count -eq 0
 ) -Failure ($typescriptTest.raw)
+
+$wsClient = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["dsh-desktop/assets/ws-jsonrpc-client.js"]')
+)
+Assert-Fixture -Name 'ws-rpc-client-runtime-boundary' -Condition (
+    $wsClient.exitCode -eq 0 -and
+    $wsClient.data.status -eq 'ready' -and
+    $wsClient.data.minimumValidation -eq 'runtime' -and
+    'sidecar-bridge' -in @($wsClient.data.matchedRules) -and
+    'test/ws-rpc-behavior.test.ts' -in @($wsClient.data.suggestedTests) -and
+    @($wsClient.data.missingSuggestedTests).Count -eq 0
+) -Failure ($wsClient.raw)
 
 $skillReference = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
     '-RepoPath', $repoRoot,
@@ -342,6 +414,19 @@ try {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
 }
+
+$exitOverlay = Invoke-JsonFixture -Script 'classify-change.ps1' -Arguments @(
+    '-RepoPath', $repoRoot,
+    '-FilesJsonBase64', (ConvertTo-FilesJsonBase64 '["tauri-shell/src/exit-overlay.js"]')
+)
+Assert-Fixture -Name 'exit-overlay-requires-runtime-and-browser-regression' -Condition (
+    $exitOverlay.exitCode -eq 0 -and
+    $exitOverlay.data.status -eq 'ready' -and
+    $exitOverlay.data.minimumValidation -eq 'runtime' -and
+    'shell-exit-overlay' -in @($exitOverlay.data.matchedRules) -and
+    'test/exit-overlay-behavior.test.ts' -in @($exitOverlay.data.suggestedTests) -and
+    @($exitOverlay.data.unmatchedCodeFiles).Count -eq 0
+) -Failure ($exitOverlay.raw)
 
 $status = if ($failures.Count -gt 0) { 'blocked' } else { 'ready' }
 [ordered]@{

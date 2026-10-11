@@ -1,4 +1,4 @@
-﻿@{
+@{
     SchemaVersion = 1
     Rules = @(
         @{
@@ -11,12 +11,21 @@
             Smoke = @('cd tauri-shell; cargo run -- --bridge-test', 'MANUAL: exercise GUI settings, overlays and window lifecycle in the current desktop build (legacy gui-smoke.js retired)')
         },
         @{
+            Name = 'shell-exit-overlay'
+            Domain = 'tauri-shell'
+            Pattern = '^tauri-shell/src/exit-overlay\.js$'
+            Reference = 'references/tauri-shell.md'
+            Level = 'runtime'
+            Tests = @('test/exit-overlay-behavior.test.ts', 'test/shell-ui-compat.test.ts', 'test/native-locale-order.test.ts', 'test/bridge-preload-parity.test.ts')
+            Smoke = @('MANUAL: exercise native caption and exit dialog in Chinese and English, keyboard focus, cancellation, hide/restore and final quit')
+        },
+        @{
             Name = 'sidecar-bridge'
             Domain = 'sidecar-bridge'
-            Pattern = '^tauri-shell/sidecar/|bridge\.(ts|js)$|preload\.js$'
+            Pattern = '^tauri-shell/sidecar/|bridge\.(ts|js)$|preload\.js$|^dsh-desktop/assets/ws-jsonrpc-client\.js$'
             Reference = 'references/sidecar-and-bridge.md'
             Level = 'runtime'
-            Tests = @('test/bridge-preload-parity.test.ts')
+            Tests = @('test/bridge-preload-parity.test.ts', 'test/ws-rpc-single-source.test.ts', 'test/ws-rpc-behavior.test.ts')
             Smoke = @('cd tauri-shell; cargo run -- --bridge-test')
         },
         @{
@@ -52,7 +61,7 @@
         @{
             Name = 'dependency-patches'
             Domain = 'dependency-patches'
-            Pattern = '^dsh-desktop/scripts/patch-deps\.js$|^dsh-desktop/node_modules/@deepseek-ai/dsh-tool-(pwsh|fs|bash)/lib/index\.js$'
+            Pattern = '^dsh-desktop/scripts/patch-deps\.(js|ts)$|^dsh-desktop/node_modules/@deepseek-ai/dsh-tool-(pwsh|fs|bash)/lib/index\.js$'
             Reference = 'references/dependency-patches.md'
             Level = 'package'
             Tests = @(
@@ -176,12 +185,22 @@
             )
         },
         @{
+            Name = 'plugin-source-ledger'
+            Domain = 'plugins'
+            Pattern = '^dsh-desktop/assets/SOURCES\.json$'
+            Reference = 'references/dsh-plugins.md'
+            Level = 'full'
+            Tests = @('test/minimal-core-boundary.test.ts', 'test/issue-415-skin-switch-retirement.test.ts')
+            Smoke = @('node tauri-shell/stage-resources.mjs')
+        },
+        @{
             Name = 'plugin-package'
             Domain = 'plugins'
             Pattern = '^dsh-desktop/assets/plugins/'
             Reference = 'references/dsh-plugins.md'
             Level = 'full'
             Tests = @(
+                'test/plugin-shield-feedback.test.ts',
                 'test/market-bundle-identity.test.ts',
                 'test/companion-copy-integrity.test.ts',
                 'test/issue-416-plugin-distribution-tiers.test.ts',
@@ -192,11 +211,12 @@
         @{
             Name = 'desktop-package-manifest'
             Domain = 'updates-packaging'
-            Pattern = '^dsh-desktop/package\.json$'
+            Pattern = '^dsh-desktop/(?:package\.json|scripts/npm-runtime/package(?:-lock)?\.json)$'
             Reference = 'references/updates-and-packaging.md'
             Level = 'package'
             Tests = @(
                 'test/bundled-files.test.ts',
+                'test/npm-runtime.test.ts',
                 'test/dependency-security-overrides.test.ts',
                 'test/kernel-pin-consistency.test.ts'
             )
@@ -303,6 +323,15 @@
             Tests = @(
                 'test/atomic-write.test.ts',
                 'test/runtime-overlay-health.test.ts',
+                'test/guard-restore-safety.test.ts',
+                'test/guard-restore-transaction.test.ts',
+                'test/guard-restore-status.test.ts',
+                'test/sidecar-mutation-gate.test.ts',
+                'test/sidecar-shutdown-safety.test.ts',
+                'test/proc-wait-cleanup.test.ts',
+                'test/proc-stop-safety.test.ts',
+                'test/proc-platform.test.ts',
+                'test/boot-stop-safety.test.ts',
                 'test/settings-write-recovery.test.ts',
                 'test/minimal-core-boundary.test.ts'
             )
@@ -313,10 +342,11 @@
         @{
             Name = 'packaging'
             Domain = 'updates-packaging'
-            Pattern = 'stage-resources|stage-platform-cache|audit-linux-bundle|make-portable|tauri(?:\.[^.]+)?\.conf\.json|^tauri-shell/gen/schemas/.*\.json$|installer|electron-builder|bundle-integrity|verify-dist'
+            Pattern = 'stage-resources|stage-platform-cache|stage-node-modules|audit-linux-bundle|make-portable|tauri(?:\.[^.]+)?\.conf\.json|^tauri-shell/gen/schemas/.*\.json$|installer|electron-builder|bundle-integrity|verify-dist'
             Reference = 'references/updates-and-packaging.md'
             Level = 'package'
             Tests = @(
+                'test/stage-node-modules.test.ts',
                 'test/bundle-integrity.test.ts',
                 'test/bundled-files.test.ts',
                 'test/installer-nsh-lengths.test.ts',
@@ -385,6 +415,16 @@
             Level = 'targeted'
             Tests = @()
             Smoke = @('git diff --check', 'MANUAL: review line-ending and repository policy impact')
+        },
+        @{
+            Name = 'audit-evidence'
+            Domain = 'documentation'
+            Pattern = '^docs/audits/evidence/[^/]+/[^/]+\.json$'
+            Reference = 'references/testing-and-acceptance.md'
+            Level = 'targeted'
+            Tests = @()
+            Smoke = @('MANUAL: parse audit evidence JSON and review it for tokens, credentials and private paths before delivery')
+            Documentation = $true
         },
         @{
             Name = 'documentation'
