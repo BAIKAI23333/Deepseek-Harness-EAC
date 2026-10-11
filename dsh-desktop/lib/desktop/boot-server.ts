@@ -21,10 +21,8 @@ import { writeFileAtomic } from '../atomic-json';
 import type { ChildProcess } from 'node:child_process';
 
 // 兄弟 / 根模块窄签名消费（Wave 3 收编完成后改为具名类型化导入）。
-const { killTree, killTreeAndWait, waitForProcExit, childEnv, childProcessSpawnOptions } = require('./proc') as {
-  killTree(p: ChildProcess | null | undefined): void;
-  killTreeAndWait(p: ChildProcess | null | undefined, o?: { graceMs?: number; hardMs?: number }): Promise<void>;
-  waitForProcExit(p: ChildProcess | null | undefined, timeoutMs: number): Promise<void>;
+const { killTreeAndWait, childEnv, childProcessSpawnOptions } = require('./proc') as {
+  killTreeAndWait(p: ChildProcess | null | undefined, o?: { graceMs?: number; hardMs?: number }): Promise<boolean>;
   childEnv(): NodeJS.ProcessEnv;
   childProcessSpawnOptions(): { detached: boolean };
 };
@@ -61,6 +59,15 @@ export function init(d: BootServerCtx): void { ctx = d; }
 let serverProc: ChildProcess | null = null;
 let restartingServer = false;
 let webUrl = '';
+let pendingStop: Promise<void> | null = null;
+let unconfirmedProc: ChildProcess | null = null;
+let starting = false;
+let lifecycleRevision = 0;
+
+function assertStartAllowed(revision: number): void {
+  if (ctx.isQuitting()) throw new Error('应用正在退出');
+  if (revision !== lifecycleRevision) throw new Error('service-start-cancelled');
+}
 
 export function getServerProc(): ChildProcess | null { return serverProc; }
 export function getWebUrl(): string { return webUrl; }
@@ -116,17 +123,12 @@ export function healCredentialsVersion(): void {
   } catch { /* 自愈失败交由内核报错路径展示 */ }
 }
 
-async function startServer(unsafePortRetries = 4, overlays: string[] = []): Promise<string> {
-  // M1 修复：重入前先终结旧进程，避免孤儿 harness 同时写同一 DSH_HOME。
-  if (serverProc && !serverProc.killed && !ctx.isQuitting()) {
-    ctx.log('dsh', 'startServer 重入：先终结旧进程再启动');
-    const old = serverProc;
-    killTree(old);
-    serverProc = null;
-    // 等旧进程真正退出再 spawn：Windows 控制台进程的强杀在 killTree 内
-    // +1500ms 落地，立即重拉必然 EADDRINUSE（「启动失败」假阳性来源，
-    // 5.3.2 及以前只 kill 不等）。
-    await waitForProcExit(old, 20000);
+async function startServer(unsafePortRetries = 4, overlays: string[] = [], revision = lifecycleRevision): Promise<string> {
+  assertStartAllowed(revision);
+  if (serverProc) {
+    ctx.log('dsh', 'startServer 重入：先确认旧进程退出再启动');
+    await stopOwnedProcess();
+    assertStartAllowed(revision);
   }
   healCredentialsVersion();
   // 稳定端口（stable-port）：复用 settings.webPort，避免每次 --port 0 换
@@ -135,6 +137,7 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
     loadSettings: () => ctx.loadSettings(),
     saveSettings: (_c: unknown, s: unknown) => ctx.saveSettings(s as Record<string, unknown>),
   });
+  assertStartAllowed(revision);
   return new Promise<string>((resolve, reject) => {
     const nodeBin = ctx.nodeExe();
     const bin = ctx.dshBin();
@@ -190,7 +193,7 @@ async function startServer(unsafePortRetries = 4, overlays: string[] = []): Prom
     // profile 首次引导（node_modules 缺失）时 dsh 要先跑 pnpm 装齐依赖，
     // 就绪等待放宽（下方 bootTimeoutMs）。
     const firstBoot = !fs.existsSync(path.join(ctx.desktopProfileDir(), 'node_modules'));
-    watchServerProc(proc, out, { expectedPort: webPort, unsafePortRetries, overlays, firstBoot }).then(resolve, reject);
+    watchServerProc(proc, out, { expectedPort: webPort, unsafePortRetries, overlays, firstBoot, revision }).then(resolve, reject);
   });
 }
 
@@ -200,6 +203,7 @@ interface WatchOpts {
   unsafePortRetries: number;
   overlays: string[];
   firstBoot: boolean;
+  revision: number;
 }
 
 function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpts): Promise<string> {
@@ -229,6 +233,7 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     let lineBuf = '';
     const onData = (chunk: Buffer) => {
       output.write(chunk);
+      if (handedOff) return;
       lineBuf += chunk.toString();
       const lines = lineBuf.split(/\r?\n/);
       lineBuf = lines.pop()!;
@@ -240,16 +245,13 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
           // 端口命中 Chromium 受限列表：结束该实例重启换端口（有上限）。
           handedOff = true;
           ctx.log('dsh', `端口 ${blocked} 属于 Chromium 受限端口（ERR_UNSAFE_PORT），重启服务换端口（剩余重试 ${opts.unsafePortRetries} 次）`);
-          killTree(proc);
-          // 等旧进程退出后再换端口重启：600ms 固定延迟早于强杀落地，
-          // 新实例大概率又撞 EADDRINUSE。
           void (async () => {
-            await waitForProcExit(proc, 20000);
-            if (ctx.isQuitting()) return finish(new Error('应用正在退出'), '');
-            startServer(opts.unsafePortRetries - 1, opts.overlays).then(
-              (url) => finish(null, url),
-              (err) => finish(err, ''),
-            );
+            try {
+              await stopOwnedProcess();
+              assertStartAllowed(opts.revision);
+              const url = await startServer(opts.unsafePortRetries - 1, opts.overlays, opts.revision);
+              finish(null, url);
+            } catch (err) { finish(err as Error, ''); }
           })();
           return;
         }
@@ -290,6 +292,7 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
       const probeUrl = `http://127.0.0.1:${opts.expectedPort}`;
       void (async () => {
         while (!settled) {
+          try { assertStartAllowed(opts.revision); } catch (err) { finish(err as Error, ''); return; }
           const ok = await new Promise<boolean>((res) => {
             const req = http.get(probeUrl + '/favicon.svg', { timeout: 2500 }, (r) => {
               r.resume();
@@ -298,6 +301,8 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
             req.on('error', () => res(false));
             req.on('timeout', () => { req.destroy(); res(false); });
           }).catch(() => false);
+          if (settled) return;
+          try { assertStartAllowed(opts.revision); } catch (err) { finish(err as Error, ''); return; }
           if (!ok) {
             await new Promise((r) => setTimeout(r, 350));
             continue;
@@ -306,6 +311,7 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
           // 通常随端口就绪毫秒级到达；曾只等 5 秒，慢盘/杀毒软件拖慢 stdout
           // 管道时窗口内拿不到 token，回退裸 origin 就是 401 白屏且无从诊断。
           for (let i = 0; i < 300 && !settled && !probeFallbackUrl; i += 1) {
+            try { assertStartAllowed(opts.revision); } catch (err) { finish(err as Error, ''); return; }
             await new Promise((r) => setTimeout(r, 100));
           }
           if (!settled) {
@@ -321,8 +327,8 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     proc.once('exit', (code, signal) => {
       ctx.log('dsh', `进程退出 code=${code} signal=${signal}`);
       // 原地重启（插件市场）或已替换为新进程时，不打扰用户、也不清新句柄。
-      const intentional = restartingServer || serverProc !== proc;
-      if (serverProc === proc) serverProc = null;
+      const intentional = restartingServer || serverProc !== proc || unconfirmedProc === proc;
+      if (serverProc === proc && unconfirmedProc !== proc) serverProc = null;
       if (!handedOff) {
         finish(new Error(`dsh web 启动失败（退出码 ${code}）。日志: ${dshWebLogPath()}`), '');
       }
@@ -341,54 +347,90 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
   });
 }
 
-function waitUntilUp(url: string, timeoutMs = 120000): Promise<string> {
+function waitUntilUp(url: string, timeoutMs = 120000, revision = lifecycleRevision): Promise<string> {
   const started = Date.now();
-  // 0.1.2 起 URL 可能带 ?token= 查询串：探测路径必须走 URL 拼接而非字符串
-  // 追加（`url + '/'` 会把路径插到 query 前）。探测用免鉴权静态资源。
   const probeTarget = new URL('favicon.svg', url).href;
   return new Promise<string>((resolve, reject) => {
-    const tick = () => {
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
+    let request: http.ClientRequest | null = null;
+    const finish = (err?: Error): void => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      request?.destroy();
+      if (err) reject(err); else resolve(url);
+    };
+    const allowed = (): boolean => {
+      try { assertStartAllowed(revision); return true; } catch (err) { finish(err as Error); return false; }
+    };
+    const tick = (): void => {
+      if (settled || !allowed()) return;
+      let retried = false;
+      const retry = (): void => {
+        if (settled || retried || !allowed()) return;
+        retried = true;
+        req.destroy();
+        if (Date.now() - started >= timeoutMs) finish(new Error('Web UI 未在预期时间内就绪'));
+        else timer = setTimeout(tick, 300);
+      };
       const req = http.get(probeTarget, { timeout: 3000 }, (res) => {
         res.resume();
-        if (res.statusCode && res.statusCode < 500) resolve(url);
-        else retry();
+        if (settled || retried || !allowed()) return;
+        if (res.statusCode && res.statusCode < 500) finish(); else retry();
       });
+      request = req;
       req.on('error', retry);
-      req.on('timeout', () => { req.destroy(); retry(); });
-    };
-    const retry = () => {
-      if (Date.now() - started > timeoutMs) reject(new Error('Web UI 未在预期时间内就绪'));
-      else setTimeout(tick, 300);
+      req.on('timeout', retry);
     };
     tick();
   });
 }
 
-/** 拉起服务并等待 Web UI 就绪（= main.js startAndShow 的非 GUI 部分）。 */
-export async function startAndWait(overlays: string[] = []): Promise<{ webUrl: string; port: number }> {
-  const url = await startServer(4, overlays).then((u) => waitUntilUp(u));
-  webUrl = url;
-  let port = 0;
-  try { port = Number(new URL(url).port) || 0; } catch { /* 保持 0 */ }
-  return { webUrl: url, port };
+/** 同一实例只允许一次启动；退出/停止使正在等待的启动失效。 */
+export async function startAndWait(overlays: string[] = [], timeoutMs = 300000): Promise<{ webUrl: string; port: number }> {
+  if (starting || pendingStop) throw new Error('service-busy');
+  starting = true;
+  const revision = lifecycleRevision;
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => { lifecycleRevision += 1; reject(new Error('service-start-timeout')); }, timeoutMs);
+  });
+  try {
+    const url = await Promise.race([deadline, startServer(4, overlays, revision).then((u) => waitUntilUp(u, 120000, revision))]);
+    assertStartAllowed(revision);
+    webUrl = url;
+    let port = 0;
+    try { port = Number(new URL(url).port) || 0; } catch { /* 保持 0 */ }
+    return { webUrl: url, port };
+  } finally { if (timer) clearTimeout(timer); starting = false; }
 }
 
-/** 退出路径专用：有界同步回收服务进程树（grace → 强杀 → 再等）。 */
-export async function stopServer(): Promise<void> {
+function stopOwnedProcess(): Promise<void> {
+  if (pendingStop) return pendingStop;
   const proc = serverProc;
-  serverProc = null;
-  await killTreeAndWait(proc);
+  if (!proc) return Promise.resolve();
+  unconfirmedProc = proc;
+  pendingStop = (async () => {
+    try {
+      if (!await killTreeAndWait(proc)) throw new Error('service-stop-unconfirmed');
+      if (serverProc === proc) serverProc = null;
+      if (unconfirmedProc === proc) unconfirmedProc = null;
+    } finally { pendingStop = null; }
+  })();
+  return pendingStop;
 }
 
-/** 原地重启前置：终结旧进程并等待真正退出（DLL 文件锁释放），供 sidecar
- *  在“无锁窗口”里执行市场排队任务 / 同步配套插件后再拉起新服务。 */
-export async function killAndWaitForRestart(): Promise<void> {
-  const old = serverProc;
-  serverProc = null;
-  killTree(old);
-  await waitForProcExit(old, 20000);
+/** 有界回收；未确认退出时保留进程身份并拒绝后续启动。 */
+export function stopServer(): Promise<void> {
+  lifecycleRevision += 1;
+  return stopOwnedProcess();
 }
+
+/** 重启前与退出路径共用严格停止语义，不再超时后放行。 */
+export function killAndWaitForRestart(): Promise<void> { return stopServer(); }
 
 export function state(): { running: boolean; webUrl: string } {
-  return { running: !!(serverProc && serverProc.exitCode === null), webUrl };
+  // guard 等写操作以 running 作围栏；树级停止未确认时，root exit 不能放行。
+  return { running: !!(serverProc && (serverProc.exitCode === null || unconfirmedProc === serverProc)), webUrl };
 }
