@@ -108,10 +108,16 @@ test('offline staging consumes only pinned manager and default artifacts', () =>
   assert.doesNotMatch(stage, /github\.com|raw\x2f|origin\x2f/);
 });
 
-test('Rust test staging preserves the manager resource directory contract', () => {
-  const workflow = read('.github', 'workflows', 'ci.yml');
-  assert.match(workflow, /(?:staged-resources\/ui-skin-manager|staged\+'\/ui-skin-manager')/);
-  assert.match(workflow, /skin-manager-artifact\.lock\.json/);
+test('canonical installer staging preserves the manager resource directory and lock contract', () => {
+  const workflow = read('.github', 'workflows', 'staged-runtime-artifact.yml');
+  const stage = read('tauri-shell', 'stage-resources.mjs');
+  const build = read('tauri-shell', 'build.rs');
+  const config = json<{ bundle: { resources: Record<string, string> } }>('tauri-shell', 'tauri.conf.json');
+  assert.match(workflow, /node tauri-shell\/stage-resources\.mjs --target=\$\{\{ matrix\.target \}\}/);
+  assert.match(stage, /cpSync\(managerArtifacts, path\.join\(staged, 'ui-skin-manager'\), \{ recursive: true \}\)/);
+  assert.match(stage, /cpSync\(managerLockPath, path\.join\(staged, 'ui-skin-manager', 'artifact\.lock\.json'\)\)/);
+  assert.equal(config.bundle.resources['staged-resources/ui-skin-manager/'], 'ui-skin-manager/');
+  assert.match(build, /cargo:rerun-if-changed=skin-manager-artifact\.lock\.json/);
 });
 
 test('legacy shell-skin and AIO v1 are not restored', () => {
