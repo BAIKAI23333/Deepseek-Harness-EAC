@@ -49,6 +49,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AMutex};
 use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(any(windows, test))]
+mod native_devtools;
+#[cfg(any(windows, test))]
 mod webview_recovery;
 
 const BRIDGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/bridge-bundle.js"));
@@ -3000,14 +3002,23 @@ async fn handle_shell_method(
             Ok(Some(reply(native_action_result(result))))
         }
         "win.devtools" => {
-            if let Some(w) = app.get_webview("main") {
-                if w.is_devtools_open() {
-                    let _ = w.close_devtools();
-                } else {
-                    let _ = w.open_devtools();
-                }
-            }
-            Ok(Some(reply(serde_json::json!({"ok":true}))))
+            #[cfg(windows)]
+            let result = native_devtools::toggle(app).await;
+            #[cfg(not(windows))]
+            let result = app
+                .get_webview("main")
+                .map(|w| {
+                    if w.is_devtools_open() {
+                        w.close_devtools();
+                    } else {
+                        w.open_devtools();
+                    }
+                })
+                .ok_or_else(|| "main webview unavailable".to_string());
+            Ok(Some(match result {
+                Ok(()) => reply(serde_json::json!({"ok":true})),
+                Err(error) => reply_error(error),
+            }))
         }
         "win.fullscreen" => {
             if let Some(w) = app.get_window("main") {
