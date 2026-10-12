@@ -73,17 +73,25 @@ async function pageFor(t: any) {
   return browser.newPage({ viewport: { width: 1280, height: 800 } });
 }
 
-async function installBridge(page: any, slots: Record<string, string>) {
-  await page.evaluate((skinSlots: Record<string, string>) => {
+async function installBridge(page: any, slots: Record<string, string>, deferMaximizedSnapshot = false) {
+  await page.evaluate(({ skinSlots, deferMaximizedSnapshot }: { skinSlots: Record<string, string>, deferMaximizedSnapshot: boolean }) => {
     Object.defineProperty(navigator, 'platform', { value: 'Win32', configurable: true });
     (window as any).__DSH_UI_SKIN_MANAGER__ = { enabled: true, generation: 1, slots: skinSlots };
-    (window as any).__DSH_WS_RPC__ = () => ({
+    (window as any).__auditBridgeCreations = 0;
+    (window as any).__DSH_WS_RPC__ = () => {
+      (window as any).__auditBridgeCreations++;
+      return {
       send() {}, onNotify(fn: any) { (window as any).__auditShellNotify = fn; },
-      call: async (method: string) => method === 'win.is-maximized' ? false : {
-        iconDataUri: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>',
+      call: (method: string) => {
+        if (method === 'win.is-maximized') {
+          if (deferMaximizedSnapshot) return new Promise(resolve => { (window as any).__auditResolveMaximized = resolve; });
+          return Promise.resolve({ maximized: false });
+        }
+        return Promise.resolve({ iconDataUri: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg"/>' });
       },
-    });
-  }, slots);
+      };
+    };
+  }, { skinSlots: slots, deferMaximizedSnapshot });
   await page.addScriptTag({ content: titlebarScript() });
   await page.addScriptTag({ content: stripTypeScriptTypes(readFileSync(join(sourceRoot, 'tauri-shell/sidecar/bridge.ts'), 'utf8')) });
 }
@@ -272,4 +280,53 @@ test('caption labels follow active native locale without losing maximize state',
   assert.equal(await page.locator('[data-act="max"]').getAttribute('aria-pressed'), 'true');
   await page.evaluate(() => (window as any).__DSH_LOCALE__.onChange('en'));
   assert.deepEqual((await labels())[1], ['Restore', 'Restore']);
+});
+
+
+test('late initial maximize snapshot cannot overwrite a newer native notification', browserOptions, async t => {
+  const assets = loadAssets();
+  for (const snapshot of [true, false]) {
+    const page = await pageFor(t);
+    await page.setContent('<div id="root">host content</div>');
+    await installBridge(page, assets.slots, true);
+    await page.evaluate((oldState: boolean) => {
+      (window as any).__auditShellNotify('win.maximized', { maximized: !oldState });
+      (window as any).__auditResolveMaximized({ maximized: oldState });
+    }, snapshot);
+    assert.equal(await page.locator('[data-act="max"]').getAttribute('aria-pressed'), String(!snapshot));
+    await page.evaluate(() => (window as any).__DSH_LOCALE__.onChange('en'));
+    assert.equal(await page.locator('[data-act="max"]').getAttribute('aria-label'), snapshot ? 'Maximize' : 'Restore');
+  }
+});
+
+test('initial maximize snapshot applies when no newer native notification has arrived', browserOptions, async t => {
+  const assets = loadAssets();
+  for (const snapshot of [true, false]) {
+    const page = await pageFor(t);
+    await page.setContent('<div id="root">host content</div>');
+    await installBridge(page, assets.slots, true);
+    await page.evaluate((state: boolean) => (window as any).__auditResolveMaximized({ maximized: state }), snapshot);
+    assert.equal(await page.locator('[data-act="max"]').getAttribute('aria-pressed'), String(snapshot));
+  }
+});
+
+
+test('nested documents cannot initialize desktop chrome or the main guest-generation bridge', browserOptions, async t => {
+  const assets = loadAssets();
+  const page = await pageFor(t);
+  await page.setContent('<div id="root">host content</div><iframe srcdoc="<p>nested document</p>"></iframe>');
+  await installBridge(page, assets.slots);
+  const child = page.frames().find((frame: any) => frame !== page.mainFrame());
+  assert.ok(child, 'fixture requires an actual child browsing context');
+  await installBridge(child, assets.slots);
+  const childState = await child.evaluate(() => ({
+    bridge: !!(window as any).dshDesktop,
+    bridgeConnections: (window as any).__auditBridgeCreations,
+    chromeCount: document.querySelectorAll('#__dsh_desktop_chrome__').length,
+    platform: document.documentElement.getAttribute('data-platform'),
+    titlebarHeight: document.documentElement.getAttribute('data-dsh-title-bar-height'),
+  }));
+  assert.deepEqual(childState, { bridge: false, bridgeConnections: 0, chromeCount: 0, platform: null, titlebarHeight: null });
+  assert.equal(await page.locator('#__dsh_desktop_chrome__').count(), 1);
+  assert.equal(await page.evaluate(() => !!(window as any).dshDesktop), true);
 });
