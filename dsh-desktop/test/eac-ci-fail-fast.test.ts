@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 import { checkDpxPin, pinnedCommit } from '../../tauri-shell/check-dpx-pin.mjs';
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -36,21 +37,30 @@ test('门禁对当前工作树给出结论（干净即通过，任何问题都�
   }
 });
 
-test('CI 三个 checkout 都取 submodule，并在装配/测试前跑 pin 门禁', () => {
-  const ci = read('.github/workflows/ci.yml');
-  // source-and-unit（跑隔离测试）与 staged-runtime（装配）都必须取 submodule。
-  assert.ok((ci.match(/submodules:\s*recursive/g) ?? []).length >= 2, 'CI 至少两个 job 必须取 submodule');
-  assert.ok((ci.match(/check-dpx-pin\.mjs/g) ?? []).length >= 2, 'CI 必须在测试/装配前跑 pin 门禁');
-  // 门禁必须排在测试与装配之前（用出现顺序粗校验：pin 门禁早于 stage 调用）。
-  const pinIndex = ci.indexOf('check-dpx-pin.mjs');
-  const stageIndex = ci.indexOf('stage-resources.mjs');
-  assert.ok(pinIndex > 0 && stageIndex > pinIndex, 'pin 门禁必须早于 stage 装配');
+test('复用打包工作流取submodule，并在依赖安装与装配前执行pin门禁', () => {
+  const artifact = parse(read('.github/workflows/staged-runtime-artifact.yml')) as {
+    jobs: { build: { steps: { name: string; uses?: string; run?: string; with?: { submodules?: string } }[] } };
+  };
+  const steps = artifact.jobs.build.steps;
+  const checkout = steps.findIndex(step => step.uses === 'actions/checkout@v4');
+  const pin = steps.findIndex(step => step.run === 'node tauri-shell/check-dpx-pin.mjs');
+  const install = steps.findIndex(step => step.run === 'npm run ci:install');
+  const stage = steps.findIndex(step => step.run?.startsWith('node tauri-shell/stage-resources.mjs'));
+  assert.ok(checkout >= 0, '装配必须checkout仓库');
+  assert.equal(steps[checkout].with?.submodules, 'recursive');
+  assert.ok(pin > checkout, 'checkout后必须校验submodule pin');
+  assert.ok(install > pin, '安装依赖前必须完成pin门禁');
+  assert.ok(stage > install, '装配前必须完成依赖与pin门禁');
 });
 
-test('打包 workflow 同样取 submodule 并跑 pin 门禁', () => {
-  const artifact = read('.github/workflows/staged-runtime-artifact.yml');
-  assert.match(artifact, /submodules:\s*recursive/, '打包 workflow 必须取 submodule');
-  assert.match(artifact, /check-dpx-pin\.mjs/, '打包 workflow 必须跑 pin 门禁');
+test('本地安装门禁保留固定内核清单转换及失败传播', () => {
+  const manifest = JSON.parse(read('dsh-desktop/package.json'));
+  assert.equal(manifest.scripts['ci:install'], 'node scripts/npm-ci-with-kernel.mjs');
+  const installer = read('dsh-desktop/scripts/npm-ci-with-kernel.mjs');
+  assert.match(installer, /withAbsolutizedKernelManifests/);
+  assert.match(installer, /'ci', \.\.\.extraArgs/);
+  assert.match(installer, /result\.status !== 0/);
+  assert.match(installer, /throw new Error/);
 });
 
 test('stage 装配对 submodule 缺失/提交不匹配/脏工作树给出可执行失败信息', () => {
