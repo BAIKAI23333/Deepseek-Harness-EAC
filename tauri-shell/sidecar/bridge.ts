@@ -28,6 +28,9 @@
 //     webview，<webview> 宿主元素适配 —— 实现区注释见下方 SYNC-006 节）
 
 (function () {
+  // WebView2 also runs document-start scripts in nested documents.
+  if (window.top && window.top !== window) return;
+
   var BAR_ID = '__dsh_desktop_chrome__';
   var BAR_HEIGHT = 36;
 
@@ -1518,8 +1521,15 @@
         if (attempt < 5) window.setTimeout(function () { initInfo(attempt + 1); }, 1000 * attempt);
       });
     })(0);
-    dshDesktop.windowControls.isMaximized().then(setMaximized).catch(function () { /* 壳层不可用时静默 */ });
-    dshDesktop.windowControls.onMaximizeChange(setMaximized);
+    // A late startup snapshot must not overwrite a newer native state notification.
+    var receivedMaximizeChange = false;
+    dshDesktop.windowControls.onMaximizeChange(function (maximized: boolean) {
+      receivedMaximizeChange = true;
+      setMaximized(maximized);
+    });
+    dshDesktop.windowControls.isMaximized().then(function (maximized: boolean) {
+      if (!receivedMaximizeChange) setMaximized(maximized);
+    }).catch(function () { /* 壳层不可用时静默 */ });
   }
 
   if (document.readyState === 'loading') {
