@@ -19,13 +19,19 @@ function harness(blockedPort = 0) {
   const deaths: any[] = [];
   const stopResult = deferred<boolean>();
   const port = deferred<number>();
+  const timers: Array<{ callback: () => void; delay: number; handle: ReturnType<typeof setTimeout> }> = [];
   let quitting = false;
   let choosing = false;
   const source = stripTypeScriptTypes(readFileSync(new URL('../lib/desktop/boot-server.ts', import.meta.url), 'utf8'), { mode: 'transform' })
     .replace(/^export /gm, '')
     .replace("import { writeFileAtomic } from '../atomic-json';", "const { writeFileAtomic } = require('../atomic-json');");
   runInNewContext(source + '\nObject.assign(exports, {init, stopServer, startAndWait, killAndWaitForRestart, getServerProc, state, waitUntilUp, seed: p => {serverProc = p;}});', {
-    exports, Buffer, URL, process, setTimeout, clearTimeout,
+    exports, Buffer, URL, process, clearTimeout,
+    setTimeout: (callback: () => void, delay: number) => {
+      const handle = setTimeout(callback, delay);
+      timers.push({callback, delay, handle});
+      return handle;
+    },
     require: (name: string) => {
       if (name === './proc') return {
         killTree: () => {}, waitForProcExit: () => Promise.resolve(),
@@ -47,7 +53,17 @@ function harness(blockedPort = 0) {
   });
   exports.init({ log: () => {}, getUserDataDir: () => 'fixture', getDesktopProfile: () => 'fixture', desktopProfileDir: () => 'fixture', nodeExe: () => 'node', dshBin: () => 'bin', dshCli: () => 'carrier', loadSettings: () => ({}), saveSettings: () => {}, isQuitting: () => quitting, onServerDied: (info: any) => deaths.push(info) });
   const child = Object.assign(new EventEmitter(), { pid: 100, exitCode: null, signalCode: null });
-  return { exports, child, stops, children, requests, deaths, stopResult, port, get choosing() { return choosing; }, quit: () => { quitting = true; } };
+  return {
+    exports, child, stops, children, requests, deaths, stopResult, port,
+    get choosing() { return choosing; }, quit: () => { quitting = true; },
+    fireTimer: (delay: number) => {
+      const timer = timers.find(t => t.delay === delay);
+      assert.ok(timer, `missing timer: ${delay}`);
+      clearTimeout(timer.handle);
+      timer.callback();
+    },
+    dispose: () => { for (const timer of timers) clearTimeout(timer.handle); },
+  };
 }
 
 test('stop retains the child identity until termination is confirmed', async () => {
@@ -187,4 +203,67 @@ test('total startup deadline invalidates a late asynchronous port choice', async
   const h = harness();const starting = h.exports.startAndWait([], 1);
   await assert.rejects(starting,/service-start-timeout/);h.port.resolve(19000);await flush();
   assert.equal(h.children.length,0);
+});
+
+test('startup timeout waits for tree termination and blocks a new start during cleanup', async (t) => {
+  const h = harness(); t.after(h.dispose);
+  const starting = h.exports.startAndWait();
+  let settled = false;
+  void starting.then(() => { settled = true; }, () => { settled = true; });
+  const rejected = assert.rejects(starting, /service-start-timeout/);
+  h.port.resolve(19000); await flush();
+  const child = h.children[0];
+  assert.ok(child);
+  h.fireTimer(300000); await flush();
+  assert.deepEqual(h.stops, [child]);
+  assert.equal(settled, false, 'startup must remain locked until cleanup is confirmed');
+  await assert.rejects(h.exports.startAndWait(), /service-busy/);
+  child.exitCode = 0; child.emit('exit', 0, null);
+  assert.equal(h.exports.state().running, true, 'root exit alone does not confirm tree termination');
+  h.stopResult.resolve(true); await rejected;
+  assert.equal(h.exports.getServerProc(), null);
+  assert.equal(h.exports.state().running, false);
+  assert.equal(h.deaths.length, 0);
+  h.requests[0].request.emit('error', new Error('closed probe'));
+});
+
+test('startup timeout preserves an unconfirmed process and reports the cleanup failure', async (t) => {
+  const h = harness(); t.after(h.dispose);
+  const starting = h.exports.startAndWait();
+  const rejected = assert.rejects(starting, /service-start-timeout.*service-stop-unconfirmed/);
+  h.port.resolve(19000); await flush();
+  const child = h.children[0];
+  h.fireTimer(300000); await flush();
+  h.stopResult.resolve(false); await rejected;
+  assert.deepEqual(h.stops, [child]);
+  assert.equal(h.exports.getServerProc(), child);
+  child.exitCode = 0; child.emit('exit', 0, null);
+  assert.equal(h.exports.state().running, true);
+  await assert.rejects(h.exports.startAndWait(), /service-stop-unconfirmed/);
+  assert.equal(h.children.length, 1, 'failed cleanup must not permit a replacement process');
+  h.requests[0].request.emit('error', new Error('closed probe'));
+});
+
+test('late readiness output from a timed-out process cannot stop its replacement', async (t) => {
+  const h = harness(6667); t.after(h.dispose);
+  const first = h.exports.startAndWait();
+  const rejected = assert.rejects(first, /service-start-timeout/);
+  h.port.resolve(19000); await flush();
+  const oldChild = h.children[0];
+  h.fireTimer(300000); await flush();
+  h.stopResult.resolve(true); await rejected;
+  const replacement = h.exports.startAndWait();
+  await flush();
+  const newChild = h.children[1];
+  assert.ok(newChild);
+  oldChild.stdout.emit('data', Buffer.from('dsh web: http://127.0.0.1:6667\n'));
+  await flush();
+  assert.deepEqual(h.stops, [oldChild]);
+  assert.equal(h.exports.getServerProc(), newChild);
+  newChild.stdout.emit('data', Buffer.from('dsh web: http://127.0.0.1:19000\n'));
+  await flush(); h.requests.at(-1).ready();
+  assert.equal((await replacement).webUrl, 'http://127.0.0.1:19000');
+  assert.equal(h.children.length, 2);
+  await h.exports.stopServer();
+  for (const {request} of h.requests) request.emit('error', new Error('closed probe'));
 });
