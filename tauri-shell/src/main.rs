@@ -49,6 +49,8 @@ use tokio::sync::{broadcast, mpsc, oneshot, Mutex as AMutex};
 use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(any(windows, test))]
+mod native_devtools;
+#[cfg(any(windows, test))]
 mod webview_recovery;
 
 const BRIDGE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/bridge-bundle.js"));
@@ -95,7 +97,7 @@ const TITLE_BAR_STYLE_ID: &str = "__dsh_title_bar_fix__";
 /// 导航到内核 Web UI，页面上下文重建后属性与样式都不能丢。
 fn windows_titlebar_marker_js() -> String {
     format!(
-        "if(navigator.platform.indexOf('Win')===0){{\
+        "if(window===window.top&&navigator.platform.indexOf('Win')===0){{\
 var h='{height}px';\
 var d=function(){{var r=document.documentElement;\
 if(!r)return false;\
@@ -843,7 +845,16 @@ fn eac_data_root_with(
 
 static SHELL_NOTIFY: OnceLock<broadcast::Sender<Value>> = OnceLock::new();
 static WEB_URL: OnceLock<RwLock<String>> = OnceLock::new();
-static LAST_MAXIMIZED: AtomicBool = AtomicBool::new(false);
+// A restored maximized window may precede the first resize observation.
+static LAST_MAXIMIZED: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+fn record_maximized_state(previous: &mut Option<bool>, maximized: bool) -> bool {
+    if *previous == Some(maximized) {
+        return false;
+    }
+    *previous = Some(maximized);
+    true
+}
 // 优雅退出/重启意图：退出链路（shutdown 应答→sidecar 自退→EOF）会被 reader
 // 当成「sidecar 死亡」广播 boot.server-died，退出/重启瞬间主窗闪现 /died 页。
 // 各退出/重启入口置位，reader EOF 命中时只回绝在途 RPC、不广播死亡导航。
@@ -930,46 +941,216 @@ struct WindowState {
     maximized: bool,
 }
 
+// Debug-only audit storage keeps native-state probes away from user settings.
+fn window_state_audit_dir() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    {
+        let dir = std::env::var_os("DSH_WINDOW_STATE_AUDIT_DIR").map(PathBuf::from)?;
+        if dir.is_absolute() {
+            return Some(dir);
+        }
+    }
+    None
+}
+
+fn trace_window_state(message: impl std::fmt::Display) {
+    if window_state_audit_dir().is_some() {
+        eprintln!("[shell] window-state audit: {}", message);
+    }
+}
+
 fn window_state_path(app: &tauri::AppHandle) -> Option<PathBuf> {
     use tauri::Manager;
-    app.path()
-        .app_config_dir()
-        .ok()
-        .map(|dir| dir.join("window-state.json"))
+    let original = app.path().app_config_dir();
+    if let Some(dir) = window_state_audit_dir() {
+        trace_window_state(format!(
+            "platform config={:?}; isolated storage={:?}",
+            original, dir
+        ));
+        return Some(dir.join("window-state.json"));
+    }
+    original.ok().map(|dir| dir.join("window-state.json"))
 }
 
 fn load_window_state(app: &tauri::AppHandle) -> Option<WindowState> {
     let path = window_state_path(app)?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str(&raw).ok()
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(state) => {
+                trace_window_state(format!("loaded {}", raw));
+                Some(state)
+            }
+            Err(error) => {
+                trace_window_state(format!("load parse failed: {}", error));
+                None
+            }
+        },
+        Err(error) => {
+            trace_window_state(format!("load read failed: {}", error));
+            None
+        }
+    }
+}
+
+// Keep normal client-area bounds independently of maximized/minimized/fullscreen geometry.
+static LAST_WINDOW_STATE: std::sync::Mutex<Option<WindowState>> = std::sync::Mutex::new(None);
+
+fn valid_window_dimensions(w: f64, h: f64) -> bool {
+    w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0
+}
+
+fn merge_window_state(
+    previous: Option<WindowState>,
+    normal: Option<WindowState>,
+    maximized: bool,
+    minimized: bool,
+    fullscreen: bool,
+) -> Option<WindowState> {
+    if minimized || fullscreen {
+        return previous;
+    }
+    if maximized {
+        return previous.map(|mut state| {
+            state.maximized = true;
+            state
+        });
+    }
+    normal
+}
+
+fn window_mode(win: &tauri::Window) -> Option<(bool, bool)> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{IsIconic, IsZoomed};
+        let hwnd = win.hwnd().ok()?.0;
+        // WM_WINDOWPOSCHANGED can precede Tao's WM_SIZE maximized flag update.
+        return Some(unsafe { (IsZoomed(hwnd) != 0, IsIconic(hwnd) != 0) });
+    }
+    #[cfg(not(windows))]
+    Some((win.is_maximized().ok()?, win.is_minimized().ok()?))
+}
+
+// Tao 0.35's borderless WM_NCCALCSIZE path clips maximized fullscreen to rcWork.
+// Override only that native fullscreen style; keep Tao's placement and maximize state.
+#[cfg(windows)]
+fn install_fullscreen_client_fix(win: &tauri::WebviewWindow) {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, IsZoomed, GWL_STYLE, NCCALCSIZE_PARAMS, WM_NCCALCSIZE, WM_NCDESTROY,
+        WS_OVERLAPPEDWINDOW,
+    };
+
+    const SUBCLASS_ID: usize = 0x45414346;
+    unsafe extern "system" fn window_proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _subclass_id: usize,
+        _reference: usize,
+    ) -> LRESULT {
+        if message == WM_NCCALCSIZE
+            && wparam != 0
+            && lparam != 0
+            && IsZoomed(hwnd) != 0
+            && GetWindowLongPtrW(hwnd, GWL_STYLE) as u32 & WS_OVERLAPPEDWINDOW == 0
+        {
+            let params = lparam as *mut NCCALCSIZE_PARAMS;
+            let fullscreen_rect = (*params).rgrc[0];
+            let _ = DefSubclassProc(hwnd, message, wparam, lparam);
+            (*params).rgrc[0] = fullscreen_rect;
+            return 0;
+        }
+        if message == WM_NCDESTROY {
+            RemoveWindowSubclass(hwnd, Some(window_proc), SUBCLASS_ID);
+        }
+        DefSubclassProc(hwnd, message, wparam, lparam)
+    }
+
+    match win.hwnd() {
+        Ok(hwnd)
+            if unsafe { SetWindowSubclass(hwnd.0, Some(window_proc), SUBCLASS_ID, 0) } != 0 =>
+        {
+            trace_window_state("fullscreen client fix installed");
+        }
+        Ok(_) => eprintln!(
+            "[shell] fullscreen client fix installation failed: {}",
+            std::io::Error::last_os_error()
+        ),
+        Err(error) => eprintln!(
+            "[shell] fullscreen client fix window unavailable: {}",
+            error
+        ),
+    }
+}
+
+fn observe_window_state(app: &tauri::AppHandle) -> Option<WindowState> {
+    use tauri::Manager;
+    // Native state belongs to the window even when it owns additional webviews.
+    let win = app.get_window("main")?;
+    let (maximized, minimized) = window_mode(&win)?;
+    let fullscreen = win.is_fullscreen().ok()?;
+    if window_state_audit_dir().is_some() {
+        let cached_maximized = win.is_maximized().ok();
+        if cached_maximized != Some(maximized) {
+            trace_window_state(format!(
+                "native maximized={}; runtime cached maximized={:?}",
+                maximized, cached_maximized
+            ));
+        }
+    }
+    let normal = if !maximized && !minimized && !fullscreen {
+        let size = win.inner_size().ok()?;
+        let pos = win.outer_position().ok()?;
+        let scale = win.scale_factor().ok()?;
+        let logical = size.to_logical::<f64>(scale);
+        Some(WindowState {
+            x: pos.x,
+            y: pos.y,
+            w: logical.width,
+            h: logical.height,
+            maximized: false,
+        })
+    } else {
+        None
+    };
+    let latest_mode = window_mode(&win)?;
+    let latest_fullscreen = win.is_fullscreen().ok()?;
+    let mut cache = LAST_WINDOW_STATE.lock().ok()?;
+    let normal = if latest_mode == (maximized, minimized) && latest_fullscreen == fullscreen {
+        normal
+    } else {
+        None
+    };
+    let state = if latest_mode == (false, false) && !latest_fullscreen && normal.is_none() {
+        cache.clone()
+    } else {
+        merge_window_state(
+            cache.clone(),
+            normal,
+            latest_mode.0,
+            latest_mode.1,
+            latest_fullscreen,
+        )
+    };
+    *cache = state.clone();
+    state
 }
 
 fn save_window_state(app: &tauri::AppHandle) {
-    use tauri::Manager;
+    trace_window_state("save entered");
     let Some(path) = window_state_path(app) else {
+        eprintln!("[shell] window-state storage unavailable; not persisted");
         return;
     };
-    let Some(win) = app.get_webview_window("main") else {
+    let Some(state) = observe_window_state(app) else {
+        trace_window_state("save: normal window bounds unavailable");
         return;
     };
-    let Ok(size) = win.outer_size() else { return };
-    let Ok(pos) = win.outer_position() else {
-        return;
-    };
-    let scale = win.scale_factor().unwrap_or(1.0);
-    let logical = size.to_logical::<f64>(scale);
-    let state = WindowState {
-        x: pos.x,
-        y: pos.y,
-        w: logical.width,
-        h: logical.height,
-        maximized: win.is_maximized().unwrap_or(false),
-    };
-    // 落盘防御（与启动侧 <600×400 丢弃互为镜像）：还原位被 DPI/显示器
-    // 变化污染成极小尺寸的会话，坏值只允许存在当次，绝不写盘毒化下次启动。
-    if state.w < 600.0 || state.h < 400.0 {
+    if !valid_window_dimensions(state.w, state.h) {
         eprintln!(
-            "[shell] window-state too small on save ({}x{}), skip persist",
+            "[shell] window-state invalid dimensions on save ({}x{}), skip persist",
             state.w, state.h
         );
         return;
@@ -986,8 +1167,114 @@ fn save_window_state(app: &tauri::AppHandle) {
             eprintln!("[shell] window-state mkdir failed: {}", e);
         }
     }
-    if let Err(e) = std::fs::write(&path, json) {
-        eprintln!("[shell] window-state save failed: {}", e);
+    match std::fs::write(&path, &json) {
+        Ok(()) => trace_window_state(format!("saved {}", json)),
+        Err(e) => eprintln!("[shell] window-state save failed: {}", e),
+    }
+}
+
+#[cfg(test)]
+mod window_state_tests {
+    use super::{merge_window_state, record_maximized_state, valid_window_dimensions, WindowState};
+    #[test]
+    fn first_restore_notification_is_not_suppressed_by_a_default_false_state() {
+        let mut observed = None;
+        assert!(record_maximized_state(&mut observed, false));
+        assert!(!record_maximized_state(&mut observed, false));
+    }
+
+    #[test]
+    fn maximize_notifications_deduplicate_only_previously_observed_states() {
+        let mut observed = None;
+        assert!(record_maximized_state(&mut observed, true));
+        assert!(!record_maximized_state(&mut observed, true));
+        assert!(record_maximized_state(&mut observed, false));
+        assert!(!record_maximized_state(&mut observed, false));
+        assert!(record_maximized_state(&mut observed, true));
+    }
+
+    fn normal() -> WindowState {
+        WindowState {
+            x: 275,
+            y: 164,
+            w: 800.0,
+            h: 480.0,
+            maximized: false,
+        }
+    }
+    #[test]
+    fn maximize_preserves_restore_bounds() {
+        let state = merge_window_state(Some(normal()), None, true, false, false).unwrap();
+        assert_eq!(
+            (state.x, state.y, state.w, state.h),
+            (275, 164, 800.0, 480.0)
+        );
+        assert!(state.maximized);
+    }
+    #[test]
+    fn minimize_preserves_previous_maximized_choice() {
+        let mut prior = normal();
+        prior.maximized = true;
+        let state = merge_window_state(Some(prior), None, false, true, false).unwrap();
+        assert!(state.maximized);
+        assert_eq!((state.w, state.h), (800.0, 480.0));
+    }
+    #[test]
+    fn restore_accepts_new_normal_client_bounds() {
+        let mut prior = normal();
+        prior.maximized = true;
+        let mut resized = normal();
+        resized.w = 900.0;
+        let state = merge_window_state(Some(prior), Some(resized), false, false, false).unwrap();
+        assert_eq!(state.w, 900.0);
+        assert!(!state.maximized);
+    }
+    #[test]
+    fn fullscreen_preserves_normal_bounds_and_previous_maximized_choice() {
+        for maximized_before_fullscreen in [false, true] {
+            let mut prior = normal();
+            prior.maximized = maximized_before_fullscreen;
+            let fullscreen_geometry = WindowState {
+                x: 0,
+                y: 0,
+                w: 1706.6666666666667,
+                h: 1066.6666666666667,
+                maximized: false,
+            };
+            let state =
+                merge_window_state(Some(prior), Some(fullscreen_geometry), false, false, true)
+                    .unwrap();
+            assert_eq!(
+                (state.x, state.y, state.w, state.h),
+                (275, 164, 800.0, 480.0)
+            );
+            assert_eq!(state.maximized, maximized_before_fullscreen);
+        }
+    }
+
+    #[test]
+    fn fullscreen_without_prior_bounds_does_not_invent_normal_geometry() {
+        assert!(merge_window_state(None, Some(normal()), false, false, true).is_none());
+    }
+
+    #[test]
+    fn legal_small_windows_do_not_fail_an_unrelated_persistence_threshold() {
+        assert!(valid_window_dimensions(480.0, 360.0));
+        assert!(valid_window_dimensions(500.0, 380.0));
+    }
+
+    #[test]
+    fn invalid_saved_dimensions_are_rejected_before_monitor_clamping() {
+        for invalid in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(!valid_window_dimensions(invalid, 480.0));
+            assert!(!valid_window_dimensions(800.0, invalid));
+        }
+    }
+
+    #[test]
+    fn missing_restore_bounds_are_not_invented_from_screen_geometry() {
+        assert!(merge_window_state(None, None, true, false, false).is_none());
+        assert!(merge_window_state(None, None, false, true, false).is_none());
     }
 }
 
@@ -996,6 +1283,8 @@ fn save_window_state(app: &tauri::AppHandle) {
 static LAST_STATE_SAVE: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
 
 fn throttle_save_window_state(app: &tauri::AppHandle) {
+    // Capture every event; only disk writes are throttled.
+    let _ = observe_window_state(app);
     let now = std::time::Instant::now();
     let Ok(mut last) = LAST_STATE_SAVE.lock() else {
         return;
@@ -1539,7 +1828,10 @@ static VP_DESYNC_STREAK: AtomicU64 = AtomicU64::new(0);
 /// 心跳报文的视口与窗口实际尺寸比对，失同步时分级自愈。
 fn heal_viewport_desync(app: &tauri::AppHandle, page_w: f64, page_h: f64, dpr: f64) {
     use tauri::Manager;
-    let Some(win) = app.get_webview_window("main") else {
+    let Some(win) = app.get_window("main") else {
+        return;
+    };
+    let Some(webview) = app.get_webview("main") else {
         return;
     };
     // 最小化/隐藏时页面视口本来就不会跟随，不做误报。
@@ -1581,13 +1873,17 @@ fn heal_viewport_desync(app: &tauri::AppHandle, page_w: f64, page_h: f64, dpr: f
         position: tauri::PhysicalPosition::new(0i32, 0i32).into(),
         size: tauri::PhysicalSize::new(phys.width, phys.height).into(),
     };
-    if let Err(e) = win.as_ref().set_bounds(rect) {
+    if let Err(e) = webview.set_bounds(rect) {
         eprintln!("[shell] webview set_bounds failed: {}", e);
     }
     // ② 升级路径：连续两拍失同步且非最大化 → 1px 往返强制 WM_SIZE
     //（最大化窗口 set_size 会破坏最大化态，只走 ①）。
     let streak = VP_DESYNC_STREAK.fetch_add(1, Ordering::SeqCst);
-    if streak >= 1 && !win.is_maximized().unwrap_or(false) {
+    if streak >= 1
+        && window_mode(&win)
+            .map(|(maximized, minimized)| !maximized && !minimized)
+            .unwrap_or(false)
+    {
         let w = phys.width;
         let h = phys.height;
         let _ = win.set_size(tauri::PhysicalSize::new(w, h.saturating_sub(1)));
@@ -1608,7 +1904,10 @@ fn heal_viewport_desync(app: &tauri::AppHandle, page_w: f64, page_h: f64, dpr: f
 /// —— 即视口失同步的主诱因，这里延迟一拍显式重绑兜底。
 fn reassert_webview_bounds(app: &tauri::AppHandle) {
     use tauri::Manager;
-    let Some(win) = app.get_webview_window("main") else {
+    let Some(win) = app.get_window("main") else {
+        return;
+    };
+    let Some(webview) = app.get_webview("main") else {
         return;
     };
     let Ok(phys) = win.inner_size() else { return };
@@ -1616,7 +1915,7 @@ fn reassert_webview_bounds(app: &tauri::AppHandle) {
         position: tauri::PhysicalPosition::new(0i32, 0i32).into(),
         size: tauri::PhysicalSize::new(phys.width, phys.height).into(),
     };
-    if let Err(e) = win.as_ref().set_bounds(rect) {
+    if let Err(e) = webview.set_bounds(rect) {
         eprintln!("[shell] webview set_bounds (dpi) failed: {}", e);
     } else {
         eprintln!(
@@ -1666,13 +1965,11 @@ fn resolved_initial_bounds(app: &tauri::AppHandle) -> (f64, f64, Option<(f64, f6
     }
 
     if let Some(st) = load_window_state(app) {
-        // 坏状态防御（issue：重装后窗口很小）：历史尺寸过小（<600×400 逻辑，
-        // 低于有意义的可用下限）多为旧版本异常会话/坏写盘残留 —— 直接丢弃
-        // 走上面的首启默认，避免每次启动都恢复成小窗。正常拖小的窗口首次
-        // 调整后重新记忆即可恢复。
-        if st.w < 600.0 || st.h < 400.0 {
+        // 拒绝损坏数值；合法小窗由目标显示器下限/work area 收敛，
+        // 不用独立于 native min_inner_size 的产品阈值丢弃用户选择。
+        if !valid_window_dimensions(st.w, st.h) {
             eprintln!(
-                "[shell] window-state too small ({}x{}), ignored (use default size)",
+                "[shell] window-state invalid dimensions ({}x{}), ignored (use default size)",
                 st.w, st.h
             );
         } else {
@@ -2015,7 +2312,7 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
         .unwrap_or_else(|| "ask".to_string());
     match action.as_str() {
         "minimize" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.hide();
             }
         }
@@ -2025,7 +2322,7 @@ async fn apply_exit_policy(app: &tauri::AppHandle, allow_ask: bool) {
                 open_exit_dialog(app);
             } else {
                 // 非用户主动路径（防误触兜底）：隐藏。
-                if let Some(w) = app.get_webview_window("main") {
+                if let Some(w) = app.get_window("main") {
                     let _ = w.hide();
                 }
             }
@@ -2051,7 +2348,7 @@ mod exit_dialog_tests {
 /// 注入退出确认 overlay 到主窗（无新窗口，不替换现有内容）。
 fn open_exit_dialog(app: &tauri::AppHandle) {
     use tauri::Manager;
-    if let Some(win) = app.get_webview_window("main") {
+    if let Some(win) = app.get_webview("main") {
         win.eval(&exit_dialog_script(shell_prefers_chinese())).ok();
     }
 }
@@ -2280,6 +2577,10 @@ fn browser_partition_for_workspace(workspace: &str) -> String {
 /// guest 用户数据目录：<app_data_dir>/browser-guests/<名称>。
 fn browser_guest_data_dir(app: &tauri::AppHandle, dir_name: &str) -> Option<PathBuf> {
     use tauri::Manager;
+    // Keep audit guest profiles inside the same debug-only isolated root.
+    if let Some(base) = window_state_audit_dir() {
+        return Some(base.join("browser-guests").join(dir_name));
+    }
     app.path()
         .app_data_dir()
         .ok()
@@ -2587,14 +2888,17 @@ async fn handle_shell_method(
     };
     match method {
         "win.minimize" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.minimize();
             }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.toggle-maximize" => {
-            if let Some(w) = app.get_webview_window("main") {
-                if w.is_maximized().unwrap_or(false) {
+            if let Some(w) = app.get_window("main") {
+                if window_mode(&w)
+                    .map(|(maximized, _)| maximized)
+                    .unwrap_or(false)
+                {
                     let _ = w.unmaximize();
                     // 还原位损坏防御（issue：副屏/DPI 变化污染 Windows 保存的
                     // 还原位，还原后窗口只剩极窄一条）：还原后低于 OS 下限
@@ -2637,7 +2941,7 @@ async fn handle_shell_method(
         }
         "win.close-dialog" => {
             // 移除 overlay，恢复主窗
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_webview("main") {
                 let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
             }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
@@ -2648,27 +2952,30 @@ async fn handle_shell_method(
         }
         "win.hide-and-close-dialog" => {
             // 最小化到托盘：隐藏主窗 + 移除 overlay，不恢复
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.hide();
-                let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
+            }
+            if let Some(view) = app.get_webview("main") {
+                let _ = view.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
             }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.hide" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.hide();
             }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
         }
         "win.is-maximized" => {
             let m = app
-                .get_webview_window("main")
-                .map(|w| w.is_maximized().unwrap_or(false))
+                .get_window("main")
+                .and_then(|w| window_mode(&w))
+                .map(|(maximized, _)| maximized)
                 .unwrap_or(false);
             Ok(Some(reply(serde_json::json!({"maximized":m}))))
         }
         "win.start-dragging" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let _ = w.start_dragging();
             }
             Ok(None) // send 型
@@ -2689,24 +2996,37 @@ async fn handle_shell_method(
         }
         "win.reload" => {
             let result = app
-                .get_webview_window("main")
+                .get_webview("main")
                 .ok_or_else(|| "main window unavailable".to_string())
                 .and_then(|w| w.reload().map_err(|e| e.to_string()));
             Ok(Some(reply(native_action_result(result))))
         }
         "win.devtools" => {
-            if let Some(w) = app.get_webview_window("main") {
-                if w.is_devtools_open() {
-                    let _ = w.close_devtools();
-                } else {
-                    let _ = w.open_devtools();
-                }
-            }
-            Ok(Some(reply(serde_json::json!({"ok":true}))))
+            #[cfg(windows)]
+            let result = native_devtools::toggle(app).await;
+            #[cfg(not(windows))]
+            let result = app
+                .get_webview("main")
+                .map(|w| {
+                    if w.is_devtools_open() {
+                        w.close_devtools();
+                    } else {
+                        w.open_devtools();
+                    }
+                })
+                .ok_or_else(|| "main webview unavailable".to_string());
+            Ok(Some(match result {
+                Ok(()) => reply(serde_json::json!({"ok":true})),
+                Err(error) => reply_error(error),
+            }))
         }
         "win.fullscreen" => {
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_window("main") {
                 let fs = w.is_fullscreen().unwrap_or(false);
+                if !fs {
+                    // Capture the current restore bounds before fullscreen geometry arrives.
+                    let _ = observe_window_state(app);
+                }
                 let _ = w.set_fullscreen(!fs);
             }
             Ok(Some(reply(serde_json::json!({"ok":true}))))
@@ -4301,7 +4621,7 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
                 let app2 = app.clone();
                 let _ = app.run_on_main_thread(move || {
                     use tauri::Manager;
-                    if let Some(win) = app2.get_webview_window("main") {
+                    if let Some(win) = app2.get_webview("main") {
                         if let Ok(parsed) = tauri::Url::parse(&url) {
                             let _ = win.navigate(parsed);
                         }
@@ -4326,10 +4646,12 @@ fn handle_sidecar_notify(app: &tauri::AppHandle, v: &Value) {
             let app2 = app.clone();
             let _ = app.run_on_main_thread(move || {
                 use tauri::Manager;
-                if let Some(win) = app2.get_webview_window("main") {
+                if let Some(win) = app2.get_window("main") {
                     let _ = win.show();
                     if let Ok(parsed) = tauri::Url::parse(&href) {
-                        let _ = win.navigate(parsed);
+                        if let Some(view) = app2.get_webview("main") {
+                            let _ = view.navigate(parsed);
+                        }
                     }
                 }
             });
@@ -4387,13 +4709,13 @@ fn main() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 二次启动：聚焦已有主窗（= Electron second-instance 行为）。
             use tauri::Manager;
-            if let Some(win) = app.get_webview_window("main") {
+            if let Some(win) = app.get_window("main") {
                 let _ = win.show();
                 let _ = win.unminimize();
                 let _ = win.set_focus();
             }
             // 主窗导航完成：清理可能残留的退出 overlay
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_webview("main") {
                 let _ = w.eval("window.__dshExitOverlay&&window.__dshExitOverlay.dismiss()");
             }
         }))
@@ -4475,6 +4797,10 @@ fn main() {
                                             apply_window_icon(&win, &app_win);
                                             #[cfg(windows)]
                                             webview_recovery::install(&win);
+                                            #[cfg(windows)]
+                                            install_fullscreen_client_fix(&win);
+                                            // Seed restore bounds while the new window is still normal.
+                                            let _ = observe_window_state(&app_win);
                                             if sim_max {
                                                 let _ = win.maximize();
                                             }
@@ -4500,7 +4826,7 @@ fn main() {
                                             let app3 = app_nav.clone();
                                             let _ = app_nav.run_on_main_thread(move || {
                                                 use tauri::Manager;
-                                                if let Some(win) = app3.get_webview_window("main") {
+                                                if let Some(win) = app3.get_webview("main") {
                                                     if let Ok(parsed) = tauri::Url::parse(&url) {
                                                         let _ = win.navigate(parsed);
                                                     }
@@ -4518,10 +4844,12 @@ fn main() {
                                         let app3 = app_nav.clone();
                                         let _ = app_nav.run_on_main_thread(move || {
                                             use tauri::Manager;
-                                            if let Some(win) = app3.get_webview_window("main") {
+                                            if let Some(win) = app3.get_window("main") {
                                                 let _ = win.show();
                                                 if let Ok(parsed) = tauri::Url::parse(&href) {
-                                                    let _ = win.navigate(parsed);
+                                                    if let Some(view) = app3.get_webview("main") {
+                                                        let _ = view.navigate(parsed);
+                                                    }
                                                 }
                                             }
                                         });
@@ -4548,7 +4876,7 @@ fn main() {
                                     ws_port(), encode_query(&msg)
                                 );
                                 if let Ok(url) = tauri::Url::parse(&died) {
-                                    if app_died.get_webview_window("main").is_none() {
+                                    if app_died.get_window("main").is_none() {
                                         let (sim_w, sim_h, sim_pos, sim_max) =
                                             resolved_initial_bounds(&app_died);
                                         let (eff_min_w, eff_min_h) = effective_min_inner(&app_died);
@@ -4569,15 +4897,21 @@ fn main() {
                                                 apply_window_icon(&win, &app_died);
                                                 #[cfg(windows)]
                                                 webview_recovery::install(&win);
+                                            #[cfg(windows)]
+                                            install_fullscreen_client_fix(&win);
+                                                // Seed restore bounds while the new window is still normal.
+                                                let _ = observe_window_state(&app_died);
                                                 if sim_max {
                                                     let _ = win.maximize();
                                                 }
                                             }
                                             Err(e) => eprintln!("[shell] died window build failed: {}", e),
                                         }
-                                    } else if let Some(win) = app_died.get_webview_window("main") {
+                                    } else if let Some(win) = app_died.get_window("main") {
                                         let _ = win.show();
-                                        let _ = win.navigate(url);
+                                        if let Some(view) = app_died.get_webview("main") {
+                                            let _ = view.navigate(url);
+                                        }
                                     }
                                 }
                             });
@@ -4604,7 +4938,7 @@ fn main() {
             }
             tray.on_menu_event(move |app, event| match event.id.as_ref() {
                 "show" => {
-                    if let Some(win) = app.get_webview_window("main") {
+                    if let Some(win) = app.get_window("main") {
                         if win.is_visible().unwrap_or(true) {
                             let _ = win.hide();
                         } else {
@@ -4645,7 +4979,7 @@ fn main() {
                 // 单击切换窗口可见性（= Electron tray.on('click')）。
                 if let tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. } = event {
                     let app = tray.app_handle().clone();
-                    if let Some(win) = app.get_webview_window("main") {
+                    if let Some(win) = app.get_window("main") {
                         if win.is_visible().unwrap_or(true) && win.is_focused().unwrap_or(false) {
                             let _ = win.hide();
                         } else {
@@ -4680,12 +5014,21 @@ fn main() {
                 // 最大化状态变化 → win.maximized 通知（桥 onMaximizeChange 消费）。
                 tauri::WindowEvent::Resized(_) => {
                     if window.label() == "main" {
-                        let m = window.is_maximized().unwrap_or(false);
-                        if LAST_MAXIMIZED.swap(m, Ordering::SeqCst) != m {
+                        let m = window_mode(window)
+                            .map(|(maximized, _)| maximized)
+                            .unwrap_or(false);
+                        let changed = LAST_MAXIMIZED
+                            .lock()
+                            .map(|mut previous| record_maximized_state(&mut previous, m))
+                            .unwrap_or(false);
+                        if changed {
                             let _ = shell_notify().send(serde_json::json!({
                                 "method": "win.maximized",
                                 "params": { "maximized": m }
                             }));
+                        }
+                        if window.webviews().len() > 1 {
+                            reassert_webview_bounds(window.app_handle());
                         }
                         throttle_save_window_state(window.app_handle());
                     }

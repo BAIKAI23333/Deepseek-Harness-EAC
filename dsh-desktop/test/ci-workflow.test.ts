@@ -3,62 +3,93 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse } from 'yaml';
 
 const repositoryRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const workflow = readFileSync(join(repositoryRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
+const workflow = parse(readFileSync(join(repositoryRoot, '.github', 'workflows', 'staged-runtime-artifact.yml'), 'utf8')) as {
+  on: Record<string, unknown>;
+  permissions: Record<string, string>;
+  jobs: Record<string, {
+    'runs-on': string;
+    permissions?: Record<string, string>;
+    strategy: { matrix: { include: { runner: string; os: string; arch: string; target: string }[] } };
+    steps: { name: string; run?: string; uses?: string; if?: string; 'continue-on-error'?: boolean; with?: Record<string, unknown> }[];
+  }>;
+};
+const build = workflow.jobs.build;
+assert.ok(build, '复用工作流必须保留安装包装配job');
 
-function triggerBlock(event: 'pull_request' | 'push'): string {
-  const match = workflow.match(new RegExp(`^  ${event}:\\n([\\s\\S]*?)(?=^  \\w|^concurrency:)`, 'm'));
-  assert.ok(match, `CI 缺少 ${event} 触发器`);
-  return match[1];
+function step(name: string) {
+  const result = build.steps.find(candidate => candidate.name === name);
+  assert.ok(result, '缺少装配步骤：' + name);
+  assert.notEqual(result['continue-on-error'], true, name + ' 不得忽略失败');
+  return result;
 }
 
-function jobBlock(jobName: string): string {
-  const start = workflow.indexOf(`  ${jobName}:\n`);
-  assert.notEqual(start, -1, `CI 缺少 ${jobName} job`);
-  return workflow.slice(start).split(/\n  [a-z][\w-]*:\n/)[0];
+function requireOrder(names: string[]): void {
+  const positions = names.map(name => {
+    step(name);
+    return build.steps.findIndex(candidate => candidate.name === name);
+  });
+  for (let index = 1; index < positions.length; index++) {
+    assert.ok(positions[index] > positions[index - 1], names[index] + ' 必须在 ' + names[index - 1] + ' 之后');
+  }
 }
 
-test('单元与构建 CI 在 PR 到 dev/main 及 push 到 dev/main 时触发', () => {
-  for (const event of ['pull_request', 'push'] as const) {
-    const block = triggerBlock(event);
-    assert.match(block, /branches:\n\s+- dev\n\s+- main\n/);
-  }
-  assert.match(workflow, /^  source-and-unit:/m);
-  assert.match(workflow, /^  staged-runtime:/m);
+test('安装包装配仅由workflow_call调用，本地测试保留独立入口', () => {
+  assert.deepEqual(Object.keys(workflow.on), ['workflow_call']);
+  const manifest = JSON.parse(readFileSync(join(repositoryRoot, 'dsh-desktop', 'package.json'), 'utf8'));
+  assert.equal(manifest.scripts.pretest, 'npm run build');
+  assert.match(manifest.scripts.test, /^node scripts\/test-runner\.js test\/\*\.test\.ts /);
+  assert.equal(manifest.scripts['test:native'], 'node scripts/build-native.js test');
 });
 
-test('构建、Rust 与 staged runtime 在四个平台架构上运行并隔离产物', () => {
-  for (const jobName of ['source-and-unit', 'rust-shell', 'staged-runtime']) {
-    const job = jobBlock(jobName);
-    assert.match(job, /runs-on: \$\{\{ matrix\.runner \}\}/);
-    assert.match(job, /runner: ubuntu-22\.04\n\s+os: linux\n\s+arch: x64/);
-    assert.match(job, /runner: ubuntu-22\.04-arm\n\s+os: linux\n\s+arch: arm64/);
-    assert.match(job, /runner: windows-latest\n\s+os: windows\n\s+arch: x64/);
-    assert.match(job, /runner: windows-11-arm\n\s+os: windows\n\s+arch: arm64/);
-    assert.match(job, /process\.arch/);
-    assert.match(job, /matrix\.arch/);
-  }
-  assert.match(workflow, /generated-bridge-\$\{\{ matrix\.os \}\}-\$\{\{ matrix\.arch \}\}/);
-  assert.match(workflow, /key: \$\{\{ runner\.os \}\}-\$\{\{ matrix\.arch \}\}-kernel/);
-  assert.match(workflow, /Prepare Tauri resource directory for Rust tests/);
-  const rustJob = jobBlock('rust-shell');
-  assert.match(rustJob, /(?:cpSync\(root\+'\/artifacts',staged\+'\/ui-skin-manager'|cpSync\('tauri-shell\/artifacts','tauri-shell\/staged-resources\/ui-skin-manager')/);
-  assert.match(rustJob, /skin-manager-artifact\.lock\.json/);
-  assert.match(rustJob, /Fetch Windows Cargo dependencies[\s\S]*?cargo fetch --locked/);
-  assert.match(rustJob, /Prepare Windows WebView2Loader resource[\s\S]*?prepare-webview2-loader\.mjs --arch=\$\{\{ matrix\.arch \}\}/);
-  const stagedJob = jobBlock('staged-runtime');
-  assert.match(stagedJob, /Set up stable Rust for Windows resources[\s\S]*?Fetch Windows Cargo dependencies[\s\S]*?cargo fetch --locked[\s\S]*?Assemble staged runtime/);
+test('复用安装包工作流覆盖四个平台架构并验证实际runner架构', () => {
+  assert.equal(build['runs-on'], '${{ matrix.runner }}');
+  assert.deepEqual(build.strategy.matrix.include, [
+    { runner: 'windows-latest', os: 'windows', arch: 'x64', target: 'win32' },
+    { runner: 'windows-11-arm', os: 'windows', arch: 'arm64', target: 'win32' },
+    { runner: 'ubuntu-22.04', os: 'linux', arch: 'x64', target: 'linux' },
+    { runner: 'ubuntu-22.04-arm', os: 'linux', arch: 'arm64', target: 'linux' },
+  ]);
+  assert.match(step('Verify native runner architecture').run ?? '', /process\.arch !== '\$\{\{ matrix\.arch \}\}'/);
+  requireOrder(['Checkout', 'Verify native runner architecture', 'Install dependencies', 'Assemble staged runtime']);
 });
 
-// CodeQL `actions/missing-workflow-permissions`（CWE-275）：没有显式
-// permissions 时 GITHUB_TOKEN 会继承仓库/组织默认权限（2023-02 之前创建的
-// 仓库默认可写），违反最小权限。该查询接受 workflow 级或 job 级 permissions，
-// 本 workflow 用 workflow 级一处覆盖三个 job。
-test('CI 显式限制 GITHUB_TOKEN 权限（CodeQL actions/missing-workflow-permissions）', () => {
-  const perms = workflow.match(/^permissions:\n((?:[ \t]+.*\n|\n)*)/m);
-  assert.ok(perms, 'CI 缺少顶层 permissions 块，CodeQL 会再次报 actions/missing-workflow-permissions');
-  // workflow 级 permissions 对所有未自带该键的 job 生效（CodeQL 的
-  // jobHasPermissions 接受 job 级或所属 workflow 级，二者有其一即不告警）。
-  assert.match(perms[1], /^ {2}contents: read$/m, 'permissions 必须至少含 contents: read');
+test('装配必须先完成固定资源准备，校验闭包后才能构建安装包', () => {
+  assert.match(step('Prepare vendored kernel').run ?? '', /scripts\/fetch-kernel\.js/);
+  assert.equal(step('Install dependencies').run, 'npm run ci:install');
+  assert.equal(step('Fetch bundled Node and npm runtimes').run, 'npm run fetch-runtime');
+  assert.equal(step('Fetch Cargo dependencies').run, 'cargo fetch --locked');
+  assert.equal(step('Assemble staged runtime').run, 'node tauri-shell/stage-resources.mjs --target=${{ matrix.target }} --skip-npm');
+  assert.equal(step('Verify staged closure and bundle integrity').run, 'node dsh-desktop/scripts/verify-staged-runtime.mjs');
+  requireOrder([
+    'Verify dsh-dpx submodule pin', 'Prepare vendored kernel', 'Install dependencies',
+    'Fetch bundled Node and npm runtimes', 'Fetch Cargo dependencies',
+    'Assemble staged runtime', 'Verify staged closure and bundle integrity', 'Build Tauri installers',
+  ]);
+});
+
+test('安装包工作流显式限制GITHUB_TOKEN权限且job不提升权限', () => {
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  for (const job of Object.values(workflow.jobs)) {
+    if (job.permissions) assert.deepEqual(job.permissions, { contents: 'read' });
+  }
+});
+
+test('缓存与安装包按架构隔离，缺少产物必须失败', () => {
+  assert.equal(step('Cache vendored kernel').with?.key,
+    "${{ runner.os }}-${{ matrix.arch }}-kernel-${{ env.KERNEL_VERSION }}-${{ hashFiles('dsh-desktop/scripts/fetch-kernel.ts') }}");
+  const windows = step('Upload Windows installer packages');
+  const linux = step('Upload Linux installer packages');
+  assert.equal(windows.with?.name, 'dsh-eac-windows-${{ matrix.arch }}-installers');
+  assert.equal(linux.with?.name, 'dsh-eac-linux-${{ matrix.arch }}-installers');
+  assert.equal(windows.if, "runner.os == 'Windows'");
+  assert.equal(linux.if, "runner.os == 'Linux'");
+  for (const upload of [windows, linux]) assert.equal(upload.with?.['if-no-files-found'], 'error');
+  assert.match(String(windows.with?.path), /bundle\/nsis\/\*\.exe/);
+  assert.match(String(windows.with?.path), /portable\/SHA256SUMS\.txt/);
+  assert.match(String(linux.with?.path), /bundle\/rpm\/\*\.rpm/);
+  requireOrder(['Build Tauri installers', 'Build portable package', 'Upload Windows installer packages']);
+  requireOrder(['Build Tauri installers', 'Audit RPM package', 'Upload Linux installer packages']);
 });
