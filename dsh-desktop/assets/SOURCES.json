@@ -731,7 +731,7 @@
       "name": "dsh-plugin-shield",
       "type": "plugin",
       "origin": "eac-original",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "path": "dsh-desktop/assets/plugins/dsh-plugin-shield",
       "registryStatus": "注册表默认启用",
       "audit": {
@@ -744,7 +744,7 @@
       "dualVersion": {
         "relation": "两版存在差异",
         "mainId": "C030",
-        "mainVersion": "0.1.0",
+        "mainVersion": "0.1.2",
         "aioId": "C078",
         "aioVersion": "0.1.0",
         "sameFiles": "2",
@@ -895,7 +895,7 @@
       "name": "dsh-settings-scroll-fix",
       "type": "plugin",
       "origin": "eac-original",
-      "version": "2.0.2",
+      "version": "2.0.3",
       "path": "dsh-desktop/assets/plugins/dsh-settings-scroll-fix",
       "registryStatus": "注册表默认启用",
       "audit": {
@@ -1804,7 +1804,7 @@
       "dualVersion": {
         "relation": "两版存在差异",
         "mainId": "C030",
-        "mainVersion": "0.1.0",
+        "mainVersion": "0.1.2",
         "aioId": "C078",
         "aioVersion": "0.1.0",
         "sameFiles": "2",

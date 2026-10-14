@@ -39,7 +39,7 @@ test('missing or wrong pnpm fails clearly without global fallback', () => {
   const { root, pnpm } = fixture();
   try {
     fs.writeFileSync(path.join(pnpm, 'package.json'), '{"version":"0.0.0"}');
-    assert.throws(() => bundledPackageManager(root, process.execPath), /must be 11\.7\.0/);
+    assert.throws(() => bundledPackageManager(root, process.execPath), /must be 11\.28\.2/);
     assert.throws(() => copyBundledPnpm(pnpm, path.join(root, 'copy')), /Expected pnpm/);
     fs.writeFileSync(path.join(pnpm, 'package.json'), JSON.stringify({ version: PNPM_VERSION }));
     fs.rmSync(path.join(pnpm, 'dist', 'pnpm.mjs'));

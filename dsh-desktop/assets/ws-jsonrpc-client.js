@@ -37,6 +37,8 @@
       var r = pending[id];
       if (!r) return;
       delete pending[id];
+      // 未发出的超时请求必须同时撤出队列，不能在重连后补做已报失败的操作。
+      if (!r.sent) queue = queue.filter(function (frame) { return frame.id !== id; });
       if (r.timer) clearTimeout(r.timer);
       if (ok) r.resolve(value);
       else r.reject(value);
@@ -52,10 +54,7 @@
         // 超时定时器在请求 settle（响应/断线回绝）时清掉：旧实现任由它到点
         // 空跑，长会话累积大量无用定时器。
         entry.timer = setTimeout(function () {
-          if (pending[id]) {
-            delete pending[id];
-            reject(new Error('bridge call timeout: ' + method));
-          }
+          settle(id, false, new Error('bridge call timeout: ' + method));
         }, t || timeoutMs);
       });
     }
@@ -68,7 +67,8 @@
           var frame = queue.shift();
           // 补发即视为已发出：此后断线同样走「在途回绝」路径。
           var pe = pending[frame.id];
-          if (pe) pe.sent = true;
+          if (!pe) continue;
+          pe.sent = true;
           rawSend(frame);
         }
         try { if (options.onOpen) options.onOpen(); } catch (e) { /* 回调异常不断桥 */ }

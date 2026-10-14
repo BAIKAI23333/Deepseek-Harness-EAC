@@ -593,7 +593,7 @@
       setRemoved: function (id: string, removed: boolean) { return call('plugins.set-removed', { id: id, removed: removed }, 130000); },
     },
     guard: {
-      action: function (action: string, value?: unknown) { return call('guard.action', { action: action, value: value }); },
+      action: function (action: string, value?: unknown) { return call('guard.action', { action: action, value: value }, action === 'restore' ? 660000 : 30000); },
     },
     // P1：安装环境运维面（诊断 / 移除）。Web UI 与支持人员用这两个入口
     // 判断「本次启动是否隔离」「环境是否损坏」「如何清理」。
@@ -683,10 +683,9 @@
   // "locale: invalid native initialization data"；语言切换时 onChange(active) 上报。
   //
   // 通道映射：read() 经 WS call('locale.bootstrap')（Rust L1 本地拦截：返回壳
-  // 持久化 preference + 系统语言标签）。languages 按 detectBrowserLocale 的
-  // 浏览器侧语义（client.js:1476-1479）以 navigator.languages 优先、L1 系统标签
-  // 兜底合并去重 —— WebView2 的 navigator.languages 跟随 OS 用户语言列表，与
-  // 官方 app.getPreferredSystemLanguages() 等价且更完整；languages 保证非空
+  // 持久化 preference + 系统语言标签）。桌面端以 L1 的 OS 标签优先，
+  // navigator.languages 只作补充：WebView2 可能固定为 en-US，并不等价于
+  // app.getPreferredSystemLanguages()。保留顺序合并去重，languages 保证非空
   //（'en' 兜底，与官方 resolveInitialLocale 的默认语言一致）。preference 透传
   // L1（string 或 null），壳无持久化时为 null（= 官方「自动选择」语义）。
   // read() 失败不降级 —— 与官方一致（invoke 失败即异常，消费者据此终止激活）。
@@ -704,15 +703,14 @@
           seen[tag] = true;
           languages.push(tag);
         };
+        var fromShell = r && Array.isArray(r.languages) ? r.languages : [];
+        for (var j = 0; j < fromShell.length; j++) push(fromShell[j]);
         try {
-          // 浏览器侧语言优先序（detectBrowserLocale 同源）；桥单测 vm 无
-          // navigator 时引用即 ReferenceError，捕获后走 L1 系统标签兜底。
+          // 无法取得系统标签时仍保留 renderer 的语言回退。
           var navList = (navigator && navigator.languages) || [];
           for (var i = 0; i < navList.length; i++) push(navList[i]);
           push((navigator && navigator.language) || '');
-        } catch (e) { /* 同上 */ }
-        var fromShell = r && Array.isArray(r.languages) ? r.languages : [];
-        for (var j = 0; j < fromShell.length; j++) push(fromShell[j]);
+        } catch (e) { /* vm 单测可能没有 navigator */ }
         if (languages.length === 0) push('en');
         return {
           languages: languages,
@@ -721,6 +719,7 @@
       });
     },
     onChange: function (locale: string): void {
+      setChromeLocale(locale);
       send('locale.changed', { locale: locale });
     },
   };
@@ -1204,6 +1203,29 @@
   };
 
   var maxBtn: HTMLElement | null = null;
+  var minBtn: HTMLElement | null = null;
+  var closeBtn: HTMLElement | null = null;
+  var chromeChinese = false;
+  var chromeMaximized = false;
+
+  function updateChromeLabels(): void {
+    var labels = chromeChinese ? { min: '最小化', max: '最大化', restore: '还原', close: '关闭' }
+      : { min: 'Minimize', max: 'Maximize', restore: 'Restore', close: 'Close' };
+    for (var item of [
+      { button: minBtn, text: labels.min },
+      { button: maxBtn, text: chromeMaximized ? labels.restore : labels.max },
+      { button: closeBtn, text: labels.close },
+    ]) {
+      if (!item.button) continue;
+      item.button.title = item.text;
+      item.button.setAttribute('aria-label', item.text);
+    }
+  }
+
+  function setChromeLocale(locale: string): void {
+    chromeChinese = /^zh(?:-|$)/i.test(locale);
+    updateChromeLabels();
+  }
   // 壳栏展示状态（来源：boot.state —— 唯一的壳信息接口）。
   var state: any = { appVersion: '', agentVersion: '', agentSource: '' };
 
@@ -1228,10 +1250,10 @@
   }
 
   function setMaximized(isMax: boolean): void {
+    chromeMaximized = isMax;
     if (!maxBtn) return;
     maxBtn.innerHTML = isMax ? GLYPHS.restore : GLYPHS.max;
-    maxBtn.title = isMax ? '还原' : '最大化';
-    maxBtn.setAttribute('aria-label', maxBtn.title);
+    updateChromeLabels();
     maxBtn.setAttribute('aria-pressed', String(isMax));
   }
 
@@ -1336,6 +1358,23 @@
     name('[role="dialog"]:not(#dsh-exit-overlay)', 'overlay', 'dialog-surface');
     name('[data-floating-ui-portal], [data-radix-popper-content-wrapper], ._7KE1Ra_menu, .ra1x4W_menu', 'overlay', 'popup-surface');
 
+    // The kernel places Windows sidebar actions in the titlebar. Keep the real
+    // buttons above EAC chrome instead of covering the only collapsed-sidebar entry.
+    if (hostPage && document.documentElement.hasAttribute('data-windows-titlebar')) {
+      document.querySelectorAll('[data-slot="sidebar"] button[class*="_toggle"], [data-slot="sidebar"] button[class*="_newSession"]').forEach(function (button) {
+        button.setAttribute('data-dsh-host-caption-action', button.matches('[class*="_toggle"]') ? 'toggle' : 'new-session');
+      });
+      if (!document.getElementById('__dsh_host_caption__')) {
+        var captionStyle = document.createElement('style');
+        captionStyle.id = '__dsh_host_caption__';
+        var captionSelector = 'html[data-windows-titlebar] :is([data-dsh-host-caption-action="toggle"],[data-sidebar-collapsed] [data-dsh-host-caption-action="new-session"])';
+        captionStyle.textContent = captionSelector + '{z-index:2147483001 !important;color:var(--eac-shell-text-primary,#dfe6ff) !important}'
+          + captionSelector + ':hover{background:var(--eac-shell-surface-hover,rgba(255,255,255,.09)) !important}'
+          + 'html[data-windows-titlebar]:has([data-dsh-host-caption-action]) #__dsh_desktop_chrome__ [data-control-name="sidebar-content"]{padding-left:76px}';
+        document.head.appendChild(captionStyle);
+      }
+    }
+
     syncHostThemeBoundary();
 
     document.querySelectorAll('[role="dialog"]').forEach(function (dialog) {
@@ -1435,9 +1474,9 @@
       <span class="dch-badge" data-control-name="window-badge" hidden></span>\
     </div>\
     <div class="dch-right" data-control-name="window-actions">\
-      <button class="dch-btn" data-act="min" data-control-name="window-minimize" data-state="idle" title="最小化" aria-label="最小化">' + GLYPHS.min + '</button>\
-      <button class="dch-btn" data-act="max" data-control-name="window-maximize" data-state="idle" title="最大化" aria-label="最大化" aria-pressed="false">' + GLYPHS.max + '</button>\
-      <button class="dch-btn dch-close" data-act="close" data-control-name="window-close" data-state="dangerous" title="关闭" aria-label="关闭">' + GLYPHS.close + '</button>\
+      <button class="dch-btn" data-act="min" data-control-name="window-minimize" data-state="idle" title="Minimize" aria-label="Minimize">' + GLYPHS.min + '</button>\
+      <button class="dch-btn" data-act="max" data-control-name="window-maximize" data-state="idle" title="Maximize" aria-label="Maximize" aria-pressed="false">' + GLYPHS.max + '</button>\
+      <button class="dch-btn dch-close" data-act="close" data-control-name="window-close" data-state="dangerous" title="Close" aria-label="Close">' + GLYPHS.close + '</button>\
     </div>';
     document.body.appendChild(bar);
 
@@ -1449,10 +1488,11 @@
     // 两层各自持有 lastClick 闭包会让左半栏双击 toggle 两次（净零）= 双击
     // 最大化失效 + 每次按下多发一次拖拽事件。
     armDrag(bar);
-    var minBtn = bar.querySelector('[data-act="min"]');
+    minBtn = bar.querySelector('[data-act="min"]') as HTMLElement | null;
     if (minBtn) minBtn.addEventListener('click', function () { dshDesktop.windowControls.minimize(); });
     if (maxBtn) maxBtn.addEventListener('click', function () { dshDesktop.windowControls.toggleMaximize(); });
-    var closeBtn = bar.querySelector('.dch-close');
+    closeBtn = bar.querySelector('.dch-close') as HTMLElement | null;
+    setMaximized(chromeMaximized);
     if (closeBtn) closeBtn.addEventListener('click', function () { dshDesktop.windowControls.close(); });
 
     // 标题栏信息（版本徽标 + 图标）：来源 boot.state —— 唯一的壳信息接口。

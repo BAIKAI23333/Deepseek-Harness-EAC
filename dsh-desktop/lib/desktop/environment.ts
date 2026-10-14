@@ -195,9 +195,16 @@ export function dpxModuleFile(env: NodeJS.ProcessEnv = process.env): string {
   }
   const resourceRoot = env.DSH_RESOURCE_ROOT?.trim();
   if (resourceRoot) {
-    const file = path.join(path.resolve(resourceRoot), 'dpx', 'src', 'index.js');
-    if (!fs.existsSync(file)) throw new Error(`dsh-dpx 模块缺失（DSH_RESOURCE_ROOT=${resourceRoot}）：${file}`);
-    return file;
+    const root = path.resolve(resourceRoot);
+    const file = path.join(root, 'dpx', 'src', 'index.js');
+    if (fs.existsSync(file)) return file;
+    // Rust 开发态同样声明资源根，但源码布局把固定 dpx 放在 third_party。
+    // 仅识别声明根内的完整源码布局，不回退到别的仓库或宿主安装。
+    const developmentFile = path.join(root, 'third_party', 'dsh-dpx', 'src', 'index.js');
+    if (fs.existsSync(path.join(root, 'tauri-shell', 'Cargo.toml'))
+      && fs.existsSync(path.join(root, 'dsh-desktop', 'tsconfig.json'))
+      && fs.existsSync(developmentFile)) return developmentFile;
+    throw new Error(`dsh-dpx 模块缺失（DSH_RESOURCE_ROOT=${resourceRoot}）：${file}`);
   }
   // 开发态：lib/desktop → 仓库根/dsh-desktop → 仓库根 → third_party/dsh-dpx。
   candidates.push(path.resolve(__dirname, '..', '..', 'third_party', 'dsh-dpx', 'src', 'index.js'));

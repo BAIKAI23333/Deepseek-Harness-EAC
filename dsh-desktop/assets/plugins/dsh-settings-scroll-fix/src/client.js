@@ -152,7 +152,9 @@ window.__ModuleLoader__.load({
 
     function isExcludedScrollable(element) {
       try {
+        // Fixed dialog controls can overflow by a few pixels without being content.
         return element.matches('input, textarea, select, pre, code, [contenteditable="true"]')
+          || element.closest('header, footer') !== null
       } catch {
         return false
       }

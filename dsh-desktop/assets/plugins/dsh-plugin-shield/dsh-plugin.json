@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "io.github.Ebony-Vinyl.dsh-desktop-eac.dsh-plugin-shield",
   "name": "dsh-plugin-shield",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "facets": {
     "host": {
       "entry": "lib/index.js",

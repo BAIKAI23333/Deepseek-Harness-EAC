@@ -826,14 +826,14 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
   'guard.ensure': (): RpcResult => ({
     ok: !!(guardBoxMod.ensureGuard as () => unknown)(),
   }),
-  'guard.action': (p): RpcResult => {
+  'guard.action': async (p): Promise<RpcResult> => {
     const action = String((p && p.action) || '');
     // v6 Task 3.3 修复：插件侧 bridge.guard.action(action, value) 只传两个位置参数
     //（见 dsh-plugin-shield/lib/client.js 的 `var call = function (action, value)`），
     // 因此取参必须是 p.value —— 原实现读 p.label / p.id 会让 snapshot 丢参、
     // restore 直接失效。动作集合按 v5 对齐（保护中心 UI 的 7 个动作）。
     const value = p && p.value;
-    const g = (guardBoxMod.ensureGuard as () => Record<string, (...a: unknown[]) => unknown>)();
+    const g = (guardBoxMod.ensureGuard as () => import('../../dsh-desktop/lib/desktop/guard-box').GuardInstance)();
     switch (action) {
       case 'status': {
         const st = loadSettings() as { shareWebProfile?: boolean };
@@ -845,6 +845,8 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
           snapshots: (g.listSnapshots as () => unknown[])().slice(0, 20),
           incidents: (g.listIncidents as () => unknown[])().slice(0, 20),
           lastGood: (g.lastGoodSnapshot as () => unknown)(),
+          lastRestore: g.lastRestore(),
+          restoreInProgress: activeMutation?.key === 'guard.action:restore',
         };
       }
       case 'snapshot': {
@@ -852,12 +854,20 @@ const methods: Record<string, (p: RpcParams) => unknown> = {
         return { ok: !!s, snapshot: s };
       }
       case 'restore': {
-        // 服务在跑时不允许回滚（文件被占用且随即会被重写）。
-        const running = (bootMod.state as () => { running: boolean })().running;
-        if (running) {
-          return { ok: false, error: 'service-running', hint: '请先重启 Web 服务（或让回滚在重启间隙执行）' };
-        }
-        return (g.restore as (v: unknown) => Record<string, unknown>)(value) as Record<string, unknown>;
+        const r = await (guardBoxMod.restoreAndRestart as typeof import('../../dsh-desktop/lib/desktop/guard-box').restoreAndRestart)({
+          guard: g,
+          stop: () => (bootMod.stopServer as () => Promise<void>)(),
+          start: () => (bootMod.startAndWait as () => Promise<{webUrl: string; port: number}>)(),
+          isQuitting: () => quitting,
+          setIsRestarting: v => (bootMod.setIsRestarting as (v: boolean) => void)(v),
+        }, value);
+        // 先应答并保存结果，再导航；新页面可从status读回完成/恢复结果。
+        setImmediate(() => {
+          if (quitting) return;
+          if (r.webUrl) notify('boot.web-ready', {webUrl: r.webUrl, port: r.port});
+          else if (r.serviceStopped) notify('boot.server-died', {code: r.code, logPath: ''});
+        });
+        return {...r};
       }
       case 'check':
         return { ok: true, report: (g.healthCheck as () => unknown)() };
@@ -983,10 +993,40 @@ const rl = readline.createInterface({ input: process.stdin });
 rl.on('line', (line: string) => { void handleLine(line); });
 rl.on('close', () => { void gracefulExit(); });
 
+// ---- lifecycle/profile mutation gate --------------------------------------
+let activeMutation: {key: string; promise: Promise<unknown>} | null = null;
+function isProfileMutation(method: string, params: RpcParams): boolean {
+  if (['boot.start', 'boot.stop', 'boot.restart', 'plugins.set-enabled', 'plugins.set-removed',
+    'environment.remove', 'environment.repair', 'files.revert'].includes(method)) return true;
+  return method === 'guard.action' && !['status', 'check', 'incident'].includes(String(params?.action || ''));
+}
+async function invokeProfileMutation(method: string, params: RpcParams, fixed: (p: RpcParams) => unknown): Promise<unknown> {
+  if (!isProfileMutation(method, params)) return fixed(params);
+  if (quitting) return {ok: false, error: 'app-exiting'};
+  if (activeMutation) return {ok: false, error: 'service-busy'};
+  const operation = {key: method + (method === 'guard.action' ? ':' + String(params?.action || '') : ''),
+    promise: Promise.resolve().then(() => quitting ? {ok: false, error: 'app-exiting'} : fixed(params))};
+  activeMutation = operation;
+  try { return await operation.promise; } finally { if (activeMutation === operation) activeMutation = null; }
+}
+
 async function gracefulExit(): Promise<void> {
   quitting = true;
   try { if (sessionWatcher) { sessionWatcher.stop(); sessionWatcher = null; } } catch { /* 尽力回收 */ }
-  try { await (bootMod.stopServer as () => Promise<void>)(); } catch { /* 尽力回收 */ }
+  try { await (bootMod.stopServer as () => Promise<void>)(); } catch {
+    log('shutdown', 'service-stop-unconfirmed');
+    process.exit(1);
+    return;
+  }
+  const mutation = activeMutation;
+  if (mutation) {
+    let timer: NodeJS.Timeout | undefined;
+    const settled = await Promise.race([
+      mutation.promise.then(() => true, () => true),
+      new Promise<boolean>(resolve => { timer = setTimeout(() => resolve(false), 15000); }),
+    ]).finally(() => { if (timer) clearTimeout(timer); });
+    if (!settled) { log('shutdown', 'mutation-shutdown-timeout'); process.exit(1); return; }
+  }
   process.exit(0);
 }
 
@@ -1007,7 +1047,7 @@ async function handleLine(line: string): Promise<void> {
     }
     const fixed = methods[method];
     if (fixed) {
-      const result = await fixed(params);
+      const result = await invokeProfileMutation(method, params, fixed);
       return respond({ jsonrpc: '2.0', id, result: result === undefined ? null : result });
     }
     respond({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found: ' + method } });

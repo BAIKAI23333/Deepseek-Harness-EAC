@@ -256,3 +256,55 @@ test('真实仓库的 lock 与源树满足装配前置条件（离线可装配�
   );
   assert.ok(fileDeps.length > 0, 'lock 里应有 file: 内核依赖（vendor/kernel tarball）');
 });
+
+test('生产闭包允许开发依赖缺席，但仍拒绝缺失运行时共享依赖', () => {
+  const root = tempRoot('production-closure');
+  const src = path.join(root, 'node_modules');
+  writePackage(src, 'runtime', '1.0.0');
+  const lock = path.join(root, 'package-lock.json');
+  const packages = {
+    'node_modules/runtime': { version: '1.0.0' },
+    'node_modules/dev-only': { version: '1.0.0', dev: true },
+    'node_modules/shared': { version: '1.0.0' },
+  };
+  writeLock(lock, packages);
+  assert.deepEqual(missingRequiredPackages(src, readLockPackages(lock)), ['shared']);
+  writePackage(src, 'shared', '1.0.0');
+  assert.deepEqual(missingRequiredPackages(src, readLockPackages(lock)), []);
+  const report = stageProductionNodeModules({ sourceNodeModules: src, destNodeModules: path.join(root, 'out'), lockFile: lock });
+  assert.equal(report.packages, 2);
+});
+
+test('装配排除顶层、scope 和嵌套开发包，保留生产与 optional 共享闭包', () => {
+  const root = tempRoot('omit-dev');
+  const src = path.join(root, 'node_modules');
+  writePackage(src, 'runtime', '1.0.0');
+  writePackage(src, 'runtime/node_modules/nested-dev', '1.0.0');
+  writePackage(src, 'runtime/node_modules/nested-prod', '1.0.0');
+  writePackage(src, 'dev-only', '1.0.0');
+  writePackage(src, '@scope/dev-only', '1.0.0');
+  writePackage(src, '@scope/shared', '1.0.0');
+  writePackage(src, 'optional-shared', '1.0.0');
+  const lock = path.join(root, 'package-lock.json');
+  writeLock(lock, {
+    'node_modules/runtime': { version: '1.0.0' },
+    'node_modules/runtime/node_modules/nested-dev': { version: '1.0.0', dev: true },
+    'node_modules/runtime/node_modules/nested-prod': { version: '1.0.0' },
+    'node_modules/dev-only': { version: '1.0.0', dev: true },
+    'node_modules/@scope/dev-only': { version: '1.0.0', dev: true },
+    'node_modules/@scope/shared': { version: '1.0.0' },
+    'node_modules/optional-shared': { version: '1.0.0', devOptional: true, optional: true },
+  });
+  const dest = path.join(root, 'out');
+  const options = { sourceNodeModules: src, destNodeModules: dest, lockFile: lock };
+  const first = stageProductionNodeModules(options);
+  for (const name of ['dev-only', '@scope/dev-only', 'runtime/node_modules/nested-dev']) {
+    assert.equal(fs.existsSync(path.join(dest, name)), false, name + ' must not ship');
+    assert.equal(fs.existsSync(path.join(src, name)), true, name + ' must remain in the developer tree');
+  }
+  for (const name of ['runtime', 'runtime/node_modules/nested-prod', '@scope/shared', 'optional-shared']) {
+    assert.ok(fs.existsSync(path.join(dest, name, 'package.json')), name + ' must ship');
+  }
+  assert.deepEqual(first, { packages: 3, files: 8 }, 'copy counts must follow the filtered tree');
+  assert.deepEqual(stageProductionNodeModules(options), first, 'offline repeated staging must be stable');
+});

@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "io.github.Ebony-Vinyl.dsh-desktop-eac.dsh-settings-scroll-fix",
   "name": "dsh-settings-scroll-fix",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "facets": {
     "host": {
       "entry": "lib/index.js",

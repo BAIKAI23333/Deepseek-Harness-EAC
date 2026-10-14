@@ -72,7 +72,7 @@
   "devDependencies": {
     "@types/node": "24.13.3",
     "jsdom": "^30.0.1",
-    "pnpm": "11.7.0",
+    "pnpm": "11.28.2",
     "typescript": "^7.0.2"
   },
   "overrides": {
@@ -404,6 +404,12 @@
     "@deepseek-ai/dsh-workspace-changes": "file:vendor/kernel/0.2.0-rc.2/deepseek-ai-dsh-workspace-changes-0.2.0-rc.2.tgz",
     "@deepseek-ai/schemastery": "file:vendor/kernel/0.2.0-rc.2/deepseek-ai-schemastery-3.18.4.tgz",
     "glob": "10.5.0",
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "brace-expansion": "2.1.7",
+    "http-cache-semantics": "4.3.0",
+    "fflate": "0.8.3",
+    "sharp": "0.35.5",
+    "@modelcontextprotocol/client": "2.2.0",
+    "source-map-js": "1.2.2"
   }
 }

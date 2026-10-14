@@ -14,7 +14,7 @@
 //   - 与「启动链路不跑 npm install」的既有纪律一致（AGENTS.md 关键陷阱）。
 //
 // 正确性不再依赖 npm 的 integrity，而是依赖本模块的**显式校验**：
-//   1. lock 里所有非 optional 包必须在 src 树存在（跨平台 optional 变体允许缺失）；
+//   1. lock 里所有非开发、非 optional 包必须在 src 树存在（跨平台 optional 变体允许缺失）；
 //   2. 复制后逐包核对文件数，避免 copy 阶段的静默丢文件。
 // 校验失败一律抛错（fail fast），绝不产出一个「能装上但运行期 ERR_MODULE_NOT_FOUND」的坏树。
 
@@ -30,7 +30,7 @@ export function readLockPackages(lockFile) {
 }
 
 /**
- * 校验 src node_modules 是否满足 lock 的**非 optional** 闭包。
+ * 校验 src node_modules 是否满足 lock 的**生产、非 optional** 闭包。
  *
  * 只对非 optional 包严格要求：`@img/sharp-*`、`libreoffice-kit-*` 这类
  * 跨平台变体在 lock 里是 optional，安装在有对应原生包的平台上必然缺席，
@@ -40,7 +40,7 @@ export function missingRequiredPackages(sourceNodeModules, lockPackages) {
   const missing = [];
   for (const [key, meta] of Object.entries(lockPackages)) {
     if (!key.startsWith('node_modules/')) continue;
-    if (meta && meta.optional) continue;
+    if (meta && (meta.optional || meta.dev)) continue;
     if (!existsSync(path.join(sourceNodeModules, key.slice('node_modules/'.length)))) {
       missing.push(key.slice('node_modules/'.length));
     }
@@ -49,7 +49,7 @@ export function missingRequiredPackages(sourceNodeModules, lockPackages) {
 }
 
 /** 递归统计文件数（目录不计；与 bundle-integrity.js 的口径一致）。 */
-function countFiles(dir) {
+function countFiles(dir, include = () => true) {
   let n = 0;
   let entries;
   try {
@@ -58,7 +58,9 @@ function countFiles(dir) {
     return 0;
   }
   for (const entry of entries) {
-    if (entry.isDirectory()) n += countFiles(path.join(dir, entry.name));
+    const child = path.join(dir, entry.name);
+    if (!include(child)) continue;
+    if (entry.isDirectory()) n += countFiles(child, include);
     else n += 1;
   }
   return n;
@@ -110,29 +112,36 @@ export function stageProductionNodeModules(options) {
     );
   }
 
+  // Lock flags describe the resolved graph: shared production/dev packages are
+  // not dev-only; devOptional alone must not remove a production optional edge.
+  const devOnlyPaths = new Set(Object.entries(lockPackages)
+    .filter(([key, meta]) => key.startsWith('node_modules/') && meta && meta.dev)
+    .map(([key]) => key.slice('node_modules/'.length)));
+  const includeSource = (src) => {
+    const relative = path.relative(sourceNodeModules, src).split(path.sep).join('/');
+    if (!relative) return true;
+    return !EXCLUDED_TOP_LEVEL.has(relative.split('/')[0]) && !devOnlyPaths.has(relative);
+  };
+
   // 先删后拷：残留的旧包（升级后已消失的依赖）会被 Tauri 增量资源复制带进安装包。
   rmSync(destNodeModules, { recursive: true, force: true });
   cpSync(sourceNodeModules, destNodeModules, {
     recursive: true,
-    filter: (src) => {
-      const relative = path.relative(sourceNodeModules, src);
-      if (!relative) return true;
-      const top = relative.split(path.sep)[0];
-      return !EXCLUDED_TOP_LEVEL.has(top);
-    },
+    filter: includeSource,
   });
 
   // 复制完整性自检：逐包核对文件数。copy 阶段若因锁/长路径静默丢文件，
   // 会在这里暴露，而不是等运行期 ERR_MODULE_NOT_FOUND。
   let files = 0;
-  const packages = topLevelPackageNames(sourceNodeModules);
+  const packages = topLevelPackageNames(sourceNodeModules)
+    .filter((name) => includeSource(path.join(sourceNodeModules, name)));
   for (const name of packages) {
     const srcDir = path.join(sourceNodeModules, name);
     const destDir = path.join(destNodeModules, name);
     if (!existsSync(destDir)) {
       throw new Error(`[stage] 装配丢包：${name}（源存在，目标缺失）`);
     }
-    const expected = countFiles(srcDir);
+    const expected = countFiles(srcDir, includeSource);
     const actual = countFiles(destDir);
     if (actual !== expected) {
       throw new Error(`[stage] 装配不完整：${name} 文件数 ${actual} ≠ 源 ${expected}`);

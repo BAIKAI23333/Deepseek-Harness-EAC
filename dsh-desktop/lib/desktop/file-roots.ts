@@ -102,7 +102,9 @@ export function isPathWithinRoots(
   const resolved = normalize(candidate);
   return roots.some((root) => {
     const normalizedRoot = normalize(root);
-    return resolved === normalizedRoot || resolved.startsWith(normalizedRoot + path.sep);
+    const relative = path.relative(normalizedRoot, resolved);
+    return relative === '' || (!path.isAbsolute(relative)
+      && relative !== '..' && !relative.startsWith('..' + path.sep));
   });
 }
 

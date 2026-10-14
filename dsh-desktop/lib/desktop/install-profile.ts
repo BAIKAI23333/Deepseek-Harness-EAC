@@ -1,10 +1,9 @@
 'use strict';
 
-// 安装形态（v5.4 单发行版双形态）：同一个安装包，安装器选择「完整版 / 精简版」。
-// 安装器（NSIS POSTINSTALL 钩子）把选择写入 <payload>/profile.txt（"full"/"lite"，
-// 便携包默认缺省 = full），companion-sync 启动时读取并把它作为「新行默认值」
-// —— 已有注册行不重写、用户选择优先（与配套行的 disabled 标记同一语义），因此
-// 精简版用户随时可在「设置 → 插件 → 管理」启用完整功能。
+// profile.txt 的 full/lite 是历史插件默认启停策略，不是产品资源档位。
+// 当前仓库完整产物是 EAC Lite；Full 需要实际安装 EAC-Pack 包。
+// 为兼容既有安装，保留标记、缺省 full 与 companion-sync 的新行默认值契约；
+// 不重写用户已有启停选择，也不能以此标记判断 EAC-Pack 已安装。
 
 import fs = require('node:fs');
 import path = require('node:path');
@@ -14,11 +13,7 @@ export type InstallProfile = 'full' | 'lite';
 export const PROFILE_MARKER_FILE = 'profile.txt';
 
 /**
- * 精简版默认停用的配套插件（companion id）。
- *
- * 精简原则：只保留最简体验必需项 —— 修复核心体验（滚动/视口/设置）、安全
- * 兜底（保护中心/压缩/文件回退）、省钱（余额/峰谷）与市场管理；高门槛或重
- * 外围能力默认停用，全部可在设置页一键启用。
+ * 历史 lite 策略默认停用的随包配套插件（companion id）。
  *
  * ISO-005 收敛（当前为空数组）：停用对象只能是「随包的增强插件」，而随包面
  * 收敛后（装配面 BUILTIN_PLUGIN_DIRS 9 项 = COMPANION_PLUGINS 9 项）这 9 个
@@ -46,7 +41,7 @@ export function isLiteDisabled(id: string, profile: InstallProfile): boolean {
   return profile === 'lite' && LITE_DEFAULT_DISABLED.includes(id);
 }
 
-/** 读取安装形态标记：缺失 / 脏值 / 读失败一律回退 full（永不阻塞启动）。 */
+/** 读取兼容启停策略标记（不判断产品档位）：缺失 / 脏值 / 读失败一律回退 full（永不阻塞启动）。 */
 export function readInstallProfile(appRoot: string): InstallProfile {
   try {
     const raw = fs.readFileSync(path.join(appRoot, PROFILE_MARKER_FILE), 'utf8');
