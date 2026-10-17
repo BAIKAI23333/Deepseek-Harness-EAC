@@ -557,9 +557,6 @@ if (targetPlatform === 'linux') {
   rmSync(path.join(staged, 'dsh-desktop', 'assets', 'plugins', 'computer-user'), { recursive: true, force: true });
   rmSync(path.join(staged, 'dsh-desktop', 'assets', 'plugins', 'dsh-dafeiyu'), { recursive: true, force: true });
   rmSync(path.join(staged, 'dsh-desktop', 'assets', 'agent-presets'), { recursive: true, force: true });
-  pruneLinuxPayloads(path.join(staged, 'dsh-desktop', 'assets'), process.arch);
-  pruneNonLinuxPrebuilds(nmDest, process.arch);
-  pruneLinuxPayloads(nmDest, process.arch);
   pruneMuslPackages(nmDest);
   rmSync(
     path.join(nmDest, '@koromix', `koffi-linux-${process.arch}`, `musl_${process.arch}`),
@@ -569,6 +566,11 @@ if (targetPlatform === 'linux') {
   // 只按 glibc 选择 bin/glibc/system.node（flock.ts 的 glibcVersionRuntime 判定）。
   // 保留 musl 那份会让 linuxdeploy 在 AppImage 阶段对静态 .node 调 ldd 而 abort。
   pruneMuslNodeAddonBinaries(nmDest);
+  // Bundled package managers contain their own native dependencies and tools.
+  // Apply the platform filter to the full desktop payload, including vendor/.
+  const linuxDesktop = path.join(staged, 'dsh-desktop');
+  pruneNonLinuxPrebuilds(linuxDesktop, process.arch);
+  pruneLinuxPayloads(linuxDesktop, process.arch);
 }
 if (targetPlatform === 'darwin') {
   console.log('[stage] 移除 Darwin 不可达的 Windows/Linux payload');
