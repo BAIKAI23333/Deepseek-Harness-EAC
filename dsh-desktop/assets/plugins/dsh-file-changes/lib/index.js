@@ -114,11 +114,27 @@ function fenceUnavailable(res) {
   return true;
 }
 
+/**
+ * 取内核 connection 服务。
+ *
+ * 必须用 ctx.get()，不能用 Reflect.get()：cordis 的 Context 是 Proxy，
+ * 通过 Proxy 取服务时要求该服务已写进 inject 声明，否则抛
+ * `cannot get property "..." without inject`。本插件刻意不把 connection 写进
+ * inject（那是硬依赖，宿主缺该服务时 apply 根本不会执行、整个插件不加载），
+ * 所以只能走 ctx.get()：服务在就返回实例，不在就返回 undefined。
+ *
+ * @returns {object|undefined} 服务实例；宿主过旧无 ctx.get 时返回 undefined（走 503）。
+ */
+function connectionOf(ctx) {
+  if (!ctx || typeof ctx.get !== "function") return undefined;
+  return ctx.get("connection");
+}
+
 /** @returns {boolean} true 表示已拒绝并结束响应。 */
 function rejected(ctx, req, res) {
   let connection;
   try {
-    connection = Reflect.get(ctx, "connection");
+    connection = connectionOf(ctx);
   } catch {
     return fenceUnavailable(res);
   }
