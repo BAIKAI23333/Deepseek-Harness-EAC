@@ -239,7 +239,8 @@ function watchServerProc(proc: ChildProcess, out: fs.WriteStream, opts: WatchOpt
     let lineBuf = '';
     const onData = (chunk: Buffer) => {
       output.write(chunk);
-      if (handedOff) return;
+      if (settled || handedOff) return;
+      try { assertStartAllowed(opts.revision); } catch (err) { finish(err as Error, ''); return; }
       lineBuf += chunk.toString();
       const lines = lineBuf.split(/\r?\n/);
       lineBuf = lines.pop()!;
@@ -398,9 +399,10 @@ export async function startAndWait(overlays: string[] = [], timeoutMs = 300000):
   if (starting || pendingStop) throw new Error('service-busy');
   starting = true;
   const revision = lifecycleRevision;
+  const timeoutError = new Error('service-start-timeout');
   let timer: NodeJS.Timeout | undefined;
   const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => { lifecycleRevision += 1; reject(new Error('service-start-timeout')); }, timeoutMs);
+    timer = setTimeout(() => { lifecycleRevision += 1; reject(timeoutError); }, timeoutMs);
   });
   try {
     const url = await Promise.race([deadline, startServer(4, overlays, revision).then((u) => waitUntilUp(u, 120000, revision))]);
@@ -409,6 +411,14 @@ export async function startAndWait(overlays: string[] = [], timeoutMs = 300000):
     let port = 0;
     try { port = Number(new URL(url).port) || 0; } catch { /* 保持 0 */ }
     return { webUrl: url, port };
+  } catch (err) {
+    if (err === timeoutError) {
+      // 超时取消就绪等待后，仍需持有启动锁直到自有进程树退出。
+      try { await stopOwnedProcess(); } catch (stopError) {
+        throw new Error('service-start-timeout: service-stop-unconfirmed', { cause: stopError });
+      }
+    }
+    throw err;
   } finally { if (timer) clearTimeout(timer); starting = false; }
 }
 
