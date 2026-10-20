@@ -103,6 +103,80 @@ export interface CompanionSyncCtx {
   platform?: NodeJS.Platform;
 }
 
+/**
+ * 从运行时 catalog 里取出所有 `compat`（非官方内核兼容）条目的包名。
+ *
+ * 为什么需要它：`compat: 'eac-fork'` 的插件依赖 EAC 分叉内核专有服务
+ * （`settingsScope`），在官方 0.2.x 上激活期会**永久挂起**；而 web boot 对
+ * 「entry 未激活」是 fail-loud 的 —— 整个 GUI 直接拒绝启动：
+ *
+ *   Failed to load plugins
+ *   web boot: 1 entry did not activate
+ *   @ha-na-bi/dsh-client-ui-custom: pending (waiting for service: settingsScope)
+ *
+ * EAC-Pack 的 `suite/index.js:installSkipReason()` 已经在**安装**路径上拦截了
+ * 这些条目，但 `dsh.profile.bundles` 是另一条路径：seed 生成器
+ * （work/dist-tooling/prepare-composition.mjs）此前把 preinstalled 条目无条件
+ * 塞进 bundles，于是它们虽然"不该被装"，却照样进了 profile 的启动清单。
+ * 实测 2026-10-21：全新 full 实例宿主侧 6/6 插件 fiberPhase=active、25 个 settings
+ * 命名空间全在，但真实渲染截图显示界面完全没起来；剥掉这两行 bundle 立即恢复。
+ *
+ * fail-open：catalog 不可读时返回空集（此时无法判定，交给上游兜底），
+ * 且**只缓存成功结果**，catalog 恢复后下次调用即生效。
+ */
+let incompatibleBundleCache: Set<string> | null = null;
+
+export function incompatibleBundlePackages(): Set<string> {
+  if (incompatibleBundleCache) return incompatibleBundleCache;
+  const names = new Set<string>();
+  try {
+    // `eac-plugin-suite` 装在 profile 层（不是 APP_ROOT/node_modules），另有 dsh-home
+    // 下的安装目标。逐个探测，取第一个带 catalog 的。
+    const home = resolveHomeForCatalog();
+    const candidates = [
+      process.env.DSH_PROFILE_DIR
+        ? path.join(process.env.DSH_PROFILE_DIR, 'node_modules', 'eac-plugin-suite', 'catalog')
+        : null,
+      home ? path.join(home, 'profiles', 'web-desktop', 'node_modules', 'eac-plugin-suite', 'catalog') : null,
+      home ? path.join(home, 'eac-plugin-suite', 'catalog') : null,
+      path.join(APP_ROOT, 'node_modules', 'eac-plugin-suite', 'catalog'),
+    ].filter((x): x is string => typeof x === 'string');
+    const suiteCatalogDir = candidates.find((dir) => fs.existsSync(dir));
+    if (!suiteCatalogDir) return names; // 未装 suite：无 catalog 可依（fail-open）
+    let read = 0;
+    for (const file of fs.readdirSync(suiteCatalogDir)) {
+      if (!file.endsWith('.json') || file === 'retired.json') continue;
+      let catalog: unknown;
+      try {
+        catalog = JSON.parse(fs.readFileSync(path.join(suiteCatalogDir, file), 'utf8'));
+      } catch { continue; }
+      const rows = Array.isArray(catalog) ? catalog : (catalog as { plugins?: unknown[] }).plugins ?? [];
+      for (const row of rows as { name?: string; compat?: string }[]) {
+        if (row && typeof row.name === 'string' && typeof row.compat === 'string' && row.compat) {
+          names.add(row.name);
+        }
+      }
+      read += 1;
+    }
+    if (read > 0) incompatibleBundleCache = names;
+  } catch (err) {
+    console.warn('[companion-sync] catalog 读取失败，compat 兜底未生效（fail-open）: '
+      + String((err as Error)?.message || err));
+  }
+  return names;
+}
+
+/** dsh home 的解析（catalog 探测用）：env → os.homedir 下的 .dsh。 */
+function resolveHomeForCatalog(): string | null {
+  const fromEnv = process.env.DSH_HOME;
+  if (typeof fromEnv === 'string' && fromEnv) return fromEnv;
+  try {
+    return path.join(os.homedir(), '.dsh');
+  } catch {
+    return null;
+  }
+}
+
 let ctx!: CompanionSyncCtx;
 export function init(d: CompanionSyncCtx): void { ctx = d || ({} as CompanionSyncCtx); }
 
@@ -666,6 +740,62 @@ function retireRemovedBuiltinPlugins(profileDirP: string): boolean {
   return complete;
 }
 
+/**
+ * 从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里剥掉 `compat` 条目。
+ *
+ * 这是 `incompatibleBundlePackages()` 的落地点。为什么必须在启动时做而不是只在
+ * seed 生成时修：seed 是**构建产物**，用户装的安装包来自某一个固定构建；只要
+ * 那个构建的 seed 里带了 compat 行，用户机器上就必然崩 GUI。运行时兜底能覆盖
+ * 「已发布的坏 seed」与「用户 profile 里历史残留」两种情况。
+ *
+ * 只删 bundles / dependencies，**不删已解包的目录**：删目录会留下半装状态，
+ * 而且这些包本来就装不上（suite 的 installSkipReason 会拦），目录只会是空的
+ * 或早期手工残留。保留目录不影响启动（不在 bundles 就不会被 import）。
+ *
+ * 幂等；返回被剥掉的包名。fail-open：任何一步异常都只记日志，不阻断启动。
+ */
+export function stripIncompatibleProfileBundles(
+  profileDirP: string,
+  ctx: Pick<CompanionSyncCtx, 'log'>,
+): string[] {
+  const incompatible = incompatibleBundlePackages();
+  if (incompatible.size === 0) return [];
+  const packageFile = path.join(profileDirP, 'package.json');
+  let pkg: { dependencies?: Record<string, unknown>; dsh?: { profile?: { bundles?: unknown[] } } };
+  try {
+    pkg = JSON.parse(fs.readFileSync(packageFile, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    return [];
+  }
+  const stripped: string[] = [];
+  const bundles = pkg?.dsh?.profile?.bundles;
+  if (Array.isArray(bundles)) {
+    const next = bundles.filter((entry) => {
+      if (typeof entry !== 'string' || !incompatible.has(entry)) return true;
+      stripped.push(entry);
+      return false;
+    });
+    if (next.length !== bundles.length) pkg.dsh!.profile!.bundles = next;
+  }
+  if (pkg.dependencies && typeof pkg.dependencies === 'object') {
+    for (const name of [...incompatible]) {
+      if (Object.hasOwn(pkg.dependencies, name)) {
+        delete pkg.dependencies[name];
+        if (!stripped.includes(name)) stripped.push(name);
+      }
+    }
+  }
+  if (stripped.length > 0) {
+    try {
+      writeFileAtomic(packageFile, JSON.stringify(pkg, null, 2) + '\n');
+      ctx.log('boot', `已从 profile 剥离 ${stripped.length} 个与官方内核不兼容的 bundle: ${stripped.join(', ')}（compat 条目不激活，否则整机 GUI 拒绝启动）`);
+    } catch (error) {
+      ctx.log('boot', `剥离不兼容 bundle 未完成，下次启动重试: ${String((error as Error)?.message || error)}`);
+    }
+  }
+  return stripped;
+}
+
 // 安全模式守卫：<home>/guard/safe-mode.json active 时，配套插件的 patch 行
 // 追加必须停摆——否则「安全模式重启」后 sync 会把全部插件行写回 patch，
 // 下一次服务重启时安全模式被静默击穿（快照恢复前用户始终处于假安全模式）。
@@ -898,6 +1028,11 @@ export function syncCompanionPlugins(): void {
     } catch (err) {
       ctx.log('boot', '写入内置插件清单失败: ' + (err as Error).message);
     }
+    // compat 条目不激活：官方 0.2.x 上它们等不到 EAC 分叉专有服务，web boot 对
+    // 未激活 entry 是 fail-loud 的 —— 留在 bundles 里就等于把整机 GUI 弄挂。
+    // 必须在启动**之前**剥离，放在 ensurePluginHostDeps 之前或之后都可（两者
+    // 互不影响），这里紧邻其它 profile 修复步骤，便于日后再加同类兜底。
+    stripIncompatibleProfileBundles(profileDirP, ctx);
     ensurePluginHostDeps(profileDirP);
     // 配套插件的宿主依赖兜底（真实目录，非链接）。rc.2 起 dsh-app-boot 首启会
 // 重建 <home>/profiles/node_modules 共享层：dev 时代指向宿主工程的符号链接
