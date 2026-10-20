@@ -2,12 +2,25 @@
 
 // 配套 dsh 插件同步（ADR 0002 L2 业务服务层；Wave 2 收官自 companion-sync.js
 // 类型化迁出，行为零变更）：注入 web profile：余额小部件 + 文件更改追踪/
-// 还原 + 皮肤 + 内置插件治理。
+// 还原 + 内置插件治理。
+// M2/#415：旧版用户可见皮肤切换（dsh-skin-switch + assets/skins 目录播种）
+// 已整体退役 —— 换肤职责后由公约皮肤平台承接（该平台亦已于 EAC-CORE-SHELL-01
+// 外迁为市场可选包）；壳层 ui-skin manager 的 boot/recovery 回退资源不受本
+// 退役影响（ADR 0010）。
+// ISO-005 运行时清单收敛：COMPANION_PLUGINS 只登记「随包实物」—— 装配面
+// tauri-shell/stage-resources.mjs 的 BUILTIN_PLUGIN_DIRS 是唯一基准（当前 9
+// 项，每项在 assets/plugins 下有同名目录）。已不随包的插件不在本清单留空转项：
+// 旧 profile 残留的行/包副本由 RETIRED_BUILTIN_PLUGINS 兜底清理（见下方清单），
+// 用户仍需要时经市场按需安装（recommended/external 分级见 .sync 账本）。
+// 皮肤平台（`@dsh-eac/ui-skin-loader` + 13 款公约皮肤包）已于 EAC-CORE-SHELL-01
+// 外迁为市场可选包，同样只留 RETIRED 兜底；无皮肤激活 = 宿主原生观感。
 
 import path = require('node:path');
 import fs = require('node:fs');
 import os = require('node:os');
 import crypto = require('node:crypto');
+import { isMap, isSeq, parseDocument } from 'yaml';
+import type { Document } from 'yaml';
 import { updCtx, APP_ROOT } from './runtime-paths';
 import { isLiteDisabled, readInstallProfile } from './install-profile';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
@@ -15,6 +28,7 @@ import { ensureGuard } from './guard-box';
 import { applySessionManageFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
 import { writeFileAtomic } from '../atomic-json.js';
+import { parsePatchData, registeredPatchEntryIds, resolveBundleIdentities, toggleBundleInPatch } from '../bundle-identity';
 import { PLUGIN_UPDATE_SOURCES as GENERATED_PLUGIN_UPDATE_SOURCES } from './plugin-sync-registry';
 // 未类型化依赖（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
@@ -28,6 +42,26 @@ const pluginUpdater = require('../../plugin-updater') as {
 const { healProfileModuleShadowing } = require('../../profile-module-heal') as {
   healProfileModuleShadowing(home: string, profile: string): string[];
 };
+// M3/#416 L3：外部层（第三方/社区）新装插件默认禁用 —— 规划是纯函数
+// （plugin-manager-state），落盘复用插件管理页同一套 patch 手术
+// （scripts/plugin-manager-patch.js），不新增安装器。
+const { externalDefaultDisabledPlan, canonicalBundleId } = require('../../plugin-manager-state') as {
+  externalDefaultDisabledPlan(o: {
+    bundles?: unknown[];
+    bundleIdentities?: ReturnType<typeof resolveBundleIdentities>;
+    isRegistered?: (id: string) => boolean;
+    distributionClasses?: Record<string, string>;
+    builtinIds?: Iterable<string>;
+    recommendedIds?: Iterable<string>;
+    skipIds?: Iterable<string>;
+  }): Array<{ id: string; name: string }>;
+  canonicalBundleId(name: string): string;
+};
+import {
+  DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+  RECOMMENDED_PACK_PLUGIN_IDS,
+  PLUGIN_DISTRIBUTION_CLASSES,
+} from './plugin-sync-registry';
 const {
   configLinesFor,
   healSoulMdPatchRow,
@@ -55,9 +89,8 @@ const { migrateManagedRouterPersonaPresets } = require('../../router-persona-pre
     log: (m: string) => void,
   ): { status: string; file: string }[];
 };
-const { hasEntryId, removePluginFromPatch } = require('../../scripts/plugin-manager-patch') as {
+const { hasEntryId } = require('../../scripts/plugin-manager-patch') as {
   hasEntryId(patch: string, id: string): boolean;
-  removePluginFromPatch(text: string, id: string): string;
 };
 
 /** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
@@ -65,10 +98,83 @@ export interface CompanionSyncCtx {
   log(tag: string, msg: string): void;
   getDshHome(): string | null;
   getUserDataDir(): string;
-  applyLegacySkinChoice(): void;
   showMainWindow(): void;
   notify(n: { title: string; body: string; icon?: string; onClick?: () => void }): void;
   platform?: NodeJS.Platform;
+}
+
+/**
+ * 从运行时 catalog 里取出所有 `compat`（非官方内核兼容）条目的包名。
+ *
+ * 为什么需要它：`compat: 'eac-fork'` 的插件依赖 EAC 分叉内核专有服务
+ * （`settingsScope`），在官方 0.2.x 上激活期会**永久挂起**；而 web boot 对
+ * 「entry 未激活」是 fail-loud 的 —— 整个 GUI 直接拒绝启动：
+ *
+ *   Failed to load plugins
+ *   web boot: 1 entry did not activate
+ *   @ha-na-bi/dsh-client-ui-custom: pending (waiting for service: settingsScope)
+ *
+ * EAC-Pack 的 `suite/index.js:installSkipReason()` 已经在**安装**路径上拦截了
+ * 这些条目，但 `dsh.profile.bundles` 是另一条路径：seed 生成器
+ * （work/dist-tooling/prepare-composition.mjs）此前把 preinstalled 条目无条件
+ * 塞进 bundles，于是它们虽然"不该被装"，却照样进了 profile 的启动清单。
+ * 实测 2026-10-21：全新 full 实例宿主侧 6/6 插件 fiberPhase=active、25 个 settings
+ * 命名空间全在，但真实渲染截图显示界面完全没起来；剥掉这两行 bundle 立即恢复。
+ *
+ * fail-open：catalog 不可读时返回空集（此时无法判定，交给上游兜底），
+ * 且**只缓存成功结果**，catalog 恢复后下次调用即生效。
+ */
+let incompatibleBundleCache: Set<string> | null = null;
+
+export function incompatibleBundlePackages(): Set<string> {
+  if (incompatibleBundleCache) return incompatibleBundleCache;
+  const names = new Set<string>();
+  try {
+    // `eac-plugin-suite` 装在 profile 层（不是 APP_ROOT/node_modules），另有 dsh-home
+    // 下的安装目标。逐个探测，取第一个带 catalog 的。
+    const home = resolveHomeForCatalog();
+    const candidates = [
+      process.env.DSH_PROFILE_DIR
+        ? path.join(process.env.DSH_PROFILE_DIR, 'node_modules', 'eac-plugin-suite', 'catalog')
+        : null,
+      home ? path.join(home, 'profiles', 'web-desktop', 'node_modules', 'eac-plugin-suite', 'catalog') : null,
+      home ? path.join(home, 'eac-plugin-suite', 'catalog') : null,
+      path.join(APP_ROOT, 'node_modules', 'eac-plugin-suite', 'catalog'),
+    ].filter((x): x is string => typeof x === 'string');
+    const suiteCatalogDir = candidates.find((dir) => fs.existsSync(dir));
+    if (!suiteCatalogDir) return names; // 未装 suite：无 catalog 可依（fail-open）
+    let read = 0;
+    for (const file of fs.readdirSync(suiteCatalogDir)) {
+      if (!file.endsWith('.json') || file === 'retired.json') continue;
+      let catalog: unknown;
+      try {
+        catalog = JSON.parse(fs.readFileSync(path.join(suiteCatalogDir, file), 'utf8'));
+      } catch { continue; }
+      const rows = Array.isArray(catalog) ? catalog : (catalog as { plugins?: unknown[] }).plugins ?? [];
+      for (const row of rows as { name?: string; compat?: string }[]) {
+        if (row && typeof row.name === 'string' && typeof row.compat === 'string' && row.compat) {
+          names.add(row.name);
+        }
+      }
+      read += 1;
+    }
+    if (read > 0) incompatibleBundleCache = names;
+  } catch (err) {
+    console.warn('[companion-sync] catalog 读取失败，compat 兜底未生效（fail-open）: '
+      + String((err as Error)?.message || err));
+  }
+  return names;
+}
+
+/** dsh home 的解析（catalog 探测用）：env → os.homedir 下的 .dsh。 */
+function resolveHomeForCatalog(): string | null {
+  const fromEnv = process.env.DSH_HOME;
+  if (typeof fromEnv === 'string' && fromEnv) return fromEnv;
+  try {
+    return path.join(os.homedir(), '.dsh');
+  } catch {
+    return null;
+  }
 }
 
 let ctx!: CompanionSyncCtx;
@@ -89,208 +195,67 @@ interface PendingRow {
   config?: unknown;
 }
 
+// 运行时登记面 = 随包实物（基准见文件头）：每项都必须能解析出
+// assets/plugins/<dir> 实物目录。实物不在包却在清单里的条目，每次启动只会
+// 留一条「配套插件源目录无效，跳过」的空转日志 —— ISO-005 起本清单与装配面
+// 1:1（9 项），收敛前登记的 35 项不再随包，旧 profile 迁移见下方 RETIRED 清单。
+//
+// 绝不能写进 profile package.json 依赖 —— pnpm 安装会 hoist @deepseek-ai
+// 核心包形成模块双实例（Symbol 冲突，插件命名空间注册失效，即
+// "设置命名空间不可用" 故障的根因）。
 export const COMPANION_PLUGINS: CompanionPluginDef[] = [
-  { id: 'balance', name: '@deepseek-ai/dsh-balance' },
+  // 会话文件更改投影（fileChanges）：折叠 tool/result 的 meta.diffs，为「文件」
+  // 视图与回退提供数据。
   { id: 'file-changes', name: '@deepseek-ai/dsh-file-changes' },
+  // 「文件」视图：会话文件更改追踪 + 一键还原（数据来自上面的投影，还原由
+  // 壳层执行）。
   { id: 'client-file-changes', name: '@deepseek-ai/dsh-client-file-changes' },
-  { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
   // 统一插件市场（dsh-unified-market，内置）：聚合精选目录
   // （awesome-dsh-plugin.com）+ GitHub dsh-plugin 生态 + npm 检索三源；
   // EAC 特化（web-desktop profile），试装验证 + 冲突预检 + 后台自动更新 +
   // 自动更新排队与启动消费 + 市场自更新。取代曾被内置的 webui-market /
   // zat-market / 旧 npm 市场（各自 profile 定位错误或重复，已从清单移除）。
   { id: 'unified-market', name: 'dsh-unified-market', dir: 'dsh-unified-market' },
-  { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
+  // 设置页快速配置：视觉模型提供商/模型一键选择、soul.md 人设可视化编辑、
+  // 从 Codex / Claude Code 目录一键迁移 skills。
   { id: 'easy-setup', name: '@deepseek-ai/dsh-easy-setup' },
   // 旧版/社区客户端插件的英文兼容层：跟随官方 locale 状态翻译固定 UI
   // 文案，不触碰会话、代码、终端、编辑器或用户输入。作为界面底座始终启用。
   { id: 'eac-locale-compat', name: 'dsh-eac-locale-compat', dir: 'dsh-eac-locale-compat' },
-  // VNext Core Bridge（受信组件，vnext-absorb Phase 2）：把隔离 SDK 插件的
-  // 工具/上下文经回环端点桥接进 dsh Agent（DSH_EAC_BRIDGE_URL/TOKEN 由
-  // sidecar 在拉起 dsh web 前注入）；必须随包分发并默认启用。
-  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge', dir: 'dsh-eac-core-bridge' },
-  // 社区功能插件（视觉 / 人设 / 长期记忆 / 移动端布局修复）：npm registry
-  // 拉取后随应用内置分发。绝不能写进 profile package.json 依赖 ——
-  // pnpm 安装会 hoist @deepseek-ai 核心包形成模块双实例（Symbol 冲突，
-  // 插件命名空间注册失效，即 "设置命名空间不可用" 故障的根因）。
-  { id: 'picturereader', name: 'picturereader', dir: 'picturereader' },
-  // 读屏 + 鼠标键盘自动化（Codex-style computer use，配 picturereader；纯本地）。
-  { id: 'computer-user', name: 'computer-user', dir: 'computer-user' },
-  // config.path 必须随行写入：v2.0.0 只写了 id+name，而当时插件 schema 的
-  // path 是 required 无默认值，全新安装校验失败拖垮整个插件树（dsh web
-  // 退出码 1，应用持续闪退“启动失败”）。schema 现已带默认值，这里显式
-  // 写 config 是双保险，healSoulMdPatchRow 另负责修复存量坏行。
-  { id: 'soul-md', name: 'dsh-soul-md', dir: 'dsh-soul-md', config: { path: 'soul.md' } },
-  { id: 'mobile-fix', name: 'dsh-web-mobile-fix', dir: 'dsh-web-mobile-fix' },
   // 视口钳制（文档级滚动根治）：html/body overflow:hidden + 稳定契约
   // （data-phase/data-conversation-scroll）hero 居中兜底。纯客户端 CSS，
   // 随内核页面加载 —— 桌面壳 / 浏览器 / 手机端三端同源生效，不再依赖
   // 桌面壳垫片与 CSS Modules 哈希类（内核更新换哈希即失效的旧方案）。
   { id: 'viewport-lock', name: 'dsh-viewport-lock', dir: 'dsh-viewport-lock' },
-  // 喵丝滑（Phant0Meow/dsh-meow-smooth 0.5.0，MIT）：手机端 UI 交互优化
-  // （输入框折叠/侧边栏手势/窄屏适配）+ 通知系统（页面卡片 / Web Push /
-  // webhook）+ 审计投影只读路由。5.2 起取代自研 mobile-app.html 续聊客户端
-  // —— 手机桥改为完整 Web UI 反向代理，手机直接获得真界面，本插件负责
-  // 移动端体验。host 半边依赖 web-push（已加入 app 闭包 + 插件宿主依赖
-  // 落位，缺省时优雅降级：仅系统推送不可用）。配置沿用上游出厂默认。
-  { id: 'meow-smooth', name: 'meow-smooth', dir: 'dsh-meow-smooth', config: { enabled: true } },
-  // VSCode 风格右侧边栏（文件树 / 编辑器 / 终端 / Git，按会话隔离）。
-  // lib/ 预编译自包含（codemirror、xterm 已内嵌），服务端仅额外依赖
-  // schemastery（已加入 app 闭包，见 package.json）。config 只随缺失的新行写入；
-  // 已有 profile 行会在同步时跳过，保留升级用户的现有默认与自定义设置。
-  { id: 'better-sidebar', name: 'dsh-better-sidebar', dir: 'dsh-better-sidebar', config: { openByDefault: true } },
-  // VCP 视觉通感协议（dsh-raw-html 0.6.1 EAC 托管版，源自 plolpl789，MIT）：消息 HTML 渲染
-  // 为界面（卡片 / KaTeX / Mermaid / 内置 7 款 OFL 书法字体）。EAC 集成通过
-  // conversation.chat.node 的 assistant-step slot 接管，不修改上游压缩 bundle。
-  // bundle 插件：
-  // 必须进 profile bundles（BUNDLED_BUILTIN_PLUGINS / DESKTOP_PROFILE_BUNDLES
-  // 播种），overlay 行会被 removeBundledRowDuplicates 去重，不可写 patch 行。
-  { id: 'dsh-raw-html', name: 'dsh-raw-html', dir: 'dsh-raw-html' },
-  // Trae 风格对话回退：用户消息 hover 出「编辑并回退」，按上一完整回合
-  // 分叉新会话（sessions.fork）并以编辑后内容重发（inputActions）。
-  // 纯客户端实现，host 半边为 no-op。
-  { id: 'message-rewind', name: 'dsh-message-rewind', dir: 'dsh-message-rewind' },
-  // 页面桌宠（npm: dsh-pet 0.1.3）：28 个透明动画的悬浮宠物，即装即用。
-  // assets/ 15MB 播放资源随包分发；peer 依赖全部由 dsh 宿主提供。
-  // V4 关键修复：行必须带 config —— dsh-pet 的 apply 读 config.fullRoot，
-  // 无 config 块的行会让 loader 传 undefined 直接拖垮插件树（v3.1.0 全新
-  // 安装即「启动失败」的根因之一；老用户因市场装过的行带 config 才幸免）。
-  // 值沿用包内 cordis.patch.yml 的出厂默认。
-  // 默认禁用 —— 需要页面桌宠时在「设置 → 插件 → 管理」或「桌宠」分区开启。
-  { id: 'dsh-pet', name: 'dsh-pet', dir: 'dsh-pet', config: { size: 260, position: 'bottom-right' }, disabled: true },
-  // 设置页「Skills 与 MCP」分区：Skills 目录浏览（来源徽标/打开目录）+
-  // MCP 服务增删改（读写 profile patch 中的 dsh-mcp-client 行）+ 从
-  // Claude Code / Codex 一键导入 MCP 配置。
-  { id: 'dock-settings', name: 'dsh-dock-settings', dir: 'dsh-dock-settings' },
-  // 外观自定义：字体家族/字号/文字与代码颜色的设置页分区，实时预览，
-  // localStorage 持久化（纯客户端，无宿主半边）。
-  { id: 'font-custom', name: 'dsh-font-custom', dir: 'dsh-font-custom' },
   // 请求路径自动压缩：在模型请求前按真实 Token 压力调用 DSH 原生压缩
   // 引擎；上下文溢出时最多压缩并重试原请求一次，不再模拟输入 /compact。
   { id: 'compact', name: 'dsh-compact', dir: 'dsh-compact' },
   // 插件保护中心 UI：快照列表/一键回滚/健康检查/事故报告，经桌面壳
   // IPC（guard:action）驱动 plugin-guard.js 引擎。
   { id: 'plugin-shield', name: 'dsh-plugin-shield', dir: 'dsh-plugin-shield' },
-  // AI 变更审核（V4，用户建议⑤）：监控官方 fileChanges 投影，手动/自动向
-  // 当前对话发送审核请求，让模型复查自己刚做的改动（正确性/安全性/一致
-  // 性），结论配合「文件」页一键还原。纯客户端实现，host 半边 no-op。
-  { id: 'change-review', name: 'dsh-change-review', dir: 'dsh-change-review' },
-  // —— V4 自上游 dsh_desktop（myYangyunfan）移植的配套插件 ——
-  // 会话浮窗（多窗口分屏）：会话头部「弹出到独立窗口」按钮；窗口由壳层
-  // IPC chrome:float-window / preload 的 __DSH_FLOAT__ 承载。
-  { id: 'float-window', name: '@deepseek-ai/dsh-float-window' },
-  // 对话节点导航条（vlln/dsh-navbar，MIT）：对话区右缘节点串快速跳转
-  // user 消息（悬停预览/点击跳转/滚轮切换）。
-  { id: 'dsh-navbar', name: '@vlln/dsh-navbar', dir: 'dsh-navbar' },
-  // 对话删除与归档管理：会话行菜单「删除对话」+ 设置内归档管理面板。
-  // 前置依赖 scripts/patch-session-manage.js 的官方包运行时补丁
-  // （applySessionManageFix，随启动幂等应用、覆盖 agent overlay）。
-  { id: 'dsh-session-manager', name: 'dsh-session-manager' },
-  // 对话界面微调：隐藏大量工具调用/结果/思考输出（保留每轮最终总结）。
-  { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
-  // 自定义注入提示词：整体替换/追加官方 persona，应用到 standard 预设。
-  { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
-  // 侧边临时会话：浮窗追问、不写主会话、多种回答引擎（Ctrl+Shift+S）。
-  { id: 'side-session', name: '@dsh-external/dsh-side-session', dir: 'dsh-side-session' },
-  // 手机连接（5.2 方案）：LAN 扫码配对 + 完整 Web UI 反向代理（设置页「连接手机」）。
-  // 桥本体在 Tauri 壳 sidecar（phone-bridge.js）；手机端体验由内置喵丝滑
-  // （meow-smooth）提供，自研 mobile-app.html 续聊客户端已退役。
-  { id: 'dsh-phone', name: 'dsh-phone', dir: 'dsh-phone' },
-  // 新增强化功能入口分区（5.1.0 批次）：设置页「增强功能」——为默认关闭的
-  // 内置插件（余额小鲸鱼 / AgentTeams 等）提供一键启用/停用开关。
-  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles', dir: 'dsh-feature-toggles' },
-  // DeepSeek 余额小鲸鱼挂件（MeteorNOX/DeepSeek-Balance-Whale-Widget，MIT）。
-  // 默认关闭：用户到「设置 → 插件 → 管理」或「增强功能」分区自行启用（需 DEEPSEEK_API_KEY 凭据）。
-  { id: 'dsh-whale-widget', name: 'dsh-whale-widget', dir: 'dsh-whale-widget', disabled: true },
-  // 多智能体团队协作（NanmiCoder/dsh-agent-teams，MIT）：队长 + 子代理成员 +
-  // 依赖感知任务 DAG + 活动面板。5.3.1 起默认启用（EAC 适配版；对话框
-  // composer dock 有可见入口，设置「增强功能」分区保留停用开关）。
-  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams', dir: 'dsh-agent-teams' },
-  // 输入灵动岛（says693/dsh-composer-dynamic-island 2.1.0，MIT）：把输入区
-  // 选定按钮收纳为向上展开的紧凑岛，不移动宿主 React 节点；仅在已确认的
-  // composer surface 内发现控件，设置只持久化启用状态与控件标识。
-  { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island', dir: 'dsh-composer-dynamic-island' },
-  // 插件启停管理：设置页「插件 → 管理」标签，不重启切换插件启停
-  // （IPC dsh:plugin-list / dsh:plugin-set-enabled，见下方接线）。
-  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
-  // 插件选择向导入口（设置页「插件 → 选择向导」分区）：重新打开首次启动的
-  // 内置插件选择向导，按需启用/停用内置插件。纯客户端 UI + 壳层 IPC
-  // （onboard:*），host 半边 no-op；核心插件组内锁定，永不被向导停用。
-  { id: 'plugin-wizard', name: 'dsh-plugin-wizard', dir: 'dsh-plugin-wizard' },
-  // 微信 ClawBot / OpenClaw 桥（openclaw-dsh-bridge v0.7.0，MIT）：设置页
-  // 「ClawBot」栏（扫码绑定微信官方 ClawBot 小程序）+ OpenAI 兼容端点
-  // （/openclaw-bridge/v1/chat/completions）。设置命名空间经 dsh-host-apiproxy
-  // 的 settings.describe 全量暴露（rc.7+ 已移除 WEB_SETTINGS_NAMESPACES 白名单）。
-  { id: 'openclaw-bridge', name: '@deepseek-ai/dsh-openclaw-bridge', dir: 'dsh-openclaw-bridge' },
-  // 崩溃急救/撤销回退（dsh-undo-savepoint，lire1131，MIT）：配置文件 + 插件
-  // 代码树快照、undo/redo、一键安全模式、密钥脱敏 vault。与插件保护中心
-  // （配置面快照）和「文件」还原（会话内改动）互补，覆盖「配置改坏、dsh
-  // 起不来」的急救场景。GitHub 分发锁定拷贝（npm 未发布）。
-  { id: 'dsh-undo', name: 'dsh-undo-savepoint', dir: 'dsh-undo-savepoint' },
-  // 大肥鱼桌宠（dsh-dafeiyu，QCYTSN；代码 MIT、角色素材按 ASSET_LICENSE.md
-  // 随包分发保留署名）：真实会话状态驱动的原生置顶桌宠（空闲/思考/工作/
-  // 等待/完成/错误 六态 + 项目状态卡）。默认开启 —— 可在「设置 → 插件 →
-  // 管理」或「桌宠」分区关闭（含 49MB PyInstaller helper，按需运行）。
-  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu', dir: 'dsh-dafeiyu' },
-  // 桌宠设置分区（V4.2，dsh-pet-settings）：设置页「桌宠」分区，集中管理
-  // 页面桌宠（dsh-pet 开关，重启生效）与大肥鱼桌面伴侣（启用/角色大小/
-  // 空闲微动作频率/减少动态，走 dsh-dafeiyu config 端点即时生效）。
-  { id: 'dsh-pet-settings', name: 'dsh-pet-settings', dir: 'dsh-pet-settings' },
-  // 峰谷价格卫士（dsh-offpeak，christophersmith2737-commits，MIT）：DeepSeek
-  // 峰谷定价（2026-08-17 起）高峰时段（北京时间 9-12 / 14-18 点）在发送前
-  // 拦截提醒，可一键继续或定时到闲时价自动执行（浏览器不在线也会到点
-  // 执行）。与余额小部件互补（事前拦截 vs 事后显示）；程序化提交
-  // （auto-compact / 变更审核 / 消息回退 / openclaw 桥）不被拦截。
-  // 可在「设置 → 插件 → 管理」关闭。
-  { id: 'offpeak', name: 'dsh-offpeak', dir: 'dsh-offpeak' },
-  // 拖入文件/文件夹到对话（EAC 特化版，取代原 dsh-file-drop）：普通文件
-  // 显示可预览、可移除的卡片，并保存临时副本后只注入紧凑路径引用；图片
-  // 继续走官方缩略图链路，混合拖放拆分处理。纯客户端实现（host 半边 no-op）。
-  // 独立发布：https://github.com/jing-hy/dsh-file-drop-eac（issue #141）。
-  { id: 'file-drop-eac', name: 'dsh-file-drop-eac', dir: 'dsh-file-drop-eac' },
-  // 设置页「常规」页内高级选项折叠（V4.2，用户建议）：按行标题关键词把
-  // 低频选项行（外观/语言/权限预设等）收进底部「高级选项」折叠组，
-  // localStorage 持久化展开状态；纯客户端实现（host 半边 no-op）。
-  // V4.6.1 起侧边栏 display/order 由 nav-custom 单一写者接管，groups 只保留页内折叠。
-  { id: 'settings-groups', name: 'dsh-settings-groups', dir: 'dsh-settings-groups' },
   // 设置面板滚轮修复：不绑定 CSS Modules 哈希类名，按设置页语义与真实
   // overflow 尺寸识别导航/内容滚动区；MutationObserver 跟随动态内容，卸载时
   // 完整清理样式、标记与监听器。纯客户端实现（host 半边 no-op）。
   { id: 'settings-scroll-fix', name: 'dsh-settings-scroll-fix', dir: 'dsh-settings-scroll-fix' },
-  // 图片粘贴发送（V4.2，用户建议）：Ctrl/Cmd+V 粘贴剪贴板图片 → 保存到
-  // 临时目录 → 注入完整路径提示（配合 inspect_image 视觉工具）；纯客户端
-  // 实现（host 半边 no-op，仅用受控 IPC dsh:image-paste-save）。
-  // 默认禁用 —— 与内置 picturereader 的「粘贴即用/图片桥自动分析」入口
-  // 语义重叠，避免粘贴图片时重复/竞争注入。
-  { id: 'image-paste', name: 'dsh-image-paste', dir: 'dsh-image-paste', disabled: true },
-  // 提示词优化（dsh-webui-prompt-optimizer 0.1.0，提取自 statem-li/dsh-webui）：
-  // 输入区右侧优化图标，用当前会话模型流式改写提示词；单轮写回草稿、
-  // 多轮并行出「均衡/精简/详尽」三候选择优迭代，可包装 /goal。
-  // 纯客户端 + host 半边（loopback 路由），peer 依赖全部由 dsh 宿主提供。
-  { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer', dir: 'dsh-webui-prompt-optimizer' },
-  // 本地离线语音识别（dsh-stt 0.3.0，BAIKAI23333，MIT）：sherpa-onnx SenseVoice
-  // 本地推理 —— 输入区麦克风按钮说话，识别文本回填输入框，支持唤醒词激活
-  // 与「发送」语音指令提交。sherpa-onnx 原生引擎不随仓库分发，由 CI 在各
-  // 平台构建时 npm install 拉取对应原生包（install:plugin-engines，三平台
-  // 发行；引擎缺失时插件优雅降级 503 engine_missing，不拖垮插件树）。默认
-  // 禁用 —— 启用后首次使用自动下载 SenseVoice 模型（~230MB）到
-  // ~/.dsh/models/dsh-stt/（用户数据，安装器不清理），GitHub Release 主源
-  // 失败自动切 hf-mirror。5.3.0 曾因模型体积退役，现按用户要求恢复内置
-  // （已同步移出退役清单）；不登记 PLUGIN_UPDATE_SOURCES（manifest x-eac
-  // autoUpdate:false，EAC 托管版本）。
-  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt', dir: 'dsh-stt', disabled: true },
-  // 思考增强（中文）：强制 agent 用中文思考与回复（system-prompt section），
-  // 并把界面残留的硬编码英文（Thinking / Tool Call 等）中文化。
-  // 这是上游 baosfeng/dsh-think-zh-expand 的 EAC 定制派生版
-  // （https://github.com/jing-hy/dsh-think-zh-expand-eac，MIT）：**已移除全部
-  // 接管对话渲染器的显示功能**（assistant-step 渲染器抢占、ThinkBlock 默认
-  // 展开、自绘 SVG 图标与样式表），因此可与 dsh-auto-collapse / dsh-turn-fold
-  // 等折叠插件共存 —— 上游版会与他们抢 conversation.chat.node 座位，导致
-  // 折叠失效且不报错。section 名改为 dsh-think-zh-eac，避免与上游版同层同名
-  // 注册抛错拖垮插件树。
-  // 走 patch 行（非 bundles）：用户可在「设置 → 插件 → 管理」关闭；
-  // 其夹带 patch 是普通 insert 行，本行不会被 removeBundledRowDuplicates 去重。
-  { id: 'think-zh-expand-eac', name: 'dsh-think-zh-expand-eac', dir: 'dsh-think-zh-expand-eac' },
+  // Our Free Model：免登录/免注册/免 API Key 接入前沿模型（含 DeepSeek V4.1 Flash、
+  // Kimi K3），集成 Jet Hub 十三账号渠道、本地 OpenAI 网关与数据看板。
+  // 纯 JS（零原生依赖）、inject 仅 ['llm']（内核自带），无需桌面桥接面，
+  // 故可作 builtin 随 Lite 交付。上游 Ebony-Vinyl/dsh-our-free-model
+  //（私有 ESM 包，npm 无发布；GitHub Release v2.5.2 提供官方预构建 tgz）。
+  { id: 'our-free-model', name: 'dsh-our-free-model', dir: 'dsh-our-free-model' },
+  // —— 已不随包的插件（ISO-005 收敛出本清单）：不再登记 ——
+  // 收敛前本清单 44 项，其中 35 项自 v6 Task 3.1 剥出 assets/plugins 后已无实物
+  //（每次启动只留一条「配套插件源目录无效，跳过」）。它们不再随包，改由市场按需
+  // 安装（.sync/plugin-distribution.json：15 recommended + 20 external）；旧
+  // profile 残留的行/包副本/依赖由下方 RETIRED_BUILTIN_PLUGINS 兜底清理。
+  // ISO-003：VNext Core Bridge（eac-core-bridge）已退役 —— 它曾在此默认启用，
+  // 但端点由 sidecar 注入的前提从未成立：DSH_EAC_BRIDGE_URL/TOKEN 全仓零
+  // 写入方（lib/desktop/proc.ts 的 childEnv() 不注入），插件读不到端点即提前
+  // return，随包且默认启用只会静默空转（ADR 0003 已随 ADR 0006 裁废）。
+  // 本清单不再登记它；历史 profile 的行/包副本/依赖由 RETIRED_BUILTIN_PLUGINS
+  // 兜底清理（资产目录保留在 assets/plugins/dsh-eac-core-bridge 待接回）。
+  // EAC-CORE-SHELL-01：皮肤平台（loader + 13 款公约皮肤）已外迁为市场可选包，
+  // 同样只留 RETIRED 兜底（见下方清单）。
 ];
 
 export function companionPluginsForPlatform(platform: NodeJS.Platform = 'win32'): CompanionPluginDef[] {
@@ -423,8 +388,34 @@ export function pluginUpdateSources(): { id: string; name: string; assetsDir: st
   return out;
 }
 
-/** 内置插件当前生效的源目录：覆盖层（已更新版本）优先，资产版本回退。 */
-export function builtinPluginSourceDir(dirName: string): string {
+/**
+ * 市场同名残留的「第三方证据」判定（纯函数，可单测）。
+ *
+ * 三条证据任一成立才算残留：市场版依赖（非 link:/file: 自建链接）、
+ * **非应用播种**的 bundles 条目、非自写 patch 行。
+ *
+ * ISO-005：bundles 条目只有在「不是应用自己播种的」时才是证据 —— 应用播种
+ * 清单是 BUNDLED_BUILTIN_PLUGINS（profile.ts，当前为空数组：随包插件走配套
+ * 行/包拷贝路径，不经 bundles 播种）。若沿用旧口径，应用自己播种过的条目会
+ * 被误判成市场残留并触发「接管」手术（剥 bundles 条目 + 建保护快照）。
+ */
+export function marketDuplicateEvidence(o: {
+  name: string;
+  dependencySpec?: unknown;
+  inBundles?: boolean;
+  foreignPatchRows?: boolean;
+  appSeededBundles?: Iterable<string>;
+}): boolean {
+  const spec = o.dependencySpec;
+  if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
+  if (o.inBundles === true) {
+    const seeded = new Set(o.appSeededBundles ?? BUNDLED_BUILTIN_PLUGINS);
+    if (!seeded.has(o.name)) return true;
+  }
+  return o.foreignPatchRows === true;
+}
+
+/** 内置插件当前生效的源目录：覆盖层（已更新版本）优先，资产版本回退。 */export function builtinPluginSourceDir(dirName: string): string {
   const assets = path.join(APP_ROOT, 'assets', 'plugins', dirName);
   const overlay = path.join(ctx.getUserDataDir(), 'builtin-plugin-updates', dirName);
   if (!fs.existsSync(path.join(overlay, 'package.json'))) return assets;
@@ -439,12 +430,11 @@ export function builtinPluginSourceDir(dirName: string): string {
   return overlay;
 }
 
-// 皮肤包目录：assets/skins/<id>/。每个皮肤是一个完整的 dsh client 插件包
-// （package.json + lib/ + skin.json + LICENSE/NOTICE），随桌面端分发；
-// 默认全部以 disabled: true 注册（不启用任何皮肤），由「设置 → 皮肤」切换。
-export const SKINS_DIR = path.join(APP_ROOT, 'assets', 'skins');
+// M2/#415：assets/skins/ 皮肤包目录播种已随旧版皮肤切换退役
+// —— assets/skins 自 v6 起已不存在，皮肤平台自 EAC-CORE-SHELL-01 起是市场
+// 可选包（按需安装即写 profile bundles），不再有资产目录播种。
 
-import { copyPluginPackage, readJsonFile } from '../plugin-copy.js';
+import { COPY_STAMP, copyPluginPackage, readJsonFile } from '../plugin-copy.js';
 
 export {
   COPY_STAMP,
@@ -472,10 +462,36 @@ export function healProfileModules(): void {
   }
 }
 
+// M2/#415 迁移清理：旧链（AIO ≤ 9.6.3 的 assets/skins 目录播种）留在老
+// profile 里的 10 款旧桌面皮肤 —— 包名 `@linxin666|@dsh-external/
+// dsh-client-ui-skin-*`，patch 行 id 取皮肤包清单里声明的 wiring.id
+//（`ui-skin-*`，insert 内层行）。旧链退役后这些行指向的包不再随包分发：
+// 「行在包不在」让 loader 找不到 entry、「包在行不在」残留旧皮肤继续加载，
+// 两者都会拖垮插件树。清理按**精确 id + 精确包名**逐条进行（不是作用域/前缀
+// 级联删除）：`@linxin666` / `@dsh-external` 下市场安装的其他插件必须留存；
+// 公约皮肤平台（包 `@dsh-eac/ui-skin-loader` + `@dsh-eac/skin-*`，行
+// `dsh-ui-skin-loader` + `dsh-eac-skin-*`）自 EAC-CORE-SHELL-01 外迁为市场可选
+// 包，与旧链一样只由下方 RETIRED 清单按精确条目兜底清理。
+// （契约测试锚定本清单与 RETIRED_BUILTIN_PLUGINS 的并集，勿改前缀语义。）
+export const LEGACY_UI_SKIN_RESIDUE: { id: string; name: string }[] = [
+  { id: 'ui-skin-blue-fantasy', name: '@linxin666/dsh-client-ui-skin-blue-fantasy' },
+  { id: 'ui-skin-dragon-heir', name: '@linxin666/dsh-client-ui-skin-dragon-heir' },
+  { id: 'ui-skin-maid-atelier', name: '@dsh-external/dsh-client-ui-skin-maid-atelier' },
+  { id: 'ui-skin-miku', name: '@linxin666/dsh-client-ui-skin-miku' },
+  { id: 'ui-skin-minecraft', name: '@linxin666/dsh-client-ui-skin-minecraft' },
+  { id: 'ui-skin-qq98', name: '@linxin666/dsh-client-ui-skin-qq98' },
+  { id: 'ui-skin-ths', name: '@linxin666/dsh-client-ui-skin-ths' },
+  { id: 'ui-skin-trading', name: '@linxin666/dsh-client-ui-skin-trading' },
+  { id: 'ui-skin-whale-song', name: '@linxin666/dsh-client-ui-skin-whale-song' },
+  { id: 'ui-skin-xp', name: '@linxin666/dsh-client-ui-skin-xp' },
+];
+
 // 曾内置、现已从内置清单移除的插件。老用户 profile 可能残留其 patch 行、
 // node_modules 副本与 package.json 依赖：行在包被清会拖垮插件树，包在行在则
 // 退役插件继续加载。旧市场还会与 dsh-unified-market 重复注册 /api/dsh-market，
 // 使 dsh web 以 code=1 退出。启动时统一清理这些精确的历史内置条目。
+// 旧链皮肤残留（LEGACY_UI_SKIN_RESIDUE）走同一套清理与同一道升级对齐门控：
+// 清单内容变化会改指纹，升级后首次启动必然重跑一次迁移。
 // （契约测试锚定字面量 `const RETIRED_BUILTIN_PLUGINS = [`，勿加内联注解。）
 export const RETIRED_BUILTIN_PLUGINS = [
   { id: 'auto-compact', name: 'dsh-auto-compact' },
@@ -495,45 +511,289 @@ export const RETIRED_BUILTIN_PLUGINS = [
   // 旧 dsh-file-drop 会同时接管普通文件和图片拖放，与 EAC 特化版并存时
   // 会重复注入内容并让官方图片遮罩停留。由 file-drop-eac 完整取代。
   { id: 'file-drop', name: 'dsh-file-drop' },
+  // M2/#415：旧版用户可见皮肤切换（设置页「皮肤」tab，host 半边以
+  // Typert Remote 改写 cordis.patch.yml 的 ui-skin-* 激活行）随换肤职责
+  // 移交 ui-skin-loader 公约皮肤包而退役。老 profile 残留的 patch 行/
+  // 包副本由退役清理兜底，避免「行在包被清」拖垮插件树。壳层 ui-skin
+  // manager 的 boot/recovery 回退资源不受影响（ADR 0010）。
+  { id: 'skin-switch', name: '@deepseek-ai/dsh-skin-switch' },
+  // M2/#415：旧链播种的 10 款 `ui-skin-*` 皮肤残留（见上方迁移清单）。
+  ...LEGACY_UI_SKIN_RESIDUE,
+  // EAC-CORE-SHELL-01：M2/#415 曾随包预装的皮肤平台（loader + 13 款公约
+  // 皮肤）已外迁为市场可选包。老 profile 残留的 bundles 成员 / patch 行 /
+  // 包副本由本清单兜底清理，避免「行在包被清」或 bundles 成员指空拖垮
+  // 插件树。皮肤改由 Market Core 安装（安装即写 profile bundles）。
+  { id: 'dsh-ui-skin-loader', name: '@dsh-eac/ui-skin-loader' },
+  { id: 'dsh-eac-skin-aurora', name: '@dsh-eac/skin-aurora' },
+  { id: 'dsh-eac-skin-blue-fantasy', name: '@dsh-eac/skin-blue-fantasy' },
+  { id: 'dsh-eac-skin-deep-whale-day-night', name: '@dsh-eac/skin-deep-whale-day-night' },
+  { id: 'dsh-eac-skin-dragon-heir', name: '@dsh-eac/skin-dragon-heir' },
+  { id: 'dsh-eac-skin-inkwash', name: '@dsh-eac/skin-inkwash' },
+  { id: 'dsh-eac-skin-maid-atelier', name: '@dsh-eac/skin-maid-atelier' },
+  { id: 'dsh-eac-skin-miku', name: '@dsh-eac/skin-miku' },
+  { id: 'dsh-eac-skin-minecraft', name: '@dsh-eac/skin-minecraft' },
+  { id: 'dsh-eac-skin-qq98', name: '@dsh-eac/skin-qq98' },
+  { id: 'dsh-eac-skin-ths', name: '@dsh-eac/skin-ths' },
+  { id: 'dsh-eac-skin-trading', name: '@dsh-eac/skin-trading' },
+  { id: 'dsh-eac-skin-whale-song', name: '@dsh-eac/skin-whale-song' },
+  { id: 'dsh-eac-skin-xp', name: '@dsh-eac/skin-xp' },
+  // EAC-CORE-SHELL-01：3 个与内核同名/官方已内置的插件退役。
+  //  - plugin-manager / terminal 与内核 0.2.0 同名，会遮蔽官方包
+  //    （terminal 的官方版提供 ctx.terminals，EAC 版不提供）；
+  //  - file-drop-eac 的拖放 → @path 能力官方已内置。
+  { id: 'plugin-manager', name: '@deepseek-ai/dsh-plugin-manager' },
+  { id: 'terminal', name: '@deepseek-ai/dsh-terminal' },
+  { id: 'file-drop-eac', name: 'dsh-file-drop-eac' },
+  // ISO-003：VNext Core Bridge 退役 —— 端点生产者缺失（DSH_EAC_BRIDGE_URL/
+  // TOKEN 全仓零写入方，lib/desktop/proc.ts 的 childEnv() 不注入），该插件
+  // 随包且默认启用却只静默空转；ADR 0003 已随 ADR 0006 裁废，进程隔离接回
+  // 前不再随包/默认启用。老 profile 的行/包副本/依赖项由本清单兜底清理；
+  // 资产目录保留在 assets/plugins/dsh-eac-core-bridge 等接回。
+  { id: 'eac-core-bridge', name: 'dsh-eac-core-bridge' },
+  // —— ISO-005：运行时清单收敛（44 → 9）后不再随包、也不再登记的 35 项 ——
+  // 依据：ADR 0006 最简本体（v6 Task 3.1 剥出 assets/plugins 全量资产），
+  // ISO-005 以装配面 stage-resources.mjs 的 BUILTIN_PLUGIN_DIRS（9 项）为唯一
+  // 基准收敛运行时清单；这 35 项改由市场按需安装（.sync/plugin-distribution.json：
+  // 15 recommended + 20 external），但老 profile（≤5.4.1 曾全部随包）里的
+  // patch 行 / node_modules 包副本 / package.json 依赖仍指向已不在包体的包 ——
+  // 「行在包不在」会让 loader 找不到 entry 拖垮插件树，也会与市场安装的推荐版
+  // 撞成 duplicate loader entry id。这里逐条按**精确 id + 精确包名**兜底清理
+  //（不做作用域/前缀级联删除，市场安装的同作用域其他插件必须留存）：id 是
+  // patch 行 id，name 是 node_modules 目录名与依赖键（与 COMPANION_PLUGINS
+  // 收敛前的登记值一致，已与 assets/SOURCES.json 的台账包名逐条核对）。
+  // 分发分级：15 项 official recommended（官方推荐包成员，市场按需安装）。
+  { id: 'balance', name: '@deepseek-ai/dsh-balance' },
+  { id: 'better-sidebar', name: 'dsh-better-sidebar' },
+  { id: 'change-review', name: 'dsh-change-review' },
+  { id: 'composer-dynamic-island', name: 'dsh-composer-dynamic-island' },
+  { id: 'conversation-tweaks', name: '@deepseek-ai/dsh-conversation-tweaks' },
+  { id: 'dock-settings', name: 'dsh-dock-settings' },
+  { id: 'dsh-navbar', name: '@vlln/dsh-navbar' },
+  { id: 'dsh-raw-html', name: 'dsh-raw-html' },
+  { id: 'dsh-session-manager', name: 'dsh-session-manager' },
+  { id: 'message-rewind', name: 'dsh-message-rewind' },
+  { id: 'mobile-fix', name: 'dsh-web-mobile-fix' },
+  { id: 'offpeak', name: 'dsh-offpeak' },
+  { id: 'picturereader', name: 'picturereader' },
+  { id: 'prompt-custom', name: '@deepseek-ai/dsh-prompt-custom' },
+  { id: 'soul-md', name: 'dsh-soul-md' },
+  // 分发分级：20 项 external（第三方/社区，市场或独立包按需安装）。
+  { id: 'agent-teams', name: '@nanmicoder/dsh-agent-teams' },
+  { id: 'computer-user', name: 'computer-user' },
+  { id: 'dsh-dafeiyu', name: 'dsh-dafeiyu' },
+  { id: 'dsh-feature-toggles', name: 'dsh-feature-toggles' },
+  { id: 'dsh-pet', name: 'dsh-pet' },
+  { id: 'dsh-pet-settings', name: 'dsh-pet-settings' },
+  { id: 'dsh-phone', name: 'dsh-phone' },
+  { id: 'dsh-stt', name: '@deepseek-ai/dsh-stt' },
+  { id: 'dsh-undo', name: 'dsh-undo-savepoint' },
+  { id: 'dsh-webui-prompt-optimizer', name: 'dsh-webui-prompt-optimizer' },
+  { id: 'dsh-whale-widget', name: 'dsh-whale-widget' },
+  { id: 'float-window', name: '@deepseek-ai/dsh-float-window' },
+  { id: 'font-custom', name: 'dsh-font-custom' },
+  { id: 'image-paste', name: 'dsh-image-paste' },
+  { id: 'meow-smooth', name: 'meow-smooth' },
+  { id: 'openclaw-bridge', name: '@deepseek-ai/dsh-openclaw-bridge' },
+  { id: 'plugin-wizard', name: 'dsh-plugin-wizard' },
+  { id: 'settings-groups', name: 'dsh-settings-groups' },
+  { id: 'side-session', name: '@dsh-external/dsh-side-session' },
+  { id: 'think-zh-expand-eac', name: 'dsh-think-zh-expand-eac' },
 ];
 
-// 清理退役内置插件在 profile 的所有残留（patch 行 / 包副本 / 依赖项）。
-// 内部函数：外部一律走带版本对齐门控的 retireRemovedBuiltinPluginsGated
-// （issue #74 —— 5.3.2 及以前 sidecar preBootSync 直调无门控版，门控被架空）。
-function retireRemovedBuiltinPlugins(profileDirP: string): void {
+// A package name alone is not provenance: users may reinstall retired plugins
+// from the community. Only an intact EAC copy stamp authorizes this migration.
+function managedRetiredCopy(profileDirP: string, name: string, dependency: unknown): string | null {
+  if (typeof dependency === 'string' && /^(?:file|link|workspace):/i.test(dependency)) return null;
+  const modules = path.join(profileDirP, 'node_modules');
+  const directory = path.join(modules, ...name.split('/'));
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(directory); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return null;
+  const expected = path.join(fs.realpathSync(modules), ...name.split('/'));
+  if (fs.realpathSync(directory).toLowerCase() !== expected.toLowerCase()) return null;
+  let rawStamp: string;
+  try { rawStamp = fs.readFileSync(path.join(directory, COPY_STAMP), 'utf8'); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+  let stamp: Record<string, unknown>;
+  try { stamp = JSON.parse(rawStamp); } catch { return null; }
+  if (!stamp || typeof stamp.v !== 'string' || !Number.isSafeInteger(stamp.f)
+    || (stamp.f as number) < 1 || !Number.isSafeInteger(stamp.b) || (stamp.b as number) < 0) return null;
+  // A partially removed managed package may already have lost package.json.
+  // Retaining the stamp until last makes that interrupted cleanup retryable.
+  let manifest: Record<string, unknown> | null = null;
+  try { manifest = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8')); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      if (error instanceof SyntaxError) return null;
+      throw error;
+    }
+  }
+  if (manifest && (manifest.name !== name || String(manifest.version ?? '') !== stamp.v)) return null;
+  return rawStamp;
+}
+
+function retiredPatchRows(value: unknown, id: string): Array<{ name?: unknown }> {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error('用户补丁必须是列表');
+  return value.flatMap((row) => {
+    if (!row || typeof row !== 'object') return [];
+    return [row, ...(Array.isArray(row.insert) ? row.insert : [])]
+      .filter((entry) => entry && typeof entry === 'object' && entry.id === id);
+  });
+}
+
+/** Only loader operations and their insert lists own IDs; nested config is user data. */
+function removeRetiredPatchRows(text: string, id: string): string {
+  const doc: Document = parseDocument(text, {
+    customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: (value: string) => value }],
+  });
+  if (!doc.contents && !doc.errors.length) return text;
+  if (doc.errors.length || !isSeq(doc.contents)) throw new Error('用户补丁 YAML 无法解析');
+  let changed = false;
+  doc.contents.items = doc.contents.items.filter((item) => {
+    if (!isMap(item)) return true;
+    const omit = (): false => {
+      if (item.commentBefore) doc.commentBefore = [doc.commentBefore, item.commentBefore].filter(Boolean).join('\n');
+      changed = true;
+      return false;
+    };
+    if (item.get('id') === id) return omit();
+    const insert = item.get('insert');
+    if (isSeq(insert)) {
+      insert.items = insert.items.filter((entry) => {
+        if (isMap(entry) && entry.get('id') === id) { changed = true; return false; }
+        return true;
+      });
+      if (insert.items.length === 0 && item.items.length === 1) return omit();
+    }
+    return true;
+  });
+  return changed ? doc.toString() : text;
+}
+
+function removeManagedRetiredCopy(directory: string, rawStamp: string): void {
+  // Do not let recursive removal erase our ownership proof before a locked file
+  // fails. Every child path comes from this verified package directory.
+  for (const entry of fs.readdirSync(directory)) {
+    if (entry !== COPY_STAMP) fs.rmSync(path.join(directory, entry), { recursive: true, force: true });
+  }
+  fs.unlinkSync(path.join(directory, COPY_STAMP));
+  try { fs.rmdirSync(directory); }
+  catch (error) {
+    try { fs.writeFileSync(path.join(directory, COPY_STAMP), rawStamp); } catch { /* retain original failure */ }
+    throw error;
+  }
+}
+
+function retireRemovedBuiltinPlugins(profileDirP: string): boolean {
   const patchFile = path.join(profileDirP, 'cordis.patch.yml');
-  for (const p of RETIRED_BUILTIN_PLUGINS) {
+  const packageFile = path.join(profileDirP, 'package.json');
+  let complete = true;
+  for (const plugin of RETIRED_BUILTIN_PLUGINS) {
     try {
-      if (fs.existsSync(patchFile)) {
-        const text = fs.readFileSync(patchFile, 'utf8');
-        const patched = removePluginFromPatch(text, p.id);
-        if (patched !== text) {
-          writeFileAtomic(patchFile, patched);
-          ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 行`);
+      let pkg: Record<string, any> = {};
+      try { pkg = JSON.parse(fs.readFileSync(packageFile, 'utf8')); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      const rawStamp = managedRetiredCopy(profileDirP, plugin.name, pkg.dependencies?.[plugin.name]);
+      if (rawStamp === null) continue;
+      let text: string | null = null;
+      try { text = fs.readFileSync(patchFile, 'utf8'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (text !== null) {
+        const rows = retiredPatchRows(parsePatchData(text), plugin.id);
+        // A same-id entry naming a different package belongs to the user.
+        if (rows.some((row) => typeof row.name === 'string' && row.name !== plugin.name)) continue;
+        const patched = removeRetiredPatchRows(text, plugin.id);
+        if (retiredPatchRows(parsePatchData(patched), plugin.id).length > 0) {
+          throw new Error(`无法安全移除退役插件行 ${plugin.id}`);
+        }
+        if (patched !== text) writeFileAtomic(patchFile, patched);
+      }
+      let changed = false;
+      if (pkg.dependencies && Object.hasOwn(pkg.dependencies, plugin.name)) {
+        delete pkg.dependencies[plugin.name];
+        changed = true;
+      }
+      const bundles = pkg?.dsh?.profile?.bundles;
+      if (Array.isArray(bundles)) {
+        const next = bundles.filter((entry: unknown) => entry !== plugin.name);
+        if (next.length !== bundles.length) {
+          pkg.dsh.profile.bundles = next;
+          changed = true;
         }
       }
-    } catch (err) {
-      ctx.log('boot', `清理退役内置插件 ${p.id} 行失败: ${String(((err as Error).message) || err)}`);
+      if (changed) writeFileAtomic(packageFile, JSON.stringify(pkg, null, 2) + '\n');
+      removeManagedRetiredCopy(path.join(profileDirP, 'node_modules', ...plugin.name.split('/')), rawStamp);
+      ctx.log('boot', `已清理受管退役插件 ${plugin.id}`);
+    } catch (error) {
+      complete = false;
+      ctx.log('boot', `清理退役插件 ${plugin.id} 未完成，下次启动重试: ${String((error as Error).message || error)}`);
     }
-    const pkgDir = path.join(profileDirP, 'node_modules', ...p.name.split('/'));
-    try {
-      if (fs.existsSync(pkgDir)) {
-        fs.rmSync(pkgDir, { recursive: true, force: true });
-        ctx.log('boot', `已清理退役内置插件 ${p.id} 的 profile 包副本`);
-      }
-    } catch (err) {
-      ctx.log('boot', `清理退役内置插件 ${p.id} 包失败: ${String(((err as Error).message) || err)}`);
-    }
-    try {
-      const pkgFile = path.join(profileDirP, 'package.json');
-      const pkg = JSON.parse(fs.readFileSync(pkgFile, 'utf8'));
-      if (pkg.dependencies && pkg.dependencies[p.name]) {
-        delete pkg.dependencies[p.name];
-        fs.writeFileSync(pkgFile, JSON.stringify(pkg, null, 2) + '\n');
-        ctx.log('boot', `已清理退役内置插件 ${p.id} 的 package.json 依赖`);
-      }
-    } catch { /* package.json 缺失/损坏则跳过 */ }
   }
+  return complete;
+}
+
+/**
+ * 从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里剥掉 `compat` 条目。
+ *
+ * 这是 `incompatibleBundlePackages()` 的落地点。为什么必须在启动时做而不是只在
+ * seed 生成时修：seed 是**构建产物**，用户装的安装包来自某一个固定构建；只要
+ * 那个构建的 seed 里带了 compat 行，用户机器上就必然崩 GUI。运行时兜底能覆盖
+ * 「已发布的坏 seed」与「用户 profile 里历史残留」两种情况。
+ *
+ * 只删 bundles / dependencies，**不删已解包的目录**：删目录会留下半装状态，
+ * 而且这些包本来就装不上（suite 的 installSkipReason 会拦），目录只会是空的
+ * 或早期手工残留。保留目录不影响启动（不在 bundles 就不会被 import）。
+ *
+ * 幂等；返回被剥掉的包名。fail-open：任何一步异常都只记日志，不阻断启动。
+ */
+export function stripIncompatibleProfileBundles(
+  profileDirP: string,
+  ctx: Pick<CompanionSyncCtx, 'log'>,
+): string[] {
+  const incompatible = incompatibleBundlePackages();
+  if (incompatible.size === 0) return [];
+  const packageFile = path.join(profileDirP, 'package.json');
+  let pkg: { dependencies?: Record<string, unknown>; dsh?: { profile?: { bundles?: unknown[] } } };
+  try {
+    pkg = JSON.parse(fs.readFileSync(packageFile, 'utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    return [];
+  }
+  const stripped: string[] = [];
+  const bundles = pkg?.dsh?.profile?.bundles;
+  if (Array.isArray(bundles)) {
+    const next = bundles.filter((entry) => {
+      if (typeof entry !== 'string' || !incompatible.has(entry)) return true;
+      stripped.push(entry);
+      return false;
+    });
+    if (next.length !== bundles.length) pkg.dsh!.profile!.bundles = next;
+  }
+  if (pkg.dependencies && typeof pkg.dependencies === 'object') {
+    for (const name of [...incompatible]) {
+      if (Object.hasOwn(pkg.dependencies, name)) {
+        delete pkg.dependencies[name];
+        if (!stripped.includes(name)) stripped.push(name);
+      }
+    }
+  }
+  if (stripped.length > 0) {
+    try {
+      writeFileAtomic(packageFile, JSON.stringify(pkg, null, 2) + '\n');
+      ctx.log('boot', `已从 profile 剥离 ${stripped.length} 个与官方内核不兼容的 bundle: ${stripped.join(', ')}（compat 条目不激活，否则整机 GUI 拒绝启动）`);
+    } catch (error) {
+      ctx.log('boot', `剥离不兼容 bundle 未完成，下次启动重试: ${String((error as Error)?.message || error)}`);
+    }
+  }
+  return stripped;
 }
 
 // 安全模式守卫：<home>/guard/safe-mode.json active 时，配套插件的 patch 行
@@ -557,7 +817,7 @@ function safeModeActive(): boolean {
 // 记录已对齐的应用版本，pluginTreeRetiredListHash 记录已对齐的清单内容：
 // 只比对版本会让同版本内新列入的退役条目永远清不到（5.1.0 实测踩坑）。
 function retiredListHash(): string {
-  return crypto.createHash('sha256').update(JSON.stringify(RETIRED_BUILTIN_PLUGINS)).digest('hex');
+  return crypto.createHash('sha256').update(JSON.stringify({ policy: 'managed-copy-v2', plugins: RETIRED_BUILTIN_PLUGINS })).digest('hex');
 }
 export function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
   let version = '';
@@ -579,15 +839,15 @@ export function retireRemovedBuiltinPluginsGated(profileDirP: string): void {
       ctx.log('boot', `已在本版本（${version}）对齐过内置插件树，跳过退役清理（用户调整优先）`);
       return;
     }
-    retireRemovedBuiltinPlugins(profileDirP);
+    if (!retireRemovedBuiltinPlugins(profileDirP)) return;
     const next = settings && typeof settings === 'object'
       ? { ...settings, pluginTreeAlignedVersion: version, pluginTreeRetiredListHash: hash }
       : { pluginTreeAlignedVersion: version, pluginTreeRetiredListHash: hash };
-    updater.saveSettings(c, next);
+    // saveSettings swallows write errors; the migration must observe durability.
+    writeFileAtomic(path.join(c.userDataDir, 'settings.json'), JSON.stringify(next, null, 2) + '\n');
     ctx.log('boot', `已在本版本（${version}）完成内置插件树对齐`);
   } catch (err) {
-    ctx.log('boot', '记录插件树对齐版本失败，按旧语义清理: ' + String(err));
-    retireRemovedBuiltinPlugins(profileDirP);
+    ctx.log('boot', '插件树对齐未完成，下次启动重试: ' + String(err));
   }
 }
 
@@ -598,7 +858,7 @@ export function syncCompanionPlugins(): void {
   // 安装形态（v5.4 单发行版双形态）：精简版只改「新行」默认启停，
   // 已有注册行不重写、用户选择优先（见 lib/desktop/install-profile.ts）。
   const installProfile = readInstallProfile(APP_ROOT);
-  if (installProfile === 'lite') ctx.log('boot', '安装形态 = 精简版：外围配套插件默认停用（设置 → 插件 → 管理 可随时启用）');
+  if (installProfile === 'lite') ctx.log('boot', '安装形态 = 精简版：随包插件均为核心集（默认启用），无默认停用项（设置 → 插件 → 管理 可自行启停）');
   try {
     const home = ctx.getDshHome() || path.join(os.homedir(), '.dsh');
     // 桌面专属 profile 必须先存在（未知 profile 不会被 dsh 自动初始化）。
@@ -655,7 +915,7 @@ export function syncCompanionPlugins(): void {
     fs.mkdirSync(path.join(profileDirP, 'node_modules'), { recursive: true });
     const pending: PendingRow[] = [];
     const removedIds = removedPluginIds();
-    // 市场残留预检的共享输入（循环外读一次）：34 个配套插件逐个 dupPreCheck
+    // 市场残留预检的共享输入（循环外读一次）：9 个随包配套插件逐个 dupPreCheck
     // 会把 profile package.json 与 cordis.patch.yml 各重读一遍（~68 次读）。
     // 迁移手术本身会改写这两个文件 —— 手术后的插件重读一次（按需失效）。
     let precheckPkg = readJsonFile(path.join(profileDirP, 'package.json'));
@@ -695,17 +955,21 @@ export function syncCompanionPlugins(): void {
         const dupPreCheck = (() => {
           try {
             const deps = precheckPkg && (precheckPkg.dependencies as Record<string, unknown> | undefined);
-            const spec = deps && deps[p.name];
-            if (spec && !String(spec).startsWith('link:') && !String(spec).startsWith('file:')) return true;
             const dsh = precheckPkg && (precheckPkg.dsh as Record<string, unknown> | undefined);
             const prof = dsh && (dsh.profile as Record<string, unknown> | undefined);
-            if (prof && Array.isArray(prof.bundles) && (prof.bundles as string[]).includes(p.name)) return true;
-            // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
-            // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
-            // 的启停状态，不是市场残留。否则 v4.4 首次向导的取消勾选会在同一启动
-            // 里被剥离后按注册表默认回写（dsh-dafeiyu 等默认启用插件被静默重新
-            // 启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:` 行堆积。
-            return patchHasForeignRows(precheckPatch, p.name);
+            const inBundles = !!(prof && Array.isArray(prof.bundles)
+              && (prof.bundles as string[]).includes(p.name));
+            return marketDuplicateEvidence({
+              name: p.name,
+              dependencySpec: deps ? deps[p.name] : undefined,
+              inBundles,
+              // 只认「非应用自写」的登记行：sync 的 insert 内层行、插件管理/向导
+              // togglePluginInPatch 写的（带「关闭」标记注释的）顶层行都是应用自己
+              // 的启停状态，不是市场残留。否则 v4.4 首次向导的取消勾选会在同一启动
+              // 里被剥离后按注册表默认回写（dsh-dafeiyu 等默认启用插件被静默重新
+              // 启用），且每次启动产生「剥离-回写」空转与孤儿 `- insert:` 行堆积。
+              foreignPatchRows: patchHasForeignRows(precheckPatch, p.name),
+            });
           } catch { return false; }
         })();
         if (dupPreCheck) {
@@ -747,23 +1011,9 @@ export function syncCompanionPlugins(): void {
         ctx.log('boot', '内置接管通知发送失败: ' + (err as Error).message);
       }
     }
-    // 内置皮肤：行 id 取皮肤包 skin.json 的 wiring.id（ui-skin-*）。
-    // 禁用的皮肤黑名单（因兼容性问题或崩溃而禁用）。
-    const DISABLED_SKINS = ['maid-atelier'];
-    for (const entry of fs.readdirSync(SKINS_DIR, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      // 跳过禁用的皮肤
-      if (DISABLED_SKINS.includes(entry.name)) continue;
-      const src = path.join(SKINS_DIR, entry.name);
-      const pkg = readJsonFile(path.join(src, 'package.json'));
-      if (!pkg || typeof pkg.name !== 'string' || !pkg.name.includes('/')) continue;
-      const skin = readJsonFile(path.join(src, 'skin.json'));
-      const wiring = skin && (skin.wiring as Record<string, unknown> | undefined);
-      const rowId = wiring && typeof wiring.id === 'string' ? wiring.id : '';
-      if (!/^ui-skin-[\w-]+$/.test(rowId)) continue;
-      copyPluginPackage(profileDirP, src, pkg.name);
-      pending.push({ id: rowId, name: pkg.name, disabled: true });
-    }
+    // M2/#415：旧版「assets/skins 目录 → profile 皮肤行」播种已退役。
+    // 皮肤平台自 EAC-CORE-SHELL-01 外迁为市场可选包（按需安装，安装即写
+    // profile bundles）；无皮肤激活 = 宿主原生观感。
     // 内置插件清单标记：插件市场据此把目录里的同名插件标为「已内置」并
     // 拒绝重复安装 —— 内置包每次启动都被重新同步，市场覆盖安装会产生
     // duplicate loader entry / 模块双实例，必须从源头拦截。
@@ -778,6 +1028,11 @@ export function syncCompanionPlugins(): void {
     } catch (err) {
       ctx.log('boot', '写入内置插件清单失败: ' + (err as Error).message);
     }
+    // compat 条目不激活：官方 0.2.x 上它们等不到 EAC 分叉专有服务，web boot 对
+    // 未激活 entry 是 fail-loud 的 —— 留在 bundles 里就等于把整机 GUI 弄挂。
+    // 必须在启动**之前**剥离，放在 ensurePluginHostDeps 之前或之后都可（两者
+    // 互不影响），这里紧邻其它 profile 修复步骤，便于日后再加同类兜底。
+    stripIncompatibleProfileBundles(profileDirP, ctx);
     ensurePluginHostDeps(profileDirP);
     // 配套插件的宿主依赖兜底（真实目录，非链接）。rc.2 起 dsh-app-boot 首启会
 // 重建 <home>/profiles/node_modules 共享层：dev 时代指向宿主工程的符号链接
@@ -828,9 +1083,51 @@ function ensurePluginHostDeps(profileDirP: string): void {
   // 该插件优雅降级为仅页面内提醒 —— 这里落位让系统推送开箱即用）。
   ensureCopy('web-push', 0);
   // cosmokit 只在共享层没有时兜底（避免遮蔽内核闭包内的配套版本）。
-  const sharedCosmo = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules', '@deepseek-ai', 'cosmokit');
+  const sharedRoot = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules');
+  const sharedCosmo = path.join(sharedRoot, '@deepseek-ai', 'cosmokit');
   if (!fs.existsSync(sharedCosmo)) {
     ensureCopy(path.join('@deepseek-ai', 'cosmokit'), 0);
+  }
+  // 与 cosmokit 同策：共享层已有就不落位，避免遮蔽内核闭包内的配套版本；
+  // 全新隔离 home（共享层尚未由内核重建）时兜底落位 —— 下游是声明
+  // schemastery 依赖的插件（scoped 与裸名两种，见冲突审计）。
+  const sharedSchemastery = path.join(sharedRoot, '@deepseek-ai', 'schemastery');
+  if (!fs.existsSync(sharedSchemastery)) {
+    ensureCopy(path.join('@deepseek-ai', 'schemastery'), 0);
+  }
+  // 共享层的裸名 schemastery 自身带 `cosmokit` 与 `@standard-schema/spec` 两个
+  // 运行时依赖，而内核重建该层时只放它自己、不放这两个 —— 于是
+  //   require('cosmokit') from profiles/node_modules/schemastery/lib/index.cjs
+  // 直接 MODULE_NOT_FOUND，**整个 web boot 起不来**（端口都不监听）。
+  // 实测 2026-10-21：`dsh --profile web-desktop --dump-config-schema` 报
+  //   Error: Cannot find module 'cosmokit'
+  // 静默地让 better-sidebar 在启动审计里只显示 "failed to import"（原始异常
+  // 被上游压成字符串，不落日志），排查成本极高。
+  // 修法：只在这两个依赖缺失时补进共享层（bare 与 scoped 两种拼写都补，
+  // schemastery 声明的是 bare `cosmokit`）。
+  for (const [rel, alias] of [
+    ['@deepseek-ai/cosmokit', 'cosmokit'],
+    ['@standard-schema/spec', path.join('@standard-schema', 'spec')],
+  ] as const) {
+    const scopedDir = path.join(sharedRoot, ...rel.split('/'));
+    if (!fs.existsSync(path.join(scopedDir, 'package.json'))) {
+      ensureCopy(rel, 0);
+    }
+    if (alias !== rel) {
+      const aliasDir = path.join(sharedRoot, ...alias.split('/'));
+      if (!fs.existsSync(path.join(aliasDir, 'package.json'))) {
+        const src = path.join(APP_ROOT, 'node_modules', ...rel.split('/'));
+        if (fs.existsSync(path.join(src, 'package.json'))) {
+          try {
+            fs.mkdirSync(path.dirname(aliasDir), { recursive: true });
+            fs.cpSync(src, aliasDir, { recursive: true });
+            ctx.log('boot', `已落位共享层依赖别名 ${alias} -> ${rel}`);
+          } catch (err) {
+            ctx.log('boot', `共享层依赖别名落位失败 ${alias}: ` + String((err as Error)?.message || err));
+          }
+        }
+      }
+    }
   }
 }
 
@@ -922,6 +1219,41 @@ function ensurePluginHostDeps(profileDirP: string): void {
       else patch = patch.replace(/\s*$/, '\n') + block;
       changed = true;
     }
+    // M3/#416 L3：外部层默认禁用。新装进 profile bundles 的第三方包（既非
+    // 内核骨架，也不在 L1/L2 分级）若 patch 里还没有登记点，就补写「编辑型
+    // 关闭行」—— 与插件管理页开关、市场安装后的落盘是同一手术；已有登记点
+    // （用户启用过的裸行、市场写入的行）一律保留，用户选择优先。这样
+    // `dsh plugin add` 这类 CLI 安装路径也落在「装完默认禁用、手动启用」的
+    // 语义内。安全模式不写（与配套行一致）；分级表缺失时规划为空（fail-open）。
+    // ISO-005：随包配套插件已由本函数负责预装，不进这一步。规划的 id 空间是
+    // bundle 包名的短名（`@deepseek-ai/dsh-file-changes` → `dsh-file-changes`），
+    // 与配套行的行 id（`file-changes`）不同名，因此必须把包名/行 id/canonical
+    // 三种形式都显式排除 —— 否则随包插件会被写一条 `disabled: true` 行，既把
+    // 内置包误标成「外部/默认禁用」，又与包自己的补丁层形成 duplicate loader
+    // entry id 风险。
+    const companionBundleIds = COMPANION_PLUGINS.flatMap((p) => [
+      p.name,
+      p.id,
+      canonicalBundleId(p.name),
+    ]);
+    const registeredIds = registeredPatchEntryIds(patch);
+    const externalDefaults = inSafeMode ? [] : externalDefaultDisabledPlan({
+      bundles: bundled,
+      bundleIdentities: resolveBundleIdentities(profileDirP, bundled.filter((name): name is string => typeof name === 'string')),
+      isRegistered: (id: string) => registeredIds.has(id),
+      distributionClasses: PLUGIN_DISTRIBUTION_CLASSES,
+      builtinIds: DISTRIBUTION_BUILTIN_PLUGIN_IDS,
+      recommendedIds: RECOMMENDED_PACK_PLUGIN_IDS,
+      skipIds: companionBundleIds,
+    });
+    if (externalDefaults.length) {
+      patch = toggleBundleInPatch(patch, {
+        ok: true, entries: externalDefaults.map((entry) => ({ ...entry, disabled: false })),
+        entryIds: externalDefaults.map((entry) => entry.id),
+      }, false);
+      changed = true;
+      for (const ext of externalDefaults) ctx.log('boot', `外部插件默认关闭（可在「设置 → 插件 → 管理」启用）: ${ext.id}`);
+    }
     if (changed) {
       // 顺带清理历史遗留的孤儿 `- insert:` 行（v4.2/4.3 每次启动「剥离-回写」
       // 残留的空块；对 cordis 无效果，仅文件卫生）。强制一次写盘，之后幂等。
@@ -941,8 +1273,6 @@ function ensurePluginHostDeps(profileDirP: string): void {
       writeFileAtomic(patchFile, patch);
       ctx.log('boot', '已同步配套插件/皮肤到 web profile: ' + pending.map((p) => p.id).join(', '));
     }
-    // 迁移带来的皮肤选择（migrateFromSharedWebProfile 记录）在此落位。
-    ctx.applyLegacySkinChoice();
   } catch (err) {
     ctx.log('boot', '同步配套插件失败: ' + (err as Error).message);
   }

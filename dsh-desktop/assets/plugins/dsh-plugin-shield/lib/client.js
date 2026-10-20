@@ -5,7 +5,7 @@
  *   - 快照：立即快照 / 列表（时间 · 原因 · 插件行数）/ 一键回滚
  *   - 健康检查：静态体检（模块遮蔽 / patch 行 / junction 归属 / 高危扫描）
  *     + 一键修复（只动插件与配置层，绝不碰内核与用户数据）
- *   - 事故报告：守护启动自动回滚/修复的记录，可查看与标记解决
+ *   - 事故报告：读取已有记录并标记解决；不据此推断启动健康
  *
  * All actions ride the window.dshDesktop.guard IPC bridge (desktop shell's
  * plugin-guard.js engine). Outside the desktop shell the section renders a
@@ -57,7 +57,7 @@ window.__ModuleLoader__.load({
     var NS = "pluginShield";
     var zh = {
       nav: "插件保护",
-      intro: "桌面端内置的插件安全网（融合 dsh-plugin-guard / dsh-web-plugin-manager / dsh-plugin-healthcheck 并内置）：每次安装与启动前自动快照，启动失败自动体检修复、必要时回滚到最后良好快照，全程留事故报告。此页面用于手动快照、回滚与体检。",
+      intro: "此页面提供插件配置的手动快照、静态检查、修复及已有事故报告。v6 不提供自动启动快照或插件启动失败自动修复；空列表不代表启动健康。手动回滚需明确确认，之后会停止并重启 Web 服务。",
       needDesktop: "插件保护中心需要 Deepseek Harness EAC 桌面端运行（此页面在浏览器/CLI 模式下只读展示）。",
       statProfile: "受保护 profile",
       statSnapshots: "快照份数",
@@ -71,28 +71,39 @@ window.__ModuleLoader__.load({
       snapshotsTitle: "快照",
       snapshotDone: "已创建快照",
       restore: "回滚到此快照",
-      restoreConfirm: "回滚将把 profile 的插件配置（package.json / 锁文件 / cordis.patch.yml）恢复到该快照时刻，之后重启 Web 服务生效。确定继续？",
-      restoreRunning: "服务正在运行，请先重启 Web 服务（或关掉重开客户端）再回滚。",
-      restored: "已回滚，重启 Web 服务后生效",
+      restoreConfirm: "将中断当前任务，停止 Web 服务，恢复 package.json、pnpm-lock.yaml、pnpm-workspace.yaml、cordis.patch.yml 并重启。不还原插件包、会话或 Skill。页面将重新载入，可重新打开本页查看结果。",
+      restoreRunning: "服务正在运行，当前界面不能执行回滚；本次未改动配置。",
+      restored: "配置已回滚，Web 服务已重新启动",
+      confirmRestore: "确认回滚并重启",
+      cancelRestore: "取消",
+      restoreResult: "最近一次回滚",
+      restoreRecovered: "回滚失败；原配置已恢复并重新启动。",
+      restoreFailed: "回滚未完成，请检查错误与备份。",
+      restorePending: "回滚进行中，请勿重复操作；完成后页面将重新载入。",
+      restoreInterrupted: "上次回滚没有完成记录；配置状态未确认，请先检查备份。",
+      restoreCancelled: "回滚因应用退出而取消。",
+      backup: "操作前备份",
       findingsTitle: "体检发现",
-      findingsClean: "一切正常：模块遮蔽 / patch 行 / junction 归属 / 高危静态扫描均无发现。",
+      findingsClean: "本次静态检查未发现模块遮蔽 / patch 行 / junction 归属 / 高危扫描问题；不涵盖插件运行或全部安全风险。",
       fixable: "可修复",
       manual: "需人工处理",
       repaired: "已应用修复",
       repairedNone: "没有可自动修复的项",
       incidentsTitle: "事故报告",
-      incidentsEmpty: "（暂无事故报告 —— 守护启动一切正常）",
+      incidentsEmpty: "（暂无未解决事故报告；不代表已验证启动健康）",
       view: "查看",
       resolve: "标记解决",
       close: "关闭",
       busy: "处理中…",
+      actionFailed: "操作失败：",
+      invalidResponse: "保护中心返回了不完整的结果",
       reason: "原因",
       pluginRows: "插件行",
       files: "文件"
     };
     var en = {
       nav: "Plugin Guard",
-      intro: "Built-in plugin safety net (fuses dsh-plugin-guard / dsh-web-plugin-manager / dsh-plugin-healthcheck): snapshots before every install and boot, auto-repairs and rolls back failed boots, and files incident reports. Use this page for manual snapshots, rollback and health checks.",
+      intro: "This page provides manual plugin-configuration snapshots, static checks, repairs and existing incident reports. v6 does not provide automatic boot snapshots or automatic repair of plugin boot failures. Empty lists do not establish boot health. Manual rollback requires confirmation and stops/restarts the web service.",
       needDesktop: "The guard center needs the Deepseek Harness EAC desktop shell (read-only outside it).",
       statProfile: "protected profile",
       statSnapshots: "snapshots",
@@ -106,21 +117,32 @@ window.__ModuleLoader__.load({
       snapshotsTitle: "Snapshots",
       snapshotDone: "Snapshot created",
       restore: "Roll back here",
-      restoreConfirm: "Rollback restores the profile's plugin configuration (package.json / lockfile / cordis.patch.yml) to this snapshot, then restart the web service. Continue?",
-      restoreRunning: "The web service is running — restart it (or reopen the app) before rolling back.",
-      restored: "Rolled back — restart the web service to apply",
+      restoreConfirm: "This interrupts active tasks, stops the web service, restores package.json, pnpm-lock.yaml, pnpm-workspace.yaml and cordis.patch.yml, then restarts. Plugin binaries, sessions and skills are not restored. The page reloads; reopen this panel for the result.",
+      restoreRunning: "The web service is running, so rollback is unavailable from this page. No configuration was changed.",
+      restored: "Configuration restored and web service restarted",
+      confirmRestore: "Confirm rollback and restart",
+      cancelRestore: "Cancel",
+      restoreResult: "Latest rollback",
+      restoreRecovered: "Rollback failed; the original configuration was restored and restarted.",
+      restoreFailed: "Rollback did not complete. Check the error and backup.",
+      restorePending: "Rollback is running. Do not repeat it; the page will reload.",
+      restoreInterrupted: "The last rollback has no completion record. Configuration is unconfirmed; inspect the backup first.",
+      restoreCancelled: "Rollback was cancelled because the application exited.",
+      backup: "Pre-operation backup",
       findingsTitle: "Findings",
-      findingsClean: "All clear: module shadowing / patch rows / junction ownership / static threat scan found nothing.",
+      findingsClean: "This static check found no module-shadowing / patch-row / junction-ownership / threat-scan issues. It does not verify plugin execution or all security risks.",
       fixable: "fixable",
       manual: "manual",
       repaired: "Repairs applied",
       repairedNone: "Nothing auto-repairable",
       incidentsTitle: "Incidents",
-      incidentsEmpty: "(no incidents — guarded boots are all healthy)",
+      incidentsEmpty: "(no open incident reports; boot health has not been established)",
       view: "View",
       resolve: "Resolve",
       close: "Close",
       busy: "Working…",
+      actionFailed: "Operation failed: ",
+      invalidResponse: "The guard center returned an incomplete result",
       reason: "reason",
       pluginRows: "plugin rows",
       files: "files"
@@ -153,6 +175,16 @@ window.__ModuleLoader__.load({
       var incidentState = react.useState(null);
       var incident = incidentState[0];
       var setIncident = incidentState[1];
+      var errorState = react.useState(null);
+      var error = errorState[0];
+      var setError = errorState[1];
+
+      var confirmationState = react.useState(null);
+      var confirmation = confirmationState[0];
+      var setConfirmation = confirmationState[1];
+      var restoreState = react.useState(null);
+      var restoreOutcome = restoreState[0];
+      var setRestoreOutcome = restoreState[1];
 
       var call = function (action, value) {
         if (!bridge) return Promise.resolve({ ok: false, error: "no-bridge" });
@@ -161,9 +193,11 @@ window.__ModuleLoader__.load({
 
       var load = react.useCallback(function () {
         if (!bridge) { setData({ status: "no-bridge" }); return; }
+        setError(null);
+        setRestoreOutcome(null);
         setData({ status: "loading" });
         call("status").then(function (r) {
-          if (r && r.ok) setData({ status: "ready", profile: r.profile, snapshots: r.snapshots || [], incidents: r.incidents || [], lastGood: r.lastGood || null });
+          if (r && r.ok) setData({ status: "ready", profile: r.profile, snapshots: r.snapshots || [], incidents: r.incidents || [], lastGood: r.lastGood || null, lastRestore: r.lastRestore || null, restoreInProgress: r.restoreInProgress === true });
           else setData({ status: "error", error: (r && r.error) || "failed" });
         }).catch(function (e) { setData({ status: "error", error: String(e) }); });
       }, [bridge]);
@@ -178,47 +212,62 @@ window.__ModuleLoader__.load({
         return h("div", { className: "__sh_root" }, h("p", { className: "__sh_err" }, String(data.error)));
       }
 
+      var perform = function (action, value, done, busyKey) {
+        setBusy(busyKey || action);
+        setError(null);
+        return Promise.resolve().then(function () { return call(action, value); }).then(function (r) {
+          if (action === "restore" && r && ["succeeded", "failed", "cancelled", "pending"].indexOf(r.phase) >= 0) setRestoreOutcome(r);
+          if (!r || r.ok !== true) throw new Error(r && r.error === "service-running" ? t("restoreRunning") : (r && r.error) || t("invalidResponse"));
+          done(r);
+        }).catch(function (e) {
+          setError(t("actionFailed") + String((e && e.message) || e));
+        }).finally(function () { setBusy(null); });
+      };
       var doSnapshot = function () {
-        setBusy("snapshot");
-        call("snapshot", "manual").then(function () { setBusy(null); load(); }).catch(function () { setBusy(null); });
+        perform("snapshot", "manual", function (r) {
+          if (!r.snapshot || typeof r.snapshot.id !== "string" || !r.snapshot.id) throw new Error(t("invalidResponse"));
+          load();
+        });
       };
       var doCheck = function () {
-        setBusy("check");
         setReport(null);
-        call("check").then(function (r) {
-          setBusy(null);
-          if (r && r.ok) setReport(r.report || { findings: [] });
-        }).catch(function () { setBusy(null); });
+        perform("check", undefined, function (r) {
+          if (!r.report || !Array.isArray(r.report.findings)) throw new Error(t("invalidResponse"));
+          setReport(r.report);
+        });
       };
       var doRepair = function () {
-        setBusy("repair");
-        call("repair").then(function (r) {
-          setBusy(null);
-          setReport({ repaired: (r && r.applied) || [], at: new Date().toISOString() });
-        }).catch(function () { setBusy(null); });
+        setReport(null);
+        perform("repair", undefined, function (r) {
+          if (!Array.isArray(r.applied)) throw new Error(t("invalidResponse"));
+          setReport({ repaired: r.applied, at: new Date().toISOString() });
+        });
       };
       var doRestore = function (id) {
-        if (!window.confirm(t("restoreConfirm"))) return;
-        setBusy("restore:" + id);
-        call("restore", id).then(function (r) {
-          setBusy(null);
-          if (r && r.ok) window.alert(t("restored"));
-          else if (r && r.error === "service-running") window.alert(t("restoreRunning"));
-          else window.alert(String((r && r.error) || "failed"));
-        }).catch(function () { setBusy(null); });
+        setConfirmation({ id: id });
+        setError(null);
+      };
+      var confirmRestore = function () {
+        if (!confirmation || busy || data.restoreInProgress) return;
+        var id = confirmation.id;
+        setConfirmation(null);
+        setReport(null);
+        perform("restore", id, function (r) {
+          if (r.phase !== "succeeded" || r.code !== "restore-succeeded") throw new Error(t("invalidResponse"));
+        }, "restore:" + id);
       };
       var openIncident = function (id) {
-        setBusy("incident:" + id);
-        call("incident", id).then(function (r) {
-          setBusy(null);
-          if (r && r.ok) setIncident({ id: id, content: r.content });
-        }).catch(function () { setBusy(null); });
+        perform("incident", id, function (r) {
+          if (typeof r.content !== "string") throw new Error(t("invalidResponse"));
+          setIncident({ id: id, content: r.content });
+        }, "incident:" + id);
       };
       var resolveIncident = function (id) {
-        setBusy("resolve:" + id);
-        call("resolve-incident", id).then(function () { setBusy(null); setIncident(null); load(); }).catch(function () { setBusy(null); });
+        perform("resolve-incident", id, function () { setIncident(null); load(); }, "resolve:" + id);
       };
 
+      var locked = !!busy || !!confirmation || data.restoreInProgress;
+      var latestRestore = restoreOutcome || data.lastRestore;
       var findings = report && report.findings ? report.findings : null;
       var repairedList = report && report.repaired ? report.repaired : null;
 
@@ -231,12 +280,32 @@ window.__ModuleLoader__.load({
           h("div", { className: "__sh_card" }, h("div", { className: "__sh_cardk" }, t("statIncidents")), h("div", { className: "__sh_cardv" }, String(data.incidents.length)))
         ),
         h("div", { className: "__sh_actions" },
-          h("button", { className: "__sh_btn __sh_btnPrimary", disabled: !!busy, onClick: doSnapshot }, busy === "snapshot" ? t("busy") : t("snapshotNow")),
-          h("button", { className: "__sh_btn", disabled: !!busy, onClick: doCheck }, busy === "check" ? t("busy") : t("check")),
-          h("button", { className: "__sh_btn", disabled: !!busy, onClick: doRepair }, busy === "repair" ? t("busy") : t("repair")),
-          h("button", { className: "__sh_btn", disabled: !!busy, onClick: load }, t("refresh"))
+          h("button", { className: "__sh_btn __sh_btnPrimary", disabled: locked, onClick: doSnapshot }, busy === "snapshot" ? t("busy") : t("snapshotNow")),
+          h("button", { className: "__sh_btn", disabled: locked, onClick: doCheck }, busy === "check" ? t("busy") : t("check")),
+          h("button", { className: "__sh_btn", disabled: locked, onClick: doRepair }, busy === "repair" ? t("busy") : t("repair")),
+          h("button", { className: "__sh_btn", disabled: locked, onClick: load }, t("refresh"))
         ),
 
+        error ? h("p", { className: "__sh_err", role: "alert" }, error) : null,
+        confirmation ? h("div", { className: "__sh_finding", role: "alertdialog", "aria-label": t("confirmRestore") },
+          h("p", null, t("restoreConfirm")),
+          h("p", { className: "__sh_fcode" }, confirmation.id),
+          h("div", { className: "__sh_actions" },
+            h("button", { className: "__sh_btn __sh_btnDanger", disabled: !!busy || data.restoreInProgress, onClick: confirmRestore }, t("confirmRestore")),
+            h("button", { className: "__sh_btn", disabled: !!busy, onClick: function () { setConfirmation(null); } }, t("cancelRestore"))
+          )
+        ) : null,
+        busy && busy.indexOf("restore:") === 0 ? h("p", { className: "__sh_hint", role: "status" }, t("restorePending")) : null,
+        latestRestore ? h("div", { className: "__sh_finding", role: latestRestore.phase === "failed" ? "alert" : "status" },
+          h("h3", { className: "__sh_h3" }, t("restoreResult")),
+          h("p", { className: latestRestore.phase === "failed" ? "__sh_err" : "__sh_hint" },
+            latestRestore.phase === "succeeded" ? t("restored") :
+            latestRestore.phase === "cancelled" ? t("restoreCancelled") :
+            latestRestore.phase === "pending" ? t(data.restoreInProgress ? "restorePending" : "restoreInterrupted") :
+            latestRestore.recovered === true ? t("restoreRecovered") : t("restoreFailed")),
+          h("p", { className: "__sh_fcode" }, fmtTime(latestRestore.at) + " · " + latestRestore.code),
+          latestRestore.backupId ? h("p", { className: "__sh_fcode" }, t("backup") + ": " + latestRestore.backupId) : null
+        ) : null,
         findings ? h("div", null,
           h("h3", { className: "__sh_h3" }, t("findingsTitle")),
           findings.length === 0 ? h("p", { className: "__sh_ok" }, t("findingsClean")) :
@@ -265,7 +334,7 @@ window.__ModuleLoader__.load({
                 ),
                 h("button", {
                   className: "__sh_btn __sh_btnDanger",
-                  disabled: !!busy,
+                  disabled: locked,
                   onClick: function () { doRestore(s.id); }
                 }, busy === "restore:" + s.id ? t("busy") : t("restore"))
               );
@@ -284,14 +353,14 @@ window.__ModuleLoader__.load({
                         h("pre", { className: "__sh_pre" }, incident.content),
                         h("div", { className: "__sh_actions", style: { marginTop: 6 } },
                           h("button", { className: "__sh_btn", onClick: function () { setIncident(null); } }, t("close")),
-                          h("button", { className: "__sh_btn", disabled: !!busy, onClick: function () { resolveIncident(it.id); } }, busy === "resolve:" + it.id ? t("busy") : t("resolve"))
+                          h("button", { className: "__sh_btn", disabled: locked, onClick: function () { resolveIncident(it.id); } }, busy === "resolve:" + it.id ? t("busy") : t("resolve"))
                         )
                       )
                     : null
                 ),
                 incident && incident.id === it.id ? null : h("button", {
                   className: "__sh_btn",
-                  disabled: !!busy,
+                  disabled: locked,
                   onClick: function () { openIncident(it.id); }
                 }, busy === "incident:" + it.id ? t("busy") : t("view"))
               );

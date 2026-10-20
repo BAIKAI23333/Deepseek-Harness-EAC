@@ -2,21 +2,25 @@
   "schemaVersion": 1,
   "manifest": ".sync/plugins.json",
   "schema": ".sync/plugins.schema.json",
+  "pluginDistribution": {
+    "enabled": true,
+    "manifest": ".sync/plugin-distribution.json",
+    "schema": ".sync/plugin-distribution.schema.json",
+    "inventoryHistory": ".sync/plugin-inventory-history.json",
+    "sources": "dsh-desktop/assets/SOURCES.json",
+    "recommendedPack": ".sync/packs/desktop-recommended.pack.json",
+    "packSchema": "docs/schemas/feature-pack-pack.json",
+    "expectedCounts": {
+      "builtin": 11,
+      "recommended": 15,
+      "external": 20
+    }
+  },
   "inventoryRoots": [
     {
       "kind": "plugin",
       "path": "dsh-desktop/assets/plugins",
       "manifestKey": "plugins"
-    },
-    {
-      "kind": "skin",
-      "path": "dsh-desktop/assets/skins",
-      "manifestKey": "skins"
-    },
-    {
-      "kind": "sdk-plugin",
-      "path": "dsh-desktop/assets/sdk-plugins",
-      "manifestKey": "sdkPlugins"
     }
   ],
   "allowedClasses": [
@@ -42,18 +46,12 @@
   "owners": {
     "desktop-plugins": [
       "dsh-desktop/assets/plugins/"
-    ],
-    "desktop-skins": [
-      "dsh-desktop/assets/skins/"
-    ],
-    "desktop-sdk": [
-      "dsh-desktop/assets/sdk-plugins/"
     ]
   },
   "runtimeUpdates": {
     "defaultAllowed": false,
     "requiresExplicitSource": true,
-    "legacySourceCount": 12,
+    "legacySourceCount": 1,
     "sourceMapMustBeOneToOne": true
   },
   "forbiddenTrackedNames": [

@@ -9,12 +9,10 @@
 //   chenw275-wq/dsh-plugin-healthcheck → 静态体检（模块遮蔽 / patch 行 / 高危
 //                                    静态扫描），绝不执行插件代码
 //
-// 与三个独立插件不同，这里跑在 Electron 主进程里：
-//   · 快照/回滚发生在「无服务进程持锁」的窗口期（重启间隙），不撞 Windows
-//     文件锁；
-//   · 守护启动直接包在 dsh web 的拉起链路上：起不来 → 体检 → 自动修复 →
-//     重试 → 仍失败回滚到最后良好快照 → 再试 → 仍失败落事故报告并通知；
-//   · junction 归属守卫（原生 dsh 共存，见 checkJunctionOwnership）。
+// 运行在桌面 L2 sidecar：宿主负责在服务进程退出后调用配置回滚，并编排重启。
+// prepareRestore 只读取并校验选定快照；apply 强制备份当前配置，undo 用于
+// 本次操作失败后的还原。v6 不把自动快照、自动修复或回滚接入启动链。
+// junction 归属守卫另见 junctionFindings / repairJunctions。
 //
 // 原则（对齐 healthcheck 的 HARD RULE）：只动插件层与配置层
 //（cordis.patch.yml / package.json / node_modules 里的遮蔽拷贝），
@@ -81,9 +79,24 @@ interface Finding {
   fixable: boolean;
 }
 
+type RestoreCode = 'restore-in-progress' | 'restore-succeeded' | 'restore-cancelled' | 'invalid-snapshot'
+  | 'service-stop-unconfirmed' | 'restore-apply-failed' | 'restore-start-failed'
+  | 'restore-recovery-stop-unconfirmed' | 'restore-undo-failed' | 'restore-recovery-start-failed'
+  | 'restore-status-write-failed';
+interface RestoreOutcome {
+  snapshotId: string;
+  at: string;
+  phase: 'pending' | 'succeeded' | 'failed' | 'cancelled';
+  code: RestoreCode;
+  ok: boolean;
+  backupId?: string;
+  recovered?: boolean;
+  configurationRestored?: boolean;
+}
 interface GuardState {
   lastGood?: string | null;
   lastGoodAt?: string;
+  restores?: Record<string, RestoreOutcome>;
 }
 
 interface BootAttribution {
@@ -92,10 +105,27 @@ interface BootAttribution {
   rowId: string | null;
 }
 
+interface RestoreResult {
+  ok: boolean;
+  restored?: string[];
+  removed?: string[];
+  backupId?: string;
+  recovered?: boolean;
+  error?: string;
+}
+
+interface PreparedRestore {
+  apply(): RestoreResult;
+  undo(): RestoreResult;
+}
+
 interface GuardApi {
   snapshot(reason: string): SnapshotMeta | null;
   listSnapshots(): SnapshotMeta[];
-  restore(id: string): { ok: boolean; restored?: string[]; error?: string };
+  prepareRestore(id: string): PreparedRestore;
+  lastRestore(): RestoreOutcome | null;
+  recordRestore(outcome: RestoreOutcome): void;
+  restore(id: string): RestoreResult;
   markGood(id: string): void;
   lastGoodSnapshot(): SnapshotMeta | null;
   healthCheck(): { at: string; profile: string; findings: Finding[] };
@@ -185,8 +215,15 @@ function createGuard(opts: GuardOpts): GuardApi {
       const out: SnapshotMeta[] = [];
       for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
-        const meta = readJson(path.join(root, entry.name, 'meta.json'), null);
-        if (!meta || !Array.isArray(meta.files) || meta.files.length === 0) continue;
+        const metaFile = path.join(root, entry.name, 'meta.json');
+        let metaStat: fs.Stats;
+        try { metaStat = fs.lstatSync(metaFile); } catch { continue; }
+        if (!metaStat.isFile() || metaStat.isSymbolicLink()) continue;
+        const meta = readJson(metaFile, null);
+        if (!meta || meta.id !== entry.name || !/^[a-zA-Z0-9][\w.-]*$/.test(entry.name)
+          || !Array.isArray(meta.files) || meta.files.length === 0
+          || meta.files.some((name: unknown) => typeof name !== 'string' || !GUARD_FILES.includes(name))
+          || new Set(meta.files).size !== meta.files.length) continue;
         out.push(meta);
       }
       out.sort((a, b) => String(b.id).localeCompare(String(a.id)));
@@ -205,33 +242,171 @@ function createGuard(opts: GuardOpts): GuardApi {
     } catch { /* 清理失败不影响主流程 */ }
   }
 
-  function restore(id: string): { ok: boolean; restored?: string[]; error?: string } {
-    try {
-      if (!/^[\w.-]+$/.test(String(id || ''))) return { ok: false, error: 'bad snapshot id' };
-      const snapDir = path.join(rollbacksDir(), String(id));
-      if (!fs.existsSync(snapDir)) return { ok: false, error: 'snapshot not found' };
-      const dir = profileDir();
-      fs.mkdirSync(dir, { recursive: true });
-      // 回滚前给当前状态留一份「回滚前」快照，反悔有路。
-      snapshot('pre-restore:' + id);
-      const restored: string[] = [];
+  function prepareRestore(id: string): PreparedRestore {
+    if (typeof id !== 'string' || !/^[a-zA-Z0-9][\w.-]*$/.test(id)) throw new Error('bad snapshot id');
+    const snapDir = path.join(rollbacksDir(), id);
+    const dir = profileDir();
+    const sourceStat = fs.lstatSync(snapDir);
+    if (!sourceStat.isDirectory() || sourceStat.isSymbolicLink()) throw new Error('unsafe snapshot directory');
+    const metaFile = path.join(snapDir, 'meta.json');
+    const metaStat = fs.lstatSync(metaFile);
+    if (!metaStat.isFile() || metaStat.isSymbolicLink()) throw new Error('unsafe snapshot manifest');
+    const meta = readJson(metaFile, null);
+    if (!meta || meta.id !== id || !Array.isArray(meta.files) || meta.files.length === 0
+      || meta.files.some((name: unknown) => typeof name !== 'string' || !GUARD_FILES.includes(name))
+      || new Set(meta.files).size !== meta.files.length) throw new Error('invalid snapshot manifest');
+
+    const readConfig = (root: string): Map<string, Buffer | null> => {
+      const result = new Map<string, Buffer | null>();
       for (const name of GUARD_FILES) {
-        const src = path.join(snapDir, name);
-        if (!fs.existsSync(src)) continue;
-        // restore 目标是 cordis.patch.yml 等启动关键文件：copyFileSync 裸写
-        // 中断即截断。读出字节后走原子写（保内容逐字节一致）。
-        writeFileAtomic(path.join(dir, name), fs.readFileSync(src));
-        restored.push(name);
+        const file = path.join(root, name);
+        let st: fs.Stats;
+        try { st = fs.lstatSync(file); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          result.set(name, null);
+          continue;
+        }
+        if (!st.isFile() || st.isSymbolicLink()) throw new Error('unsafe configuration file: ' + name);
+        result.set(name, fs.readFileSync(file));
       }
-      log('guard', `已回滚 profile 到快照 ${id}（${restored.join(', ')}）`);
-      return { ok: true, restored };
-    } catch (err) {
-      return { ok: false, error: String(((err as Error) && (err as Error).message) || err) };
+      return result;
+    };
+    // Capture before the mandatory backup can prune this selected old snapshot.
+    const selected = readConfig(snapDir);
+    if (GUARD_FILES.some(name => meta.files.includes(name) !== (selected.get(name) !== null))) {
+      throw new Error('incomplete snapshot files');
     }
+    let original: Map<string, Buffer | null> | null = null;
+    let profileIdentity = '';
+    let backupId: string | undefined;
+    let consumed = false;
+    let undone = false;
+
+    const writeConfig = (values: Map<string, Buffer | null>, continueOnError = false): void => {
+      const failures: string[] = [];
+      for (const [name, bytes] of values) {
+        try {
+          const st = fs.lstatSync(dir);
+          if (!st.isDirectory() || st.isSymbolicLink() || fs.realpathSync(dir) !== profileIdentity) {
+            throw new Error('profile directory changed during restore');
+          }
+          const file = path.join(dir, name);
+          try {
+            const existing = fs.lstatSync(file);
+            if (!existing.isFile() || existing.isSymbolicLink()) throw new Error('unsafe configuration file: ' + name);
+          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+          if (bytes !== null) writeFileAtomic(file, bytes);
+          else { try { fs.unlinkSync(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
+        } catch (error) {
+          if (!continueOnError) throw error;
+          failures.push(name + ': ' + String((error as Error).message || error));
+        }
+      }
+      if (failures.length) throw new Error(failures.join('; '));
+    };
+    const undo = (): RestoreResult => {
+      if (!original) return { ok: false, error: 'restore was not applied' };
+      if (undone) return { ok: true, recovered: true, ...(backupId ? { backupId } : {}) };
+      try {
+        writeConfig(original, true);
+        undone = true;
+        return { ok: true, recovered: true, ...(backupId ? { backupId } : {}) };
+      } catch (error) {
+        return { ok: false, recovered: false, error: String((error as Error).message || error), ...(backupId ? { backupId } : {}) };
+      }
+    };
+    return {
+      undo,
+      apply(): RestoreResult {
+        if (consumed) return { ok: false, error: 'prepared restore already consumed' };
+        consumed = true;
+        let writing = false;
+        try {
+          const st = fs.lstatSync(dir);
+          if (!st.isDirectory() || st.isSymbolicLink()) throw new Error('unsafe profile directory');
+          profileIdentity = fs.realpathSync(dir);
+          original = readConfig(dir);
+          const backup = snapshot('pre-restore:' + id);
+          if (!backup) throw new Error('pre-restore backup failed');
+          backupId = backup.id;
+          const saved = readConfig(path.join(rollbacksDir(), backup.id));
+          if (GUARD_FILES.some(name => {
+            const before = original!.get(name)!;
+            const bytes = saved.get(name)!;
+            return before === null ? bytes !== null : bytes === null || !before.equals(bytes);
+          })) throw new Error('pre-restore backup does not match current configuration');
+          writing = true;
+          writeConfig(selected);
+          const restored = GUARD_FILES.filter(name => selected.get(name) !== null);
+          const removed = GUARD_FILES.filter(name => selected.get(name) === null && original!.get(name) !== null);
+          log('guard', '已回滚 profile 到快照 ' + id + '（' + restored.join(', ') + '）');
+          return { ok: true, restored, removed, backupId };
+        } catch (error) {
+          const recovery = writing ? undo() : { ok: true };
+          return { ok: false, error: String((error as Error).message || error)
+            + (recovery.ok ? '' : '; recovery failed: ' + recovery.error), recovered: recovery.ok,
+            ...(backupId ? { backupId } : {}) };
+        }
+      },
+    };
+  }
+
+  function restore(id: string): RestoreResult {
+    try { return prepareRestore(id).apply(); }
+    catch (error) { return { ok: false, error: String((error as Error).message || error) }; }
   }
 
   function state(): GuardState {
     return readJson(stateFile(), {});
+  }
+
+  function safeRestoreState(): boolean {
+    for (const [target, directory] of [[guardDir(), true], [stateFile(), false]] as const) {
+      try {
+        const st = fs.lstatSync(target);
+        if (st.isSymbolicLink() || (directory ? !st.isDirectory() : !st.isFile())) return false;
+      } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return false; }
+    }
+    return true;
+  }
+
+  function projectRestore(value: unknown): RestoreOutcome | null {
+    if (!value || typeof value !== 'object') return null;
+    const r = value as RestoreOutcome;
+    const id = (s: unknown): s is string => typeof s === 'string' && /^[a-zA-Z0-9][\w.-]{0,159}$/.test(s);
+    const codes: RestoreCode[] = ['restore-in-progress', 'restore-succeeded', 'restore-cancelled', 'invalid-snapshot',
+      'service-stop-unconfirmed', 'restore-apply-failed', 'restore-start-failed', 'restore-recovery-stop-unconfirmed',
+      'restore-undo-failed', 'restore-recovery-start-failed', 'restore-status-write-failed'];
+    if (!id(r.snapshotId) || typeof r.at !== 'string' || r.at.length > 32 || !Number.isFinite(Date.parse(r.at))
+      || !['pending', 'succeeded', 'failed', 'cancelled'].includes(r.phase) || !codes.includes(r.code)
+      || typeof r.ok !== 'boolean' || r.ok !== (r.phase === 'succeeded')
+      || (r.code === 'restore-succeeded') !== (r.phase === 'succeeded')
+      || (r.code === 'restore-in-progress') !== (r.phase === 'pending')
+      || (r.code === 'restore-cancelled') !== (r.phase === 'cancelled')
+      || (r.backupId !== undefined && !id(r.backupId))) return null;
+    return {snapshotId: r.snapshotId, at: r.at, phase: r.phase, code: r.code, ok: r.ok,
+      ...(r.backupId ? {backupId: r.backupId} : {}),
+      ...(typeof r.recovered === 'boolean' ? {recovered: r.recovered} : {}),
+      ...(typeof r.configurationRestored === 'boolean' ? {configurationRestored: r.configurationRestored} : {})};
+  }
+
+  function lastRestore(): RestoreOutcome | null {
+    if (!safeRestoreState()) return null;
+    const records = state()?.restores;
+    return records && Object.hasOwn(records, getProfile()) ? projectRestore(records[getProfile()]) : null;
+  }
+
+  function recordRestore(value: RestoreOutcome): void {
+    const outcome = projectRestore(value);
+    if (!outcome || !safeRestoreState()) throw new Error('unsafe restore status');
+    const s: GuardState = fs.existsSync(stateFile()) ? JSON.parse(fs.readFileSync(stateFile(), 'utf8')) : {};
+    if (!s || typeof s !== 'object' || Array.isArray(s)) throw new Error('invalid guard state');
+    if (s.restores != null && (typeof s.restores !== 'object' || Array.isArray(s.restores))) throw new Error('invalid restore records');
+    const records: Record<string, RestoreOutcome> = Object.assign(Object.create(null), s.restores);
+    records[getProfile()] = outcome;
+    s.restores = records;
+    writeJson(stateFile(), s);
   }
 
   function markGood(id: string): void {
@@ -738,7 +913,7 @@ function createGuard(opts: GuardOpts): GuardApi {
   }
 
   return {
-    snapshot, listSnapshots, restore, markGood, lastGoodSnapshot,
+    snapshot, listSnapshots, prepareRestore, restore, markGood, lastGoodSnapshot, lastRestore, recordRestore,
     healthCheck, repair, repairJunctions, junctionFindings,
     reportIncident, listIncidents, readIncident, resolveIncident,
     attributeBootFailure,

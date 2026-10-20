@@ -34,10 +34,8 @@ const NPM_MIRRORS: string[] = ['https://registry.npmmirror.com', 'https://regist
 //（npm 解析依赖时可能长时间静默，阈值取 300 秒）。
 const NPM_STALL_MS = 300 * 1000;
 
-const { readJsonFile } = require('./lib/plugin-copy') as {
+const { readJsonFile, writeJsonAtomic } = require('./lib/atomic-json') as {
   readJsonFile(file: string): Record<string, unknown> | null;
-};
-const { writeJsonAtomic } = require('./lib/atomic-json') as {
   writeJsonAtomic(file: string, value: unknown): void;
 };
 
@@ -71,8 +69,7 @@ function overlayBinPath(ctx: UpdaterCtx): string {
 }
 
 function overlayVersion(ctx: UpdaterCtx): string | null {
-  try { return require(path.join(overlayDir(ctx), 'node_modules', PKG, 'package.json')).version; }
-  catch { return null; }
+  return agentVersionIn(overlayDir(ctx));
 }
 
 function bundledVersion(): string | null {

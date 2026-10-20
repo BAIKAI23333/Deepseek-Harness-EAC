@@ -29,61 +29,89 @@ export function childProcessSpawnOptions(
 }
 
 export function killTree(proc: ChildProcess | null | undefined): void {
-  if (!proc || !proc.pid) return;
-  try {
-    if (IS_WIN) {
-      // M2 修复：先优雅（无 /F）给进程收尾机会（避免撕裂 session.jsonl.zstd），
-      // 短等待后仍存活再强杀。
-      cp.spawn('taskkill', ['/pid', String(proc.pid), '/T'], { windowsHide: true, stdio: 'ignore' });
-      const pid = proc.pid;
-      setTimeout(() => {
-        try {
-          const query = 'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH';
-          const alive = cp.execSync(query, { encoding: 'utf8', windowsHide: true });
-          if (alive.includes(String(pid))) {
-            cp.spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          }
-        } catch { /* 进程已退出或查询失败 */ }
-      }, 1500);
-    } else {
-      try { process.kill(-proc.pid, 'SIGTERM'); } catch { proc.kill('SIGTERM'); }
-    }
-  } catch (err) {
-    ctx.log('killTree', String(err));
-  }
+  void killTreeAndWait(proc).then((confirmed) => {
+    if (!confirmed) ctx.log('killTree', '未确认服务进程树退出');
+  });
 }
 
-// V4 修复「退出后残留一对进程」：退出路径专用的有界同步回收。
-// 优雅 taskkill → 等待 graceMs → 仍存活则 taskkill /T /F → 再等 hardMs，
-// 全程有界，绝不无限阻塞退出。
+// 等待 taskkill 本身结束，不能把已派发命令当成已完成树级终止。
+function taskkill(pid: number, force: boolean, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let command: ChildProcess;
+    try {
+      command = cp.spawn('taskkill', ['/pid', String(pid), '/T', ...(force ? ['/F'] : [])], {
+        windowsHide: true, stdio: 'ignore',
+      });
+    } catch { resolve(false); return; }
+    let done = false;
+    const finish = (ok: boolean): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      command.removeListener('exit', onExit);
+      // 保留 error 消费者：超时后终止命令仍可能异步触发 error。
+      resolve(ok);
+    };
+    const onExit = (code: number | null): void => finish(code === 0);
+    const timer = setTimeout(() => {
+      try { command.kill(); } catch { /* 结果仍为未确认 */ }
+      finish(false);
+    }, Math.max(1, timeoutMs));
+    command.once('exit', onExit);
+    command.once('error', () => finish(false));
+  });
+}
+
+const unconfirmedTrees = new WeakSet<ChildProcess>();
+
+/** true 表示已确认退出；超时、权限或观测失败均不能作为无锁窗口。 */
 export async function killTreeAndWait(
   proc: ChildProcess | null | undefined,
   { graceMs = 1200, hardMs = 4000 }: { graceMs?: number; hardMs?: number } = {},
-): Promise<void> {
-  if (!proc || !proc.pid || proc.exitCode !== null) return;
+): Promise<boolean> {
+  if (!proc || !proc.pid) return true;
+  if (IS_WIN && (proc.exitCode !== null || proc.signalCode != null)) return !unconfirmedTrees.has(proc);
+  unconfirmedTrees.add(proc);
+  const confirm = (): true => { unconfirmedTrees.delete(proc); return true; };
   const pid = proc.pid;
   try {
     if (IS_WIN) {
-      cp.spawn('taskkill', ['/pid', String(pid), '/T'], { windowsHide: true, stdio: 'ignore' });
-      await waitForProcExit(proc, graceMs);
-      if (proc.exitCode !== null) return;
-      try {
-        const alive = cp.execSync(
-          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
-        if (!alive.includes('"' + pid + '"')) return;
-      } catch { return; }
-      cp.spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      await waitForProcExit(proc, hardMs);
-    } else {
-      try { process.kill(-proc.pid, 'SIGTERM'); } catch { try { proc.kill('SIGTERM'); } catch { /* 已退出 */ } }
-      await waitForProcExit(proc, graceMs);
-      if (proc.exitCode !== null) return;
-      try { process.kill(-proc.pid, 'SIGKILL'); } catch { try { proc.kill('SIGKILL'); } catch { /* 已退出 */ } }
-      await waitForProcExit(proc, hardMs);
+      const soft = await taskkill(pid, false, graceMs);
+      const exited = await waitForProcExit(proc, graceMs);
+      if (soft && exited) return confirm();
+      // 根进程在失败命令期间消失，不能再靠它证明后代已被终止。
+      if (exited) return false;
+      const hard = await taskkill(pid, true, hardMs);
+      const confirmed = await waitForProcExit(proc, hardMs);
+      return hard && confirmed ? confirm() : false;
     }
+    // DSH 使用 detached 独立进程组；组长 exit 不等于所有后代 exit。
+    try { process.kill(-pid, 'SIGTERM'); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') return false;
+    }
+    if (await waitForGroupExit(pid, graceMs)) return confirm();
+    try { process.kill(-pid, 'SIGKILL'); } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') return false;
+    }
+    return await waitForGroupExit(pid, hardMs) ? confirm() : false;
   } catch (err) {
     ctx.log('killTree', String(err));
+    return false;
   }
+}
+
+function waitForGroupExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const check = (): void => {
+      try { process.kill(-pid, 0); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ESRCH') { resolve(true); return; }
+      }
+      if (Date.now() - started >= timeoutMs) { resolve(false); return; }
+      setTimeout(check, Math.min(100, Math.max(1, timeoutMs - (Date.now() - started))));
+    };
+    check();
+  });
 }
 
 // Environment for the dsh child: drop harness/session leftovers so the
@@ -96,8 +124,12 @@ export async function killTreeAndWait(
 // settings.yaml 的 mtime 记忆化：childEnv 在每次 spawn 前都调，全量读 +
 // yaml.parse settings.yaml 是重复热点；文件未变时复用上次解析结果。
 // TTL 短（5s）：权限选择改动后最迟 5s 内生效，同时吸收同秒多次调用。
-const presetCache: { at: number; mtimeMs: number | null; value: 'danger-full-access' | null } = {
-  at: 0, mtimeMs: null, value: null,
+// 缓存键必须含文件路径：不同 DSH_HOME 下的 settings.yaml 可能落在同一
+// mtime 刻度（Windows 文件时间粒度粗，实测两个新建临时目录逐位相同），
+// 只比 mtime 会把上一个 home 的判定串到当前 home（可能把 workspace-write
+// 误判为 danger-full-access）。
+const presetCache: { at: number; file: string | null; mtimeMs: number | null; value: 'danger-full-access' | null } = {
+  at: 0, file: null, mtimeMs: null, value: null,
 };
 function userDefaultPreset(): 'danger-full-access' | null {
   try {
@@ -107,7 +139,7 @@ function userDefaultPreset(): 'danger-full-access' | null {
     let mtimeMs: number | null = null;
     try { mtimeMs = fs.statSync(file).mtimeMs; } catch { /* 不存在 */ }
     const now = Date.now();
-    if (mtimeMs === presetCache.mtimeMs && now - presetCache.at < 5000) return presetCache.value;
+    if (file === presetCache.file && mtimeMs === presetCache.mtimeMs && now - presetCache.at < 5000) return presetCache.value;
     if (mtimeMs === null) return null;
     const text = fs.readFileSync(file, 'utf8');
     // yaml 随 dsh-settings-file 进入内置依赖树；解析失败宁可返回空
@@ -117,6 +149,7 @@ function userDefaultPreset(): 'danger-full-access' | null {
     const permission = doc && typeof doc.permission === 'object' ? doc.permission as Record<string, unknown> : null;
     const value = permission && permission.defaultPreset === 'danger-full-access' ? 'danger-full-access' : null;
     presetCache.at = now;
+    presetCache.file = file;
     presetCache.mtimeMs = mtimeMs;
     presetCache.value = value;
     return value;
@@ -144,43 +177,40 @@ export function childEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-// 等待一个子进程真正退出（taskkill 先优雅后强杀，锁住的 DLL 要等进程
-// 终止才释放）。'exit' 事件优先（零开销、不阻塞事件循环），tasklist 轮询
-// 兜底覆盖 detached/re-parent 后事件丢失的场景，超时后放行由调用方处理。
-export function waitForProcExit(proc: ChildProcess | null | undefined, timeoutMs: number): Promise<void> {
+// exit/明确不存在才确认退出；error、超时和探活失败不等于进程消失。
+export function waitForProcExit(proc: ChildProcess | null | undefined, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
-    if (!proc || !proc.pid) { resolve(); return; }
-    if (proc.exitCode !== null || proc.signalCode !== null) { resolve(); return; }
+    if (!proc || !proc.pid) { resolve(true); return; }
+    if (proc.exitCode !== null || proc.signalCode != null) { resolve(true); return; }
     const pid = proc.pid;
     const started = Date.now();
     let pollTimer: NodeJS.Timeout | null = null;
-    const finish = (): void => {
+    let finished = false;
+    const finish = (confirmed: boolean): void => {
+      if (finished) return;
+      finished = true;
       if (pollTimer !== null) clearTimeout(pollTimer);
-      resolve();
+      proc.removeListener('exit', onExit);
+      proc.removeListener('error', onError);
+      resolve(confirmed);
     };
-    proc.once('exit', finish);
-    proc.once('error', finish);
-    const isAlive = (): boolean => {
-      if (proc.exitCode !== null || proc.signalCode !== null) return false;
-      if (!IS_WIN) {
-        try { process.kill(pid, 0); return true; } catch { return false; }
-      }
-      try {
-        const out = cp.execSync(
-          'tasklist /FI "PID eq ' + pid + '" /FO CSV /NH', { encoding: 'utf8', windowsHide: true });
-        return out.includes('"' + pid + '"');
-      } catch { return false; }
-    };
+    const onExit = (): void => finish(true);
+    const onError = (): void => finish(false);
+    proc.once('exit', onExit);
+    proc.once('error', onError);
     const check = (): void => {
-      if (!isAlive()) { finish(); return; }
+      if (finished) return;
+      if (proc.exitCode !== null || proc.signalCode != null) { finish(true); return; }
+      try { process.kill(pid, 0); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ESRCH') { finish(true); return; }
+      }
       if (Date.now() - started >= timeoutMs) {
-        ctx.log('service', '等待旧服务进程退出超时（PID ' + pid + '），继续');
-        finish();
+        ctx.log('service', '未确认旧服务进程退出（PID ' + pid + '），停止后续操作');
+        finish(false);
         return;
       }
-      pollTimer = setTimeout(check, 500);
+      pollTimer = setTimeout(check, Math.min(500, Math.max(1, timeoutMs - (Date.now() - started))));
     };
-    // 首轮兜底轮询延后：给 'exit' 事件留出优先到达的窗口。
-    pollTimer = setTimeout(check, 500);
+    pollTimer = setTimeout(check, Math.min(500, Math.max(0, timeoutMs)));
   });
 }

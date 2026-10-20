@@ -41,9 +41,10 @@ import { scanCandidate, collectProfileState } from './plugin-conflict-scan.mjs'
 // 被丢掉。本层把配置写盘收敛到唯一入口：每次重读磁盘、以 id 为键并集合并、
 // CAS + 原子写 + 写后校验 + 失败回滚，外部行/注释一律保留。
 import {
-  readProfileConfig, commitProfileConfig, applyPatchToggle, mergeBundles, applyBundles,
+  readProfileConfig, commitProfileConfig,
   validatePatchText, listConfigSnapshots, restoreConfigSnapshot,
 } from './profile-sync.mjs'
+import { installedPackageName, togglePackage } from './bundle-toggle.mjs'
 
 export const name = 'dsh-unified-market'
 
@@ -167,7 +168,7 @@ function dshInvoke(explicit) {
     return invokeEntry(explicit.trim())
   }
   const entry = process.argv[1]
-  if (entry !== undefined && /[\\/](?:bin\.(?:js|ts)|dsh)$/.test(entry)) {
+  if (entry !== undefined && /[\\/](?:bin\.(?:js|ts)|eac-cli\.js|dsh)$/.test(entry)) {
     return invokeEntry(entry)
   }
   const cand = process.cwd().replace(/[\\/]+$/, '') + '/apps/cli/lib/bin.js'
@@ -229,6 +230,58 @@ function sameOrigin(req) {
   } catch {
     return false
   }
+}
+
+// ---------------------------------------------------------------------------
+// 内核信任围栏（webServer 按「最长前缀优先」匹配，本插件注册的 /api/dsh-unified-market
+// 与 /api/dsh-market 会遮蔽内核挂在较短前缀 /api 上的鉴权网关；register() 自身不附加
+// 围栏，因此必须自行向内核 connection 服务转交判定）。
+//
+// sameOrigin() 只比较 Origin 与 Host 是否一致：它既不校验 Host 是否可信，也不校验
+// 登录态，因此弱于内核的 requestRejection（Host/Origin 围栏 + 浏览器鉴权），只作为
+// 第二层防御保留。服务每次请求现取；失败方向 fail-closed —— 取不到或异常一律 503。
+// ---------------------------------------------------------------------------
+
+/** 围栏判定不可得时：503 + 空响应体，不泄露内部信息。 */
+function fenceUnavailable(res) {
+  res.writeHead(503, { 'Cache-Control': 'no-store' })
+  res.end()
+  return true
+}
+
+/**
+ * 取内核 connection 服务。
+ *
+ * 必须用 ctx.get()，不能用 Reflect.get()：cordis 的 Context 是 Proxy，通过
+ * Proxy 取服务时要求该服务已写进 inject 声明，否则抛
+ * `cannot get property "..." without inject`。本插件刻意不把 connection 写进
+ * inject（硬依赖会在宿主缺该服务时让 apply 不执行、整个插件不加载），所以走
+ * ctx.get()：服务在就返回实例，不在就返回 undefined。
+ */
+function connectionOf(ctx) {
+  if (!ctx || typeof ctx.get !== 'function') return undefined
+  return ctx.get('connection')
+}
+
+/** @returns {boolean} true 表示已拒绝并结束响应。 */
+function rejected(ctx, req, res) {
+  let connection
+  try {
+    connection = connectionOf(ctx)
+  } catch {
+    return fenceUnavailable(res)
+  }
+  if (!connection || typeof connection.requestRejection !== 'function') return fenceUnavailable(res)
+  let rejection
+  try {
+    rejection = connection.requestRejection(req)
+  } catch {
+    return fenceUnavailable(res)
+  }
+  if (rejection === undefined) return false
+  res.writeHead(rejection, { 'Cache-Control': 'no-store' })
+  res.end()
+  return true
 }
 
 function sendJson(res, status, obj) {
@@ -340,7 +393,9 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
   })
   child.on('close', async (code) => {
     if (op.status !== 'running') return
-    const ok = code === 0
+    let ok = code === 0
+    // M3/#416：本次安装是否落在「外部层默认禁用」语义内（热挂载与提示都用）。
+    let installDefaultDisabled = false
     // V4：pnpm 已退出 —— 回填被重新解包清掉的第三方构建产物（先回填再
     // 热挂载，热挂载读到的才是补齐后的树）。
     try {
@@ -381,28 +436,27 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
         }
       }
     }
-    if (ok && (op.kind === 'install' || op.kind === 'uninstall')) {
-      // v0.4.0 双边同步：内核已在 CLI 内重写过 profile 配置，这里以「磁盘现状」
-      // 为基准做增量合并 —— 本次操作的意图（启用/禁用 + patch 行）落盘，同时
-      // 保留期间发生的一切外部改动。
-      const pkgName = op.pkg || op.target
-      const id = loaderEntryId(op.profile, pkgName)
-      const disabled = op.kind === 'uninstall'
-      syncProfileConfig(
-        op,
-        (patchText) => {
-          const r = applyPatchToggle(
-            patchText, id, pkgName, disabled,
-            '# 插件市场（dsh-unified-market）：' + (disabled ? '关闭 ' : '启用 ') + id,
-          )
-          return r.changed ? r.text : null
-        },
-        (disabled ? '禁用并移除 ' : '启用 ') + pkgName + '（id: ' + id + '）',
-      )
+    // Uninstall is already committed by the kernel transaction. Do not invent
+    // overrides from metadata that the package manager has just removed.
+    if (ok && op.kind === 'install') {
+      try {
+        const pkgName = installedPackageName(profileDir(op.profile), op)
+        installDefaultDisabled = isExternalInstall(op.profile, pkgName)
+        // Updates retain the user's explicit enabled/disabled choices.
+        if (installDefaultDisabled && !Object.hasOwn(op.beforeDeps, pkgName)) {
+          const result = togglePackage(profileDir(op.profile), pkgName, false)
+          if (!result.ok) throw new Error(result.error)
+          appendOutput(op, '\n[M3/#416] 外部插件默认禁用：安装已完成，请在「设置 → 插件 → 管理」中手动启用后生效\n')
+        }
+      } catch (error) {
+        ok = false
+        appendOutput(op, '\n[同步] ' + String(error?.message || error) + '\n')
+      }
     }
-    if (ok && op.kind === 'install' && hotCtx !== null) {
+    if (ok && op.kind === 'install' && hotCtx !== null && !installDefaultDisabled) {
       // Trial-boot already proved the bundle boots; hot-mount is the bonus
       // that skips the restart. Failure here only falls back to restart.
+      // M3/#416：默认禁用的外部插件不热挂载 —— 否则会绕过关闭行立即生效。
       const mounted = await tryHotMountAll(hotCtx, op.profile, op.beforeDeps)
       if (mounted) {
         op.hot = true
@@ -427,65 +481,6 @@ function startOp(kind, profile, target, label, explicitBin, initialOutput) {
 
 /** Host ctx for hot-mounting, set by apply(); null in headless/test contexts. */
 let hotCtx = null
-
-/**
- * v0.4.0 双边同步：在 CLI（pnpm/dsh plugin）结束后，把「外部可能做过的改动」
- * 与「本次操作的意图」合并落盘，而不是让任一方覆盖另一方。
- *
- * 时序要点：内核 reconcilePlugins 已在 CLI 进程内重写过一次 package.json，
- * 因此这里必须**在 CLI 退出之后**再重读磁盘，绝不使用操作开始前的快照覆盖。
- *
- * @param {object} op - 操作对象（含 kind/target/profile）
- * @param {(patchText: string) => string|null} producePatch - 基于读到的 patch 产出新 patch（null=不改）
- * @param {string} summary - 写入说明（落进操作输出）
- */
-function syncProfileConfig(op, producePatch, summary) {
-  try {
-    const dir = profileDir(op.profile)
-    const res = commitProfileConfig(dir, (cfg) => {
-      // 1) bundles：以磁盘现状为基准做增量并集（保留既有相对顺序与其他改动）
-      let pkgText = cfg.pkgText
-      const name = op.pkg || op.target
-      const enable = op.kind === 'uninstall' ? [] : [name]
-      const disable = op.kind === 'uninstall' ? [name] : []
-      const merged = mergeBundles(cfg.bundles, enable, disable)
-      if (merged.changed) {
-        const built = applyBundles(cfg.pkgText, merged.bundles)
-        if (built.error) return { summary: 'bundles 未改动：' + built.error }
-        pkgText = built.text
-      }
-      // 2) patch：把目标 id 规范为顶层编辑型行（禁用）或复位（启用）
-      let patchText
-      if (typeof producePatch === 'function') {
-        const out = producePatch(cfg.patchText, cfg)
-        if (typeof out === 'string') patchText = out
-      }
-      return { pkgText, patch: patchText, summary }
-    })
-    if (res.ok && res.changed) {
-      appendOutput(op, '\n[同步] 双边同步写入 profile 配置：' + summary + (res.snapshot ? '（快照 ' + res.snapshot + '）' : '') + '\n')
-    } else if (!res.ok) {
-      appendOutput(op, '\n[同步] 配置同步未完成：' + String(res.error || '未知原因') + '（外部改动未被覆盖）\n')
-    }
-    return res
-  } catch (err) {
-    appendOutput(op, '\n[同步] 配置同步异常：' + String((err && err.message) || err) + '\n')
-    return { ok: false, error: String((err && err.message) || err) }
-  }
-}
-
-/**
- * 找出某个包对应的 loader 条目 id（用于禁用/复位 patch 行）。
- * 优先取包内 cordis.patch.yml 自己声明的 id —— 那是它挂载时使用的真实 id。
- */
-function loaderEntryId(profile, pkgName) {
-  try {
-    const patch = readFileSync(join(profileDir(profile), 'node_modules', pkgName, 'cordis.patch.yml'), 'utf8')
-    const m = /^\s*-\s*id:\s*([\w.-]+)\s*$/m.exec(patch)
-    if (m !== null) return m[1]
-  } catch { /* 包未落地或没有 patch */ }
-  return pkgName
-}
 
 /** Abort the live op (used by the panel's kill button). */
 function killOp() {
@@ -1201,6 +1196,22 @@ function readBuiltinPlugins(profile) {
     const marker = JSON.parse(readFileSync(join(profileDir(profile), '.dsh-builtin-plugins.json'), 'utf8'))
     return Array.isArray(marker.names) ? marker.names.filter((n) => typeof n === 'string') : []
   } catch { return [] }
+}
+
+/**
+ * M3/#416 L3（外部层）：该包是否「非壳同步面」——即不在客户端每次启动
+ * 同步进 profile 的内置/推荐清单里（.dsh-builtin-plugins.json，由壳的
+ * companion-sync 写入）。外部插件安装后默认禁用，用户在插件管理页手动
+ * 启用；内置/推荐包维持「安装即启用」。标记缺失时按外部处理（保守方向：
+ * 新装的第三方包默认不生效，而不是悄悄启用）。
+ * @param {string} profile
+ * @param {string} pkgName
+ * @returns {boolean}
+ */
+function isExternalInstall(profile, pkgName) {
+  const name = String(pkgName || '').trim()
+  if (!name) return false
+  return !readBuiltinPlugins(profile).includes(name)
 }
 
 /** Basename of a package name or install spec ('dsh-tool-vision', 'github:owner/dsh-pet' → 'dsh-pet'). */
@@ -1986,6 +1997,7 @@ export function apply(ctx) {
   // 统一市场主路径；并兼容注册底座遗留的 /api/dsh-market（防旧引用）。
   // 客户端统一走 /api/dsh-unified-market。
   const routeHandler = async (req, res) => {
+      if (rejected(ctx, req, res)) return
       try {
         const body = await readBody(req)
         const method = String(body.method || '')
@@ -2058,27 +2070,13 @@ export function apply(ctx) {
           const pkgName = String(body.pkg || '').trim()
           if (!pkgName) return sendJson(res, 400, { ok: false, error: '缺少包名' })
           const enable = body.enabled !== false
-          const id = loaderEntryId(profile, pkgName)
-          const dir = profileDir(profile)
-          const result = commitProfileConfig(dir, (cfg) => {
-            const merged = mergeBundles(cfg.bundles, enable ? [pkgName] : [], enable ? [] : [pkgName])
-            const built = merged.changed ? applyBundles(cfg.pkgText, merged.bundles) : { text: cfg.pkgText, error: null }
-            if (built.error) return { summary: 'bundles 合并失败：' + built.error }
-            const tog = applyPatchToggle(
-              cfg.patchText, id, pkgName, !enable,
-              '# 插件市场（dsh-unified-market）：' + (enable ? '启用 ' : '关闭 ') + id,
-            )
-            return {
-              pkgText: built.text,
-              patch: tog.changed ? tog.text : cfg.patchText,
-              summary: (enable ? '启用 ' : '关闭 ') + pkgName + '（id: ' + id + '）',
-            }
-          })
+          const result = togglePackage(profileDir(profile), pkgName, enable)
           return sendJson(res, 200, {
             ok: result.ok,
             changed: result.changed,
             enabled: enable,
-            id,
+            id: result.id,
+            entryIds: result.entryIds,
             summary: result.summary,
             error: result.error,
             snapshot: result.snapshot,

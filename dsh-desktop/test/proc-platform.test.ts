@@ -27,7 +27,7 @@ test('boot-server applies the platform process-group spawn options', () => {
   assert.deepEqual(childProcessSpawnOptions('win32'), { detached: false });
 });
 
-test('POSIX DSH process-group termination reaps a spawned descendant', { skip: process.platform === 'win32' }, async () => {
+if (process.platform !== 'win32') test('POSIX DSH process-group termination reaps a spawned descendant', async () => {
   init({ log: () => {}, getDshHome: () => null, getDesktopProfile: () => 'desktop' });
   const script = [
     'const {spawn}=require("node:child_process")',
@@ -79,6 +79,10 @@ test('childEnv 注入 DSH_PERMISSION_MODE=danger-full-access（issue #196）', (
 });
 
 test('childEnv 未设置完全访问时不注入 DSH_PERMISSION_MODE（保持默认 workspace-write）', () => {
+  // childEnv 会先展开 process.env，故断言前必须清掉宿主的同名变量
+  //（在已设 DSH_PERMISSION_MODE 的终端里跑测试时，继承值会掩盖本用例）。
+  const saved = process.env.DSH_PERMISSION_MODE;
+  delete process.env.DSH_PERMISSION_MODE;
   const temp = mkdtempSync(join(tmpdir(), 'dsh-perm-'));
   try {
     writeFileSync(
@@ -94,6 +98,43 @@ test('childEnv 未设置完全访问时不注入 DSH_PERMISSION_MODE（保持默
     const env = childEnv();
     assert.equal(env.DSH_PERMISSION_MODE, undefined);
   } finally {
+    if (saved !== undefined) process.env.DSH_PERMISSION_MODE = saved;
     rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+if (process.platform === 'win32') test('Windows strict termination confirms a real child and descendant exit', async () => {
+  init({log: () => {}, getDshHome: () => null, getDesktopProfile: () => 'fixture'});
+  const child = spawn(process.execPath, ['-e', [
+    'const {spawn}=require("node:child_process")',
+    'const c=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore",windowsHide:true})',
+    'process.stdout.write(String(c.pid)+"\\n")',
+    'setInterval(()=>{},1000)',
+  ].join(';')], {...childProcessSpawnOptions(), windowsHide: true, stdio: ['ignore', 'pipe', 'ignore']});
+  let descendant = 0;
+  try {
+    descendant = await new Promise<number>((resolve, reject) => {
+      let text = '';
+      const timer = setTimeout(() => reject(new Error('descendant pid timeout')), 5000);
+      child.once('error', e => { clearTimeout(timer); reject(e); });
+      child.stdout.on('data', chunk => {
+        text += String(chunk);
+        const pid = Number(text.trim());
+        if (Number.isInteger(pid) && pid > 0) { clearTimeout(timer); resolve(pid); }
+      });
+    });
+    assert.equal(await killTreeAndWait(child), true);
+    const until = Date.now() + 5000;
+    let alive = true;
+    while (alive && Date.now() < until) {
+      try { process.kill(descendant, 0); } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ESRCH') alive = false;
+      }
+      if (alive) await new Promise(r => setTimeout(r, 100));
+    }
+    assert.equal(alive, false, 'a successful stop must not leave the known descendant running');
+  } finally {
+    await killTreeAndWait(child);
+    if (descendant) { try { process.kill(descendant, 'SIGKILL'); } catch { /* already exited */ } }
   }
 });

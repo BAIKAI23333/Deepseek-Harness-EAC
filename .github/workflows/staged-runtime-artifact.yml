@@ -1,0 +1,148 @@
+name: Installer packages
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+  PNPM_VERSION: '11.7.0'
+  KERNEL_VERSION: '0.2.0-rc.2'
+
+jobs:
+  build:
+    name: Installer (${{ matrix.os }}/${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            os: windows
+            arch: x64
+            target: win32
+          - runner: windows-11-arm
+            os: windows
+            arch: arm64
+            target: win32
+          - runner: ubuntu-22.04
+            os: linux
+            arch: x64
+            target: linux
+          - runner: ubuntu-22.04-arm
+            os: linux
+            arch: arm64
+            target: linux
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: dsh-desktop
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # 打包必须携带固定提交的 dsh-dpx JS API（ADR 0004）。
+          submodules: recursive
+
+      - name: Verify native runner architecture
+        run: node -e "if (process.arch !== '${{ matrix.arch }}') throw new Error('expected ${{ matrix.arch }}, got ' + process.arch)"
+
+      - name: Verify dsh-dpx submodule pin
+        working-directory: ${{ github.workspace }}
+        run: node tauri-shell/check-dpx-pin.mjs
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: dsh-desktop/package-lock.json
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@${{ env.PNPM_VERSION }} && pnpm --version
+
+      - name: Cache vendored kernel
+        uses: actions/cache@v4
+        with:
+          path: dsh-desktop/vendor/kernel
+          key: ${{ runner.os }}-${{ matrix.arch }}-kernel-${{ env.KERNEL_VERSION }}-${{ hashFiles('dsh-desktop/scripts/fetch-kernel.ts') }}
+
+      - name: Prepare vendored kernel
+        run: node scripts/fetch-kernel.js
+
+      - name: Install dependencies
+        run: npm run ci:install
+
+      - name: Fetch bundled Node and npm runtimes
+        run: npm run fetch-runtime
+
+      - name: Set up stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libfuse2 rpm
+
+      - name: Fetch Cargo dependencies
+        working-directory: ${{ github.workspace }}/tauri-shell
+        run: cargo fetch --locked
+
+      - name: Assemble staged runtime
+        working-directory: ${{ github.workspace }}
+        run: node tauri-shell/stage-resources.mjs --target=${{ matrix.target }} --skip-npm
+
+      - name: Verify staged closure and bundle integrity
+        working-directory: ${{ github.workspace }}
+        run: node dsh-desktop/scripts/verify-staged-runtime.mjs
+
+      - name: Check RPM toolchain
+        if: runner.os == 'Linux'
+        run: rpm --version && rpmbuild --version
+
+      - name: Build Tauri installers
+        working-directory: ${{ github.workspace }}/tauri-shell
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: npx -y @tauri-apps/cli@2 build --verbose
+
+      - name: Name Lite installer artifacts
+        working-directory: ${{ github.workspace }}
+        run: node tauri-shell/name-lite-installers.mjs --platform=${{ matrix.os }} --arch=${{ matrix.arch }}
+
+      - name: Build portable package
+        if: runner.os == 'Windows'
+        working-directory: ${{ github.workspace }}/tauri-shell
+        run: node make-portable.mjs --out target/release/portable
+
+      - name: Upload Windows installer packages
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eac-lite-windows-${{ matrix.arch }}-installers
+          path: |
+            tauri-shell/target/release/bundle/nsis/EAC-Lite-*.exe
+            tauri-shell/target/release/bundle/SHA256SUMS-Lite.txt
+            tauri-shell/target/release/portable/EAC-Lite-*.zip
+            tauri-shell/target/release/portable/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Audit RPM package
+        if: runner.os == 'Linux'
+        working-directory: ${{ github.workspace }}
+        run: node dsh-desktop/scripts/audit-rpm-package.mjs "$(find tauri-shell/target/release/bundle/rpm -maxdepth 1 -type f -name '*.rpm' -print -quit)" --arch=${{ matrix.arch }}
+
+      - name: Upload Linux installer packages
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eac-lite-linux-${{ matrix.arch }}-installers
+          path: |
+            tauri-shell/target/release/bundle/deb/EAC-Lite-*.deb
+            tauri-shell/target/release/bundle/SHA256SUMS-Lite.txt
+            tauri-shell/target/release/bundle/appimage/EAC-Lite-*.AppImage
+            tauri-shell/target/release/bundle/rpm/EAC-Lite-*.rpm
+          if-no-files-found: error
+          retention-days: 7

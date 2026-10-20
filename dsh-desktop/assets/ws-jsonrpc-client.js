@@ -1,12 +1,9 @@
 /**
  * assets/ws-jsonrpc-client.js — 桌面窗 ↔ sidecar 的 WS JSON-RPC 回环客户端（单源）。
  *
- * 架构：主窗桥（tauri-shell/sidecar/bridge.ts）与恢复中心窗
- * （assets/recovery-center-preload.js）曾各自内联一份几乎相同的 WS 客户端
- * （connect / queue / call / 超时 / 1500ms 重连）；现统一为这一个文件，由壳层
- * 在窗口 initialization_script 序列中先注入本文件、再注入各自的桥胶水，桥胶水
- * 经 window.__DSH_WS_RPC__ 取回客户端实例（见 tauri-shell/src/main.rs 的
- * BRIDGE_INIT_JS 与 recovery_center_page）。
+ * 架构：由壳层在主窗口 initialization_script 中先注入本文件，再注入桥胶水；
+ * 桥胶水经 window.__DSH_WS_RPC__ 取回客户端实例（见 tauri-shell/src/main.rs
+ * 的 BRIDGE_INIT_JS）。
  *
  * 用法：window.__DSH_WS_RPC__({ timeoutMs, onOpen }) → { send, call, onNotify }
  *   - 在 DOMContentLoaded 自动 connect 并 1500ms 退避重连；
@@ -40,6 +37,8 @@
       var r = pending[id];
       if (!r) return;
       delete pending[id];
+      // 未发出的超时请求必须同时撤出队列，不能在重连后补做已报失败的操作。
+      if (!r.sent) queue = queue.filter(function (frame) { return frame.id !== id; });
       if (r.timer) clearTimeout(r.timer);
       if (ok) r.resolve(value);
       else r.reject(value);
@@ -55,10 +54,7 @@
         // 超时定时器在请求 settle（响应/断线回绝）时清掉：旧实现任由它到点
         // 空跑，长会话累积大量无用定时器。
         entry.timer = setTimeout(function () {
-          if (pending[id]) {
-            delete pending[id];
-            reject(new Error('bridge call timeout: ' + method));
-          }
+          settle(id, false, new Error('bridge call timeout: ' + method));
         }, t || timeoutMs);
       });
     }
@@ -71,7 +67,8 @@
           var frame = queue.shift();
           // 补发即视为已发出：此后断线同样走「在途回绝」路径。
           var pe = pending[frame.id];
-          if (pe) pe.sent = true;
+          if (!pe) continue;
+          pe.sent = true;
           rawSend(frame);
         }
         try { if (options.onOpen) options.onOpen(); } catch (e) { /* 回调异常不断桥 */ }

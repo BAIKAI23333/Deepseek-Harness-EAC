@@ -39,8 +39,16 @@ const TOP_FILES = [
   'package.json', 'dsh-plugin.json', 'skin.json', ...EXTRA_PACKAGE_FILES,
   'EAC-ADAPTATION.md', 'index.js', 'client.js', 'recall-inject.js', 'cordis.patch.yml',
   'DESIGN.md', 'FRAMING.md', 'EDITORIAL.md', 'BREATH.md',
+  // dsh-our-free-model 的图标随包分发（其余内置插件无 icon.svg，存在才拷贝）。
+  'icon.svg',
 ];
-const TOP_DIRS = ['lib', 'docs', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client', 'styles'];
+const TOP_DIRS = [
+  'lib', 'docs', 'preview', 'vendor', 'node_modules', 'data', 'assets', 'runtime', 'src', 'client', 'styles',
+  // dsh-our-free-model：index.js 静态 import './adapter/kernel.js'，client.js 的
+  // `inject: ['slots','locale']` 由 locale/zh.json|en.json 提供文案。二者不在旧
+  // 清单里 → 拷进 profile 的包缺 adapter/ → ERR_MODULE_NOT_FOUND → 插件加载失败。
+  'adapter', 'locale',
+];
 
 /** 安全读 JSON（损坏/缺失返回 null）。 */
 export function readJsonFile(file: string): Record<string, unknown> | null {
@@ -209,11 +217,20 @@ export function pluginCopyIsComplete(src: string, dest: string, stamp: string): 
     if (hit && hit.mtimeMs === mtimeMs && hit.stamp === stamp) return hit.complete;
     let complete = true;
     try {
-      const entries = new Set<string>();
-      walkCopySet(src, (rel) => entries.add(rel));
-      for (const rel of entries) {
+      // 完整性 = 存在 + 普通文件 + size 与源一致（捕获截断/就地改写类损坏；
+      // 源侧 size 由 walkCopySet 的 stat 顺带产出，无额外 IO）。
+      const entries = new Map<string, number>();
+      walkCopySet(src, (rel, st) => entries.set(rel, st.size));
+      for (const [rel, expectedSize] of entries) {
         const target = path.join(dest, rel);
-        if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+        let st: fs.Stats;
+        try {
+          st = fs.statSync(target);
+        } catch {
+          complete = false;
+          break;
+        }
+        if (!st.isFile() || st.size !== expectedSize) {
           complete = false;
           break;
         }

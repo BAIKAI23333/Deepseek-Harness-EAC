@@ -31,10 +31,13 @@ const FORBIDDEN_NAMES = new Set(['node_modules', 'vendor', 'cache']);
 const IGNORED_TREE_NAMES = new Set(['.git', ...FORBIDDEN_NAMES]);
 const HEX_256 = /^[0-9a-f]{64}$/;
 
+// 受控 inventory root 只声明**当前检出树里真实存在**的资产目录：v6 精简树与
+// EAC-CORE-SHELL-01 皮肤平台外迁后，`assets/skins` 与 `assets/sdk-plugins`
+// （以及 agent-presets）都已不在仓库，继续声明会让 `validate` 恒报
+// 「inventory directory missing」。manifest 的 `skins` / `sdkPlugins` 键保留
+// （schema 要求），但不再有对应 root。
 const INVENTORY_ROOTS = [
   { kind: 'plugin', manifestKey: 'plugins', relative: 'dsh-desktop/assets/plugins' },
-  { kind: 'skin', manifestKey: 'skins', relative: 'dsh-desktop/assets/skins' },
-  { kind: 'sdk-plugin', manifestKey: 'sdkPlugins', relative: 'dsh-desktop/assets/sdk-plugins' },
 ];
 const ALLOWED_CLASSES = new Set([
   'follow-upstream',
@@ -115,8 +118,32 @@ export function sha256Text(value) {
   return sha256Bytes(Buffer.from(String(value), 'utf8'));
 }
 
+/**
+ * 换行归一化后再取字节——**文本文件**的哈希必须与检出平台的换行风格无关。
+ *
+ * 为什么需要：`treeSha256` / `sha256File` 直接 `readFileSync` 取字节，而
+ * `.gitattributes` 只给带扩展名的类型（`*.js` / `*.json` / `*.md` …）声明了
+ * `text eol=lf`；**无扩展名的文本（`LICENSE`、`.gitignore`）没有该规则**，
+ * 于是 `core.autocrlf=true` 的 Windows 检出会写成 CRLF、Linux/CI 检出写成 LF，
+ * 同一份内容算出两个不同的 digest —— dev 上 CI 红灯而本地"全绿"，正是此因。
+ *
+ * 边界：只对**文本**归一化。二进制按原字节哈希（否则会破坏二进制的完整性
+ * 语义）。判定用「是否含 NUL 字节」这一与编码无关的启发式：Git 自身也用同样
+ * 规则区分文本与二进制。
+ */
+export function normalizeEolForHash(buffer) {
+  if (!Buffer.isBuffer(buffer)) return buffer;
+  if (buffer.includes(0)) return buffer;
+  return Buffer.from(buffer.toString('utf8').replaceAll('\r\n', '\n'), 'utf8');
+}
+
+/** 读文件并按文本语义归一化换行后取字节（见 normalizeEolForHash）。 */
+export function readFileForHash(file) {
+  return normalizeEolForHash(readFileSync(file));
+}
+
 function sha256File(file) {
-  return sha256Bytes(readFileSync(file));
+  return sha256Bytes(readFileForHash(file));
 }
 
 function byteCompare(a, b) {
@@ -175,7 +202,7 @@ export function treeSha256(directory) {
   for (const file of collectTreeFiles(directory).files) {
     digest.update(Buffer.from(`file\0${file.relativePath}\0`, 'utf8'));
     if (file.type === 'symlink') digest.update(Buffer.from(`symlink:${file.target}`, 'utf8'));
-    else digest.update(readFileSync(file.absolutePath));
+    else digest.update(readFileForHash(file.absolutePath));
     digest.update(Buffer.from('\0', 'utf8'));
   }
   return digest.digest('hex');
@@ -187,7 +214,7 @@ export function treeSnapshot(directory) {
   for (const file of result.files) {
     digest.update(Buffer.from(`file\0${file.relativePath}\0`, 'utf8'));
     if (file.type === 'symlink') digest.update(Buffer.from(`symlink:${file.target}`, 'utf8'));
-    else digest.update(readFileSync(file.absolutePath));
+    else digest.update(readFileForHash(file.absolutePath));
     digest.update(Buffer.from('\0', 'utf8'));
   }
   return {
@@ -258,7 +285,7 @@ export function patchSetSha256(root, patches = []) {
   const digest = createHash('sha256');
   for (const file of [...unique.values()].sort((a, b) => byteCompare(a.relativePath, b.relativePath))) {
     digest.update(Buffer.from(`patch\0${file.relativePath}\0`, 'utf8'));
-    digest.update(readFileSync(file.absolutePath));
+    digest.update(readFileForHash(file.absolutePath));
     digest.update(Buffer.from('\0', 'utf8'));
   }
   return digest.digest('hex');
@@ -342,6 +369,9 @@ function projectPaths(root) {
     schema: path.join(root, '.sync', 'plugins.schema.json'),
     policies: path.join(root, '.sync', 'policies.json'),
     lock: path.join(root, '.sync', 'plugins.lock.json'),
+    distribution: path.join(root, '.sync', 'plugin-distribution.json'),
+    distributionSchema: path.join(root, '.sync', 'plugin-distribution.schema.json'),
+    sources: path.join(root, 'dsh-desktop', 'assets', 'SOURCES.json'),
     registry: path.join(root, 'dsh-desktop', 'lib', 'desktop', 'plugin-sync-registry.ts'),
   };
 }
@@ -471,6 +501,201 @@ function validateSchema(value, schema, label) {
   return errors.map((error) => `${label}: ${error}`);
 }
 
+export function validateDistribution(project, inventoryEntries) {
+  const policy = project.policies?.pluginDistribution;
+  if (policy?.enabled === false) return [];
+
+  const errors = [];
+  const manifestPath = path.join(project.paths.root, policy?.manifest || '.sync/plugin-distribution.json');
+  const schemaPath = path.join(project.paths.root, policy?.schema || '.sync/plugin-distribution.schema.json');
+  const historyPath = path.join(
+    project.paths.root,
+    policy?.inventoryHistory || '.sync/plugin-inventory-history.json',
+  );
+  const sourcesPath = path.join(project.paths.root, policy?.sources || 'dsh-desktop/assets/SOURCES.json');
+  const distribution = readJson(manifestPath, 'plugin distribution manifest');
+  const distributionSchema = readJson(schemaPath, 'plugin distribution schema');
+  const history = readJson(historyPath, 'plugin inventory history');
+  const sources = readJson(sourcesPath, 'plugin source ledger');
+
+  errors.push(...validateSchema(distribution, distributionSchema, 'plugin distribution'));
+  const distributionEntries = Array.isArray(distribution?.plugins) ? distribution.plugins : [];
+  const inventoryPlugins = inventoryEntries.filter((entry) => entry?.kind === 'plugin');
+  const inventoryById = new Map(inventoryPlugins.map((entry) => [entry.id, entry]));
+  if (history?.schemaVersion !== 1) {
+    pushError(errors, 'plugin inventory history: schemaVersion must be 1');
+  }
+  if (!Array.isArray(history?.plugins)) {
+    pushError(errors, 'plugin inventory history: plugins must be an array');
+  }
+  const historyEntries = Array.isArray(history?.plugins) ? history.plugins : [];
+  const historyById = new Map();
+  for (const entry of historyEntries) {
+    const pointer = `plugin inventory history entry ${entry?.id || '<missing>'}`;
+    if (typeof entry?.id !== 'string' || !entry.id) {
+      pushError(errors, `${pointer}: id is missing`);
+      continue;
+    }
+    if (historyById.has(entry.id)) {
+      pushError(errors, `${pointer}: duplicate id`);
+      continue;
+    }
+    if (typeof entry.path !== 'string' || !entry.path) {
+      pushError(errors, `${pointer}: path is missing`);
+    }
+    if (typeof entry.patched !== 'boolean') {
+      pushError(errors, `${pointer}: patched must be boolean`);
+    }
+    historyById.set(entry.id, entry);
+  }
+  const distributionIds = new Set();
+  const classCounts = { builtin: 0, recommended: 0, external: 0 };
+
+  for (const entry of distributionEntries) {
+    const pointer = `plugin distribution entry ${entry?.id || '<missing>'}`;
+    if (distributionIds.has(entry?.id)) pushError(errors, `${pointer}: duplicate id`);
+    else distributionIds.add(entry?.id);
+    if (Object.hasOwn(classCounts, entry?.distributionClass)) classCounts[entry.distributionClass] += 1;
+
+    const historical = historyById.get(entry?.id);
+    if (!historical) {
+      pushError(errors, `${pointer}: id is not present in plugin inventory history`);
+      continue;
+    }
+    const inventory = inventoryById.get(entry?.id);
+    // `migration.current`（当前交付通道）是「是否还在安装包内」的唯一诚实信号：
+    // 只要账本声明该插件已不在本包交付（current !== 'bundled'），它就可以只由
+    // 历史账本接续。`migration.state` 描述**来源就绪度与删包授权**，不承担
+    // 「是否在包内」的语义——ADR 0008 §3/§4 要求来源未核实时保持
+    // source-pending，因此「仓库副本已剥离 + 来源未就绪」正是
+    // current=none + state=source-pending 的组合，而不是 migrated。
+    const offInventoryState = entry?.migration?.current !== 'bundled';
+    if (!inventory && !offInventoryState) {
+      pushError(errors, `${pointer}: id is not present in the current plugin inventory`);
+      continue;
+    }
+    if (inventory && entry?.migration?.current === 'none') {
+      pushError(errors, `${pointer}: declares migration.current=none but is present in the current plugin inventory`);
+    }
+    if (inventory && inventory.path !== historical.path) {
+      pushError(errors, `${pointer}: current inventory path does not match plugin inventory history`);
+    }
+    const sourceReadyState = entry?.migration?.state === 'source-ready'
+      || entry?.migration?.state === 'removal-ready'
+      || entry?.migration?.state === 'migrated';
+    if (sourceReadyState && entry?.sourceRef?.startsWith('npm:')) {
+      const exactSemver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+      if (!exactSemver.test(entry?.version || '')) {
+        pushError(errors, `${pointer}: npm source requires an exact semver version`);
+      }
+    }
+    const removalState = entry?.migration?.state === 'removal-ready'
+      || entry?.migration?.state === 'migrated';
+    if (removalState) {
+      if (historical.patched === true && entry.patchConclusion === 'not-patched') {
+        pushError(errors, `${pointer}: patched asset requires upstream-absorbed or eac-fork-published`);
+      }
+    }
+    const sourceMatches = Array.isArray(sources?.components)
+      ? sources.components.filter(
+        (component) => component?.type === 'plugin' && component?.path === historical.path,
+      )
+      : [];
+    if (sourceMatches.length !== 1) {
+      pushError(
+        errors,
+        `${pointer}: historical inventory path must resolve to exactly one plugin in SOURCES.json`,
+      );
+    } else {
+      const source = sourceMatches[0];
+      if (typeof source.origin !== 'string' || !source.origin) pushError(errors, `${pointer}: source origin is missing`);
+      if (!isObject(source.audit)) pushError(errors, `${pointer}: source audit evidence is missing`);
+    }
+  }
+
+  for (const entry of inventoryPlugins) {
+    if (!distributionIds.has(entry.id)) pushError(errors, `plugin distribution: inventory id ${entry.id} is missing`);
+  }
+  for (const entry of historyEntries) {
+    if (!entry?.id || distributionIds.has(entry.id)) continue;
+    // ADR 0008 §5：历史账本保存 49 条基线且不得删行；4 个已退役插件（skin-switch /
+    // plugin-manager / terminal / file-drop-eac）退出分发集合后只以
+    // `state=retired` 的历史行接续。非 retired 的历史行必须仍在分发集合内。
+    if (entry.state !== 'retired') {
+      pushError(errors, `plugin distribution: inventory history id ${entry.id} is unknown`);
+    }
+  }
+  const expectedCounts = policy?.expectedCounts || {};
+  for (const distributionClass of Object.keys(classCounts)) {
+    if (classCounts[distributionClass] !== expectedCounts[distributionClass]) {
+      pushError(
+        errors,
+        `plugin distribution: ${distributionClass} count ${classCounts[distributionClass]} does not match policy ${expectedCounts[distributionClass]}`,
+      );
+    }
+  }
+
+  if (policy?.recommendedPack) {
+    errors.push(...validateRecommendedPack(project, distributionEntries));
+  }
+  return errors;
+}
+
+export function packPluginFromDistribution(entry) {
+  if (entry.sourceRef?.startsWith('npm:')) {
+    return { ref: entry.sourceRef.slice('npm:'.length), version: entry.version };
+  }
+  const github = /^github:([^@]+)@([a-f0-9]{40})$/.exec(entry.sourceRef || '');
+  if (github) return { ref: `github:${github[1]}`, version: github[2] };
+  return { ref: entry.sourceRef, version: entry.version };
+}
+
+export function validateRecommendedPack(project, distributionEntries, options = {}) {
+  const policy = project.policies?.pluginDistribution || {};
+  const packPath = path.join(
+    project.paths.root,
+    policy.recommendedPack || '.sync/packs/desktop-recommended.pack.json',
+  );
+  const schemaPath = path.join(
+    project.paths.root,
+    policy.packSchema || 'docs/schemas/feature-pack-pack.json',
+  );
+  const pack = readJson(packPath, 'recommended pack draft');
+  const schema = readJson(schemaPath, 'feature pack schema');
+  const errors = validateSchema(pack, schema, 'recommended pack draft');
+  const recommended = distributionEntries.filter((entry) => entry?.distributionClass === 'recommended');
+  const readyStates = new Set(['source-ready', 'removal-ready', 'migrated']);
+  const ready = recommended.filter((entry) => readyStates.has(entry?.migration?.state));
+  const intendedIds = Array.isArray(pack?.['x-eac']?.intendedPluginIds)
+    ? [...pack['x-eac'].intendedPluginIds].sort()
+    : [];
+  const recommendedIds = recommended.map((entry) => entry.id).sort();
+  if (stableJson(intendedIds) !== stableJson(recommendedIds)) {
+    pushError(errors, 'recommended pack draft: intendedPluginIds must equal the recommended distribution set');
+  }
+  const expectedPlugins = ready.map(packPluginFromDistribution);
+  if (stableJson(pack?.plugins || []) !== stableJson(expectedPlugins)) {
+    pushError(errors, 'recommended pack draft: plugins must equal the source-ready recommended set');
+  }
+  for (const plugin of pack?.plugins || []) {
+    if (plugin?.ref?.startsWith('builtin:')) pushError(errors, 'recommended pack draft: builtin refs are prohibited');
+    if (plugin?.ref === 'latest' || plugin?.version === 'latest') pushError(errors, 'recommended pack draft: latest is prohibited');
+  }
+  if (ready.length !== recommended.length && pack?.['x-eac']?.status !== 'draft') {
+    pushError(errors, 'recommended pack draft: incomplete source set must remain draft');
+  }
+  if (options.forPublish && ready.length !== recommended.length) {
+    pushError(errors, `recommended pack publish blocked: ${ready.length}/${recommended.length} recommended plugins are source-ready`);
+  }
+  if (options.forPublish && pack?.['x-eac']?.status !== 'publishable') {
+    pushError(errors, 'recommended pack publish blocked: draft status is not publishable');
+  }
+  if (options.forPublish && pack?.['x-eac']?.conflictsPending !== false) {
+    pushError(errors, 'recommended pack publish blocked: conflict analysis is pending');
+  }
+  return errors;
+}
+
 function allManifestEntries(manifest) {
   if (!isObject(manifest)) return [];
   return INVENTORY_ROOTS.flatMap((root) => (
@@ -542,6 +767,14 @@ function validateManifestInternal(project, { checkRuntimeRegistry = true } = {})
     pushError(errors, 'manifest: generatedRegistry must point to the runtime registry');
   }
   if (!isObject(policies)) pushError(errors, 'policies: expected an object');
+
+  // 没有对应 inventory root 的 manifest 集合必须为空：条目不会被目录比对覆盖，
+  // 留着就是「声明存在但无实物」的悬空行（ISO-004 收敛掉的那一类）。
+  for (const key of ['skins', 'sdkPlugins']) {
+    if (Array.isArray(manifestObject[key]) && manifestObject[key].length > 0) {
+      pushError(errors, `manifest: ${key} must be empty while no inventory root is declared for it`);
+    }
+  }
 
   for (const inventory of INVENTORY_ROOTS) {
     const configured = Array.isArray(policies?.inventoryRoots)
@@ -706,6 +939,8 @@ function validateManifestInternal(project, { checkRuntimeRegistry = true } = {})
     }
   }
 
+  errors.push(...validateDistribution(project, entries));
+
   const updates = sourceMap(paths);
   if (checkRuntimeRegistry && updates === null) {
     pushError(errors, 'runtime source registry is missing from generated registry');
@@ -759,7 +994,60 @@ export function validateManifest(root = DEFAULT_ROOT, options = {}) {
   };
 }
 
-function registryPayload(manifest) {
+/**
+ * 运行时分级载荷：`distributionClass` 是唯一 canonical 分级字段
+ * （M3/#416 裁定 —— 不新增 `tier`）。除 id 清单外，把 ledger 的
+ * id → 分级映射整体带给运行时（插件管理行/UI 直接消费，无需再读 .sync）；
+ * `recommendedPackId` 取自 recommended 条目的 `pack`（schema 约束为常量）。
+ */
+function runtimeDistributionPayload(project) {
+  const policy = project.policies?.pluginDistribution;
+  if (policy?.enabled === false) {
+    return { builtinPluginIds: [], recommendedPluginIds: [], recommendedPackId: null, pluginClasses: {} };
+  }
+  const distribution = readJson(
+    path.join(project.paths.root, policy?.manifest || '.sync/plugin-distribution.json'),
+    'plugin distribution manifest',
+  );
+  const pack = readJson(
+    path.join(project.paths.root, policy?.recommendedPack || '.sync/packs/desktop-recommended.pack.json'),
+    'recommended pack draft',
+  );
+  const entries = Array.isArray(distribution?.plugins) ? distribution.plugins : [];
+  const pluginClasses = {};
+  for (const entry of [...entries].sort((a, b) => byteCompare(String(a?.id || ''), String(b?.id || '')))) {
+    if (!entry || typeof entry.id !== 'string' || typeof entry.distributionClass !== 'string') continue;
+    pluginClasses[entry.id] = entry.distributionClass;
+  }
+  const recommendedPackId = entries.find(
+    (entry) => entry?.distributionClass === 'recommended' && typeof entry.pack === 'string',
+  )?.pack || null;
+  return {
+    builtinPluginIds: entries
+      .filter((entry) => entry?.distributionClass === 'builtin')
+      .map((entry) => entry.id)
+      .sort(byteCompare),
+    recommendedPluginIds: [...(pack?.['x-eac']?.intendedPluginIds || [])].sort(byteCompare),
+    recommendedPackId,
+    pluginClasses,
+  };
+}
+
+/**
+ * 生成注册表的期望文本（纯计算，不做插件目录树校验）。
+ *
+ * `generateRegistry` 的严格路径（含目录树比对）在精简树里必然失败 ——
+ * v6 Task 3.1 剥离后仓库只随包 13 个内置插件，manifest 仍登记全部来源。
+ * 本函数供「提交的生成产物与 ledger 是否同步」的契约测试使用：产物内容只
+ * 由 manifest + plugin-distribution（canonical 分级）+ 推荐包 draft 决定，
+ * 与目录树无关，因此可以在任何树形下验证零漂移。
+ */
+export function expectedRegistryText(root = DEFAULT_ROOT) {
+  const project = loadProject(root);
+  return generateRegistryText(project.manifest, runtimeDistributionPayload(project));
+}
+
+function registryPayload(manifest, distribution = { builtinPluginIds: [], recommendedPluginIds: [], recommendedPackId: null, pluginClasses: {} }) {
   const entries = {};
   const updates = {};
   for (const entry of allManifestEntries(manifest).sort((a, b) => byteCompare(a.id, b.id))) {
@@ -782,20 +1070,26 @@ function registryPayload(manifest) {
   return {
     schemaVersion: manifest?.schemaVersion,
     manifest: '.sync/plugins.json',
+    distribution,
     entries,
     updateSources: updates,
   };
 }
 
-export function generateRegistryText(manifest) {
-  const payload = registryPayload(manifest);
+export function generateRegistryText(manifest, distribution) {
+  const payload = registryPayload(manifest, distribution);
   return [
     '// GENERATED FILE — do not edit by hand.',
-    '// Source: .sync/plugins.json (run generate-plugin-registry.mjs).',
+    '// Sources: .sync/plugins.json, plugin-distribution.json, and recommended pack registry (run generate-plugin-registry.mjs).',
     `// plugin-sync:update-sources ${JSON.stringify(payload.updateSources)}`,
+    `// plugin-sync:distribution ${JSON.stringify(payload.distribution)}`,
     '',
     `export const PLUGIN_SYNC_REGISTRY = ${prettyJson(payload).replace(/\n$/, '')} as const;`,
     'export const PLUGIN_UPDATE_SOURCES = PLUGIN_SYNC_REGISTRY.updateSources;',
+    'export const DISTRIBUTION_BUILTIN_PLUGIN_IDS = PLUGIN_SYNC_REGISTRY.distribution.builtinPluginIds;',
+    'export const RECOMMENDED_PACK_PLUGIN_IDS = PLUGIN_SYNC_REGISTRY.distribution.recommendedPluginIds;',
+    'export const PLUGIN_DISTRIBUTION_CLASSES = PLUGIN_SYNC_REGISTRY.distribution.pluginClasses;',
+    'export const RECOMMENDED_PACK_ID = PLUGIN_SYNC_REGISTRY.distribution.recommendedPackId;',
     'export default PLUGIN_SYNC_REGISTRY;',
     '',
   ].join('\n');
@@ -806,8 +1100,9 @@ export function generateRegistry(root = DEFAULT_ROOT, { check = false } = {}) {
   // or stale registry must not prevent generation. --check remains strict and
   // validates the currently checked-in source map before reporting drift.
   const result = validateManifest(root, { checkRuntimeRegistry: check });
-  const file = projectPaths(path.resolve(root)).registry;
-  const expected = generateRegistryText(result.manifest);
+  const project = loadProject(root);
+  const file = project.paths.registry;
+  const expected = generateRegistryText(result.manifest, runtimeDistributionPayload(project));
   const current = existsSync(file) ? readFileSync(file, 'utf8') : null;
   if (check) {
     if (current !== expected) {
@@ -867,7 +1162,9 @@ export function buildLock(root = DEFAULT_ROOT) {
       manifestEntrySha256: sha256Text(stableJson(entry)),
     };
   }
-  const manifestBytes = readFileSync(project.paths.manifest);
+  // 与 validate 侧（sha256File）同口径：换行归一化后再哈希，避免 CRLF/LF
+  // 检出差异造成 generate 与 validate 互相打架。
+  const manifestBytes = readFileForHash(project.paths.manifest);
   return {
     schemaVersion: 1,
     manifest: '.sync/plugins.json',
@@ -1041,13 +1338,14 @@ export async function main(argv = process.argv.slice(2)) {
   const { flags, positionals } = parseArgs(argv);
   const command = positionals[0];
   const root = path.resolve(String(flags.get('root') || DEFAULT_ROOT));
-  if (!command) fail('a command is required: validate-manifest, validate, generate-registry, generate-lock, sync', 'usage');
+  if (!command) fail('a command is required: validate-manifest, validate, generate-registry, generate-lock|buildLock, sync', 'usage');
   if (command === 'validate-manifest') {
     printManifestReport(validateManifest(root));
     return 0;
   }
   if (command === 'validate') {
-    if (!flags.get('locked')) fail('validate currently requires --locked', 'usage');
+    // `validate` 默认即完整校验（manifest + distribution/history 交叉校验 +
+    // lock + 生成注册表零漂移）。`--locked` 是历史 flag，保留为兼容写法。
     const result = validateLocked(root);
     console.log(`lock valid: entries=${result.counts.entries}`);
     return 0;
@@ -1057,7 +1355,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`${result.checked ? 'generated registry valid' : 'generated registry written'}: ${relativePosix(root, result.file)}`);
     return 0;
   }
-  if (command === 'generate-lock') {
+  if (command === 'generate-lock' || command === 'buildLock') {
     const project = loadProject(root);
     const lock = buildLock(root);
     writeJsonAtomic(project.paths.lock, lock);

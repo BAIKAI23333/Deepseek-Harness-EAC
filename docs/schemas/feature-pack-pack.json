@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/zouyuxuan122/Deepseek-Harness-EAC/blob/main/docs/schemas/feature-pack-pack.json",
+  "$id": "https://github.com/Ebony-Vinyl/Deepseek-Harness-EAC/blob/main/docs/schemas/feature-pack-pack.json",
   "title": "EAC 功能包清单（pack.json）",
   "description": ".dshpack 归档内 pack.json 的契约（事实源：docs/feature-pack-spec.md；两者不一致时以本 schema 为准并修文档）。",
   "type": "object",
@@ -115,6 +115,21 @@
       "maxItems": 64,
       "description": "v1 预留：必须为空数组。出现非空值判为无效（防目录穿越路径在安装器另行拒绝）。",
       "items": { "type": "string", "minLength": 1, "maxLength": 256 }
+    },
+    "x-eac": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "EAC 仓库内的发布门禁元数据；draft 包不得进入市场索引。",
+      "required": ["status", "intendedPluginIds", "conflictsPending"],
+      "properties": {
+        "status": { "enum": ["draft", "publishable"] },
+        "intendedPluginIds": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" }
+        },
+        "conflictsPending": { "type": "boolean" }
+      }
     },
     "changelog": { "type": "string", "maxLength": 2000 }
   }

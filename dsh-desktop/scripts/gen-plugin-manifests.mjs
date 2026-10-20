@@ -17,7 +17,8 @@
  * 诚实性约束：facets 为最小占位（仅 host entry）、permissions 留空 = 尚未
  * 参与 std 协商，不编造能力声明；上游为 monorepo 时在 x-eac.sourceNote
  * 注明；eac-original 无上游基线，不写 patched/patchNote。皮肤不生成
- * （走 skin wiring，host facet 语义不实）。
+ * （走 skin wiring，host facet 语义不实）；EAC-CORE-SHELL-01 起皮肤平台
+ * 已从 main 线台账移除，故 `type !== 'plugin'` 过滤不再触及皮肤条目。
  *
  * 用法：node scripts/gen-plugin-manifests.mjs [--ids C001,C004] [--dry]
  */
@@ -32,7 +33,7 @@ const ledger = JSON.parse(readFileSync(join(ddRoot, 'assets', 'SOURCES.json'), '
 const SCHEMA_PIN = 'https://raw.githubusercontent.com/Yan-Zero/dsh-std/614dfa1ac168db79fcf4577cf0ebb34e2e3b944b/packages/manifest/schema/dsh-plugin-0.15.schema.json';
 // eac-original 的来源归属：审计口径「best match = EAC 主仓库」（外部匹配审计
 // PLUGIN-MATCH-REPORT 中这些行置信 0.94–0.97 均指向主仓库本体）。
-const EAC_REPO = 'https://github.com/zouyuxuan122/DSH-Desktop-EAC';
+const EAC_REPO = 'https://github.com/Ebony-Vinyl/DSH-Desktop-EAC';
 const DRY = process.argv.includes('--dry');
 const idsArg = process.argv.findIndex((a) => a === '--ids');
 const onlyIds = idsArg >= 0 ? new Set(process.argv[idsArg + 1].split(',')) : null;

@@ -4,21 +4,32 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { auditLinuxBundle } from '../../tauri-shell/audit-linux-bundle.mjs';
+import { pruneLinuxPayloads, pruneNonLinuxPrebuilds } from '../../tauri-shell/stage-platform-prune.mjs';
 
-const ELF = Buffer.from([
-  0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x03, 0x00, 0x3e, 0x00,
-]);
+function elf64(machine: number): Buffer {
+  const data = Buffer.alloc(20);
+  data.write('\x7fELF', 0, 'binary');
+  data.writeUInt8(2, 4);
+  data.writeUInt8(1, 5);
+  data.writeUInt16LE(machine, 18);
+  return data;
+}
 
-function fixture(): string {
+const ELF = elf64(62);
+const ELF_ARM64 = elf64(183);
+
+// 默认造带 native 围栏载荷（supervisor/snapshot）的树；native: false 造
+// 「围栏当前不随包」的树（ISO-003：装配面 NATIVE_MODULES=[] 的现状）。
+function fixture(elf = ELF, options: { native?: boolean } = {}): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'eac-linux-bundle-'));
   const runtime = path.join(root, 'dsh-desktop', 'vendor', 'node', 'node');
-  const supervisor = path.join(root, 'dsh-desktop', 'native', 'supervisor', 'index.node');
-  const snapshot = path.join(root, 'dsh-desktop', 'native', 'snapshot', 'index.node');
-  for (const file of [runtime, supervisor, snapshot]) {
+  const nativeFiles = options.native === false ? [] : [
+    path.join(root, 'dsh-desktop', 'native', 'supervisor', 'index.node'),
+    path.join(root, 'dsh-desktop', 'native', 'snapshot', 'index.node'),
+  ];
+  for (const file of [runtime, ...nativeFiles]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, ELF);
+    fs.writeFileSync(file, elf);
   }
   fs.chmodSync(runtime, 0o755);
   return root;
@@ -28,6 +39,34 @@ test('Linux bundle audit accepts ELF runtime and native modules', () => {
   const root = fixture();
   try {
     assert.deepEqual(auditLinuxBundle(root), { filesChecked: 3, nativeModules: 2 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ISO-003：进程隔离围栏（native/{supervisor,snapshot}）当前不随包
+//（stage-resources.mjs 的 NATIVE_MODULES=[]，ADR 0003 已裁废）—— 缺失不得
+// 报错；存在时仍由通用 walk 校验 ELF/目标架构（见下方 PE native 用例）。
+test('Linux bundle audit treats the native fence payloads as optional (not staged)', () => {
+  const root = fixture(ELF, { native: false });
+  try {
+    assert.deepEqual(auditLinuxBundle(root), { filesChecked: 1, nativeModules: 0 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Linux bundle audit accepts arm64 ELF and the matching node-pty prebuild', () => {
+  const root = fixture(ELF_ARM64);
+  const ptyBuild = path.join(root, 'dsh-desktop', 'node_modules', 'node-pty', 'build', 'Release', 'pty.node');
+  const ptyPrebuilt = path.join(root, 'dsh-desktop', 'node_modules', 'node-pty', 'prebuilds', 'linux-arm64', 'pty.node');
+  for (const file of [ptyBuild, ptyPrebuilt]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, ELF_ARM64);
+  }
+  try {
+    assert.doesNotThrow(() => auditLinuxBundle(root, { targetArch: 'arm64' }));
+    assert.throws(() => auditLinuxBundle(root, { targetArch: 'x64' }), /not x64 ELF/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -45,6 +84,7 @@ test('Linux bundle audit rejects Windows payloads anywhere in the reachable tree
   }
 });
 
+// 存在性校验仍生效：fixture 里 native/snapshot/index.node 在场，PE 内容必须被拒。
 test('Linux bundle audit rejects a PE native module and a non-executable runtime', () => {
   const root = fixture();
   const native = path.join(root, 'dsh-desktop', 'native', 'snapshot', 'index.node');
@@ -64,6 +104,36 @@ test('Linux bundle audit rejects musl native modules in the glibc distribution',
   fs.writeFileSync(native, ELF);
   try {
     assert.throws(() => auditLinuxBundle(root), /musl payload in glibc bundle.*addon\.node/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Linux bundle audit rejects node-addon-system bin/musl variant', () => {
+  const root = fixture();
+  const native = path.join(
+    root, 'dsh-desktop', 'node_modules', '@deepseek-ai',
+    'node-addon-system-linux-x64', 'bin', 'musl', 'system.node',
+  );
+  fs.mkdirSync(path.dirname(native), { recursive: true });
+  fs.writeFileSync(native, ELF);
+  try {
+    assert.throws(() => auditLinuxBundle(root), /musl payload in glibc bundle.*bin\/musl\/system\.node/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Linux bundle audit accepts the glibc node-addon-system variant', () => {
+  const root = fixture();
+  const native = path.join(
+    root, 'dsh-desktop', 'node_modules', '@deepseek-ai',
+    'node-addon-system-linux-x64', 'bin', 'glibc', 'system.node',
+  );
+  fs.mkdirSync(path.dirname(native), { recursive: true });
+  fs.writeFileSync(native, ELF);
+  try {
+    assert.doesNotThrow(() => auditLinuxBundle(root));
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -104,4 +174,50 @@ test('Linux bundle audit scans the complete extracted artifact outside the resou
     fs.rmSync(payload, { recursive: true, force: true });
     fs.rmSync(artifact, { recursive: true, force: true });
   }
+});
+
+for (const [arch, elf] of [['x64', ELF], ['arm64', ELF_ARM64]] as const) {
+  test(`Linux distribution pruning cleans nested koffi and bundled pnpm for ${arch}`, t => {
+    const root = fixture(elf);
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const desktop = path.join(root, 'dsh-desktop');
+    const glibc = `node_modules/@deepseek-ai/dsh-fs-local/node_modules/@koromix/koffi-linux-${arch}/linux_${arch}/koffi.node`;
+    const musl = `node_modules/@deepseek-ai/dsh-fs-local/node_modules/@koromix/koffi-linux-${arch}/musl_${arch}/koffi.node`;
+    const pnpm = 'vendor/pnpm/dist';
+    const keep = [glibc, `${pnpm}/node_modules/@reflink/reflink-linux-${arch}-gnu/reflink.node`];
+    const drop = [
+      musl,
+      `${pnpm}/node_modules/@reflink/reflink-linux-${arch}-musl/reflink.node`,
+      `${pnpm}/node_modules/@reflink/reflink-darwin-arm64/reflink.node`,
+      `${pnpm}/node_modules/@reflink/reflink-win32-x64-msvc/reflink.node`,
+      `${pnpm}/vendor/fastlist-0.3.0-x64.exe`,
+      `${pnpm}/node_modules/node-pty/prebuilds/win32-x64/pty.node`,
+    ];
+    for (const relative of [...keep, ...drop]) {
+      const file = path.join(desktop, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, /darwin/.test(relative) ? Buffer.from([0xcf, 0xfa, 0xed, 0xfe])
+        : /win32|\.exe$/.test(relative) ? Buffer.from('MZ') : elf);
+    }
+    const entry = path.join(desktop, pnpm, 'pnpm.cjs');
+    fs.writeFileSync(entry, '// pnpm entry must be preserved\n');
+    assert.throws(() => auditLinuxBundle(root, { targetArch: arch }), /musl payload|Windows payload|not ELF/);
+
+    pruneNonLinuxPrebuilds(desktop, arch);
+    pruneLinuxPayloads(desktop, arch);
+
+    for (const relative of keep) assert.deepEqual(fs.readFileSync(path.join(desktop, relative)), elf);
+    for (const relative of drop) assert.equal(fs.existsSync(path.join(desktop, relative)), false, relative);
+    assert.equal(fs.readFileSync(entry, 'utf8'), '// pnpm entry must be preserved\n');
+    assert.doesNotThrow(() => auditLinuxBundle(root, { targetArch: arch }));
+  });
+}
+
+test('Linux bundle audit rejects a musl suffix in bundled pnpm dependencies', t => {
+  const root = fixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const addon = path.join(root, 'dsh-desktop', 'vendor', 'pnpm', 'dist', 'node_modules', '@reflink', 'reflink-linux-x64-musl', 'reflink.node');
+  fs.mkdirSync(path.dirname(addon), { recursive: true });
+  fs.writeFileSync(addon, ELF);
+  assert.throws(() => auditLinuxBundle(root), /musl payload in glibc bundle/);
 });

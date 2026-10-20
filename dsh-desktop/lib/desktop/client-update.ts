@@ -1,266 +1,247 @@
-'use strict';
-
-// 客户端自更新流程（ADR 0002 L2 业务服务层；Wave 2 自 client-update.js
-// 类型化迁出，行为零变更）：更新 Deepseek Harness EAC 封装本身 —— 下载
-// 新版本 exe、经用户同意后交接给 apply-update 脚本替换并重启。
-
-import path = require('node:path');
+import crypto = require('node:crypto');
 import fs = require('node:fs');
-import { updCtx, nodeExe } from './runtime-paths';
-import { desktopProfile } from './profile';
-import { ensureGuard } from './guard-box';
-const updater = require('../../updater') as {
-  loadSettings(c: ReturnType<typeof updCtx>): Record<string, unknown>;
-  saveSettings(c: ReturnType<typeof updCtx>, s: unknown): void;
-  compareVersions(a: string, b: string): number;
-};
-// client-updater.js 尚未类型化（Wave 3 收编），先以窄签名消费。
-const clientUpdater = require('../../client-updater') as {
-  checkLatest(c: ReturnType<typeof updCtx>, currentVersion: string, opts?: { platform?: NodeJS.Platform }): Promise<{ isNewer: boolean; version: string; source: string; body?: string; htmlUrl?: string | null }>;
-  releaseFallbacks(c: ReturnType<typeof updCtx>, release: unknown): Promise<unknown[]>;
-  downloadRelease(c: ReturnType<typeof updCtx>, release: unknown, opts: Record<string, unknown>): Promise<{ filePath: string; size: number }>;
-  applyUpdate(c: ReturnType<typeof updCtx>, pending: unknown, opts: Record<string, unknown>): void;
-};
+import fsp = require('node:fs/promises');
+import path = require('node:path');
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { writeJsonAtomic, readJsonFile } from '../atomic-json';
+import { autoSelect, effectiveSource, initialSelection, localFile, parseSelection,
+  readRemoteJson, resolveUpdate, fetchUpdate } from './update-sources';
+import type { ReadRemote, ResolvedUpdate, SourceSelection, UpdateDefaults } from './update-sources';
+import { verifyPackage } from './update-signature';
 
-/** 注入接口：由宿主（Electron main / Tauri sidecar）在启动时提供。 */
-export interface ClientUpdateCtx {
-  log(tag: string, msg: string): void;
-  showBox(opts: Record<string, unknown>): Promise<{ response: number }>;
-  isQuitting(): boolean;
-  getAppVersion(): string;
-  getUserDataDir(): string;
-  getDshHome(): string | null;
-  getPlatform(): NodeJS.Platform;
-  openExternal(url: string): Promise<boolean>;
-  showUpdateWindow(version: string, kind: string): { isDestroyed(): boolean; destroy(): void } | null;
-  makeUpdateProgressPusher(win: unknown): { client(r: number, t: number, meta?: unknown): void; agent(s: string): void; force(m: unknown): void };
-  prepareQuitForClientUpdate(): Promise<void>;
-  exitProcess(): void;
-  getExecDir(): string;
+export interface DataBinding {
+  environmentRoot: string;
+  dshHome: string;
+  profile: string;
+  channel: string;
+  registryHome: string;
+  userDataDir: string;
+  webPort: number;
+  webviewRoot: string;
+  configRoot: string;
+  guestRoot: string;
 }
-
-let mod!: ClientUpdateCtx;
-export function init(d: ClientUpdateCtx): void { mod = d; }
-
-let clientUpdateBusy = false;
-
-interface SettingsLike {
-  skipClientVersion?: string | null;
-  pendingClientVersion?: string | null;
-  pendingClientUpdate?: { version: string; path: string; source: string } | null;
+export interface InstallHandoff {commit(): Promise<void>; cancel(): Promise<void>;}
+export interface UpdateContext {
+  stateDir: string;
+  defaults: UpdateDefaults;
+  currentVersion: string;
+  target: string;
+  binding(): DataBinding;
+  notify(presentation: Presentation): void;
+  readRemote?: ReadRemote;
+  prepare?(transactionId: string, signal: AbortSignal, plan: UpdatePlan, progress: (message: string) => void): Promise<InstallHandoff | void>;
 }
-
-export async function runClientUpdateFlow(manual: boolean): Promise<void> {
-  if (mod.isQuitting()) return;
-  // macOS v1：上游 Release 无 macOS 资产，客户端更新整体关闭（恢复
-  // external-handoff 需上游发布 macOS 包，届时删除本守卫即可）。
-  if (mod.getPlatform() === 'darwin') return;
-  if (clientUpdateBusy) {
-    if (manual) await mod.showBox({ type: 'info', title: '更新', message: '客户端更新正在进行中，请稍候。', buttons: ['确定'] });
-    return;
-  }
-  // busy 从入口即置位：5.3.2 及以前置位在弹窗/快照之后，12h 周期检查与
-  // 手动检查并发时可双双通过守卫 → 双弹窗/双下载。
-  clientUpdateBusy = true;
-  try {
-    await runClientUpdateFlowInner(manual);
-  } finally {
-    clientUpdateBusy = false;
-  }
+export interface Presentation {
+  phase: 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'installing' | 'error';
+  version?: string;
+  progress?: number;
+  cancellable?: boolean;
+  message?: string;
 }
-
-async function runClientUpdateFlowInner(manual: boolean): Promise<void> {
-  const ctx = updCtx();
-  const settings = updater.loadSettings(ctx) as SettingsLike;
-  const platform = mod.getPlatform();
-  let release: { isNewer: boolean; version: string; source: string; body?: string; htmlUrl?: string | null };
-  try {
-    release = await clientUpdater.checkLatest(ctx, mod.getAppVersion(), { platform });
-  } catch (err) {
-    mod.log('client-update', '检查失败: ' + (err as Error).message);
-    if (manual) {
-      await mod.showBox({
-        type: 'warning',
-        title: '检查客户端更新失败',
-        message: '无法连接上游发布源。',
-        detail: (err as Error).message + '\n\n可通过环境变量 DSH_DESKTOP_RELEASE_API 指定镜像 API。',
-        buttons: ['确定'],
-      });
+export interface UpdatePlan {
+  schemaVersion: 1;
+  transactionId: string;
+  update: ResolvedUpdate;
+  binding: DataBinding;
+  packageFile: string;
+  prepared: boolean;
+}
+export class ClientUpdate {
+  private selection: SourceSelection;
+  private presentation: Presentation = {phase: 'idle'};
+  private plan: UpdatePlan | null = null;
+  private operation: AbortController | null = null;
+  private task: Promise<unknown> | null = null;
+  private settingsInvalid = false;
+  private readonly settingsFile: string;
+  private readonly stateFile: string;
+  constructor(private readonly ctx: UpdateContext) {
+    this.settingsFile = path.join(ctx.stateDir, 'update-settings.json');
+    this.stateFile = path.join(ctx.stateDir, 'update-state.json');
+    fs.mkdirSync(ctx.stateDir, {recursive: true, mode: 0o700});
+    const settingsExisted = fs.existsSync(this.settingsFile);
+    const saved = readJsonFile(this.settingsFile);
+    // Invalid persisted configuration fails visibly; it must never erase manual choices.
+    try { if (settingsExisted && !saved) throw new Error('update-invalid-source-settings');
+      this.selection = saved ? parseSelection(saved) : initialSelection(); }
+    catch { this.selection = initialSelection(); this.settingsInvalid = true;
+      this.presentation = {phase: 'error', message: 'update-invalid-source-settings'}; }
+    if (!settingsExisted) writeJsonAtomic(this.settingsFile, this.selection);
+    const previous = readJsonFile(this.stateFile);
+    if (!this.settingsInvalid && previous && previous.phase !== 'idle') {
+      this.presentation = {phase: 'error', message: '上次更新未完成，请重新检查；恢复材料已保留'};
+    } else if (!this.settingsInvalid && previous?.schemaVersion===1 && previous.phase==='idle'
+      && previous.version===this.ctx.currentVersion && typeof previous.completedTransactionId==='string'
+      && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(previous.completedTransactionId)) {
+      this.presentation = {phase:'idle',version:this.ctx.currentVersion,message:'已更新到 '+this.ctx.currentVersion};
     }
-    return;
   }
-  if (!release.isNewer) {
-    if (manual) {
-      await mod.showBox({
-        type: 'info',
-        title: '检查客户端更新',
-        message: '当前已是最新版本。',
-        detail: `Deepseek Harness EAC（封装版本 v${mod.getAppVersion()}）\n上游最新：${release.version}（${release.source}）`,
-        buttons: ['确定'],
-      });
-    }
-    return;
+  completeRestart(transactionId: string, version: string): void {
+    const saved=readJsonFile(this.stateFile);
+    if(this.settingsInvalid||this.task||this.operation||version!==this.ctx.currentVersion)throw new Error('update-completion-identity-mismatch');
+    if(saved?.phase==='idle'&&saved.completedTransactionId===transactionId&&saved.version===version)return;
+    if(saved?.transactionId!==transactionId||saved.version!==version)throw new Error('update-completion-identity-mismatch');
+    this.plan=null;
+    this.publish({phase:'idle',version,message:'已更新到 '+version},transactionId);
   }
-  if (!manual && settings.skipClientVersion === release.version) return;
-  // M7 修复：用户选过"稍后"的同版本不再每 12h 重复弹窗/重复下载。
-  if (!manual && settings.pendingClientVersion === release.version) return;
-  // E2E 自动化钩子（与 DSH_DESKTOP_TEST_FORCE_UNSAFE 同惯例）：自动接受
-  // 「立即更新」，让 scripts/e2e-v4.js 能无人值守跑完整更新链路。默认关闭。
-  const externalHandoff = platform !== 'win32';
-  const autoAcceptUpdate = !externalHandoff && process.env.DSH_DESKTOP_TEST_AUTO_UPDATE === '1';
-  const notes = release.body ? '\n\n更新说明：\n' + release.body.slice(0, 800) : '';
-  const { response } = autoAcceptUpdate ? { response: 0 } : await mod.showBox({
-    type: 'info',
-    title: '发现新版本客户端',
-    message: `Deepseek Harness EAC 封装发布了新版本：v${release.version}`,
-    detail: externalHandoff
-      ? `当前版本：v${mod.getAppVersion()}\n发布来源：${release.source}${notes}\n\nLinux 版本由系统包管理器或用户替换安装包，应用不会自行下载或替换程序目录。`
-      : `当前版本：v${mod.getAppVersion()}\n发布来源：${release.source}${notes}\n\n是否立即更新？下载后自动替换并重启应用。`,
-    buttons: externalHandoff ? ['打开下载页面', '跳过此版本', '稍后'] : ['立即更新', '跳过此版本', '稍后'],
-    defaultId: 0,
-    cancelId: 2,
-  });
-  if (response === 1) {
-    settings.skipClientVersion = release.version;
-    updater.saveSettings(ctx, settings);
-    mod.log('client-update', '用户跳过版本 ' + release.version);
-    return;
+  status(): Presentation { return {...this.presentation}; }
+  settings(): Record<string, unknown> {
+    let effective: {id: string; notice: string};
+    try { effective = effectiveSource(this.selection, this.ctx.defaults); }
+    catch (error) { effective = {id: this.selection.preferredSourceId, notice: (error as Error).message}; }
+    return {selection: {...this.selection}, releaseChannel: 'stable', availableChannels: ['stable'],
+      effectiveSourceId: this.plan?.update.sourceId || effective.id, notice: this.plan?.update.notice || effective.notice, giteeConfigured: !!this.ctx.defaults.gitee.repo,
+      signingConfigured: Object.keys(this.ctx.defaults.trustedKeys).length > 0, currentVersion: this.ctx.currentVersion,
+      target: this.ctx.target, presentation: this.status()};
   }
-  if (response === 2) {
-    // M7 修复：记录"稍后"版本，周期检查不再重复打扰（新版本出现时仍会提示）。
-    settings.pendingClientVersion = release.version;
-    updater.saveSettings(ctx, settings);
-    mod.log('client-update', '用户稍后处理版本 ' + release.version);
-    return;
+  private publish(presentation: Presentation, completedTransactionId?: string): void {
+    this.presentation = presentation;
+    writeJsonAtomic(this.stateFile, {schemaVersion: 1, ...presentation, ...(completedTransactionId ? {completedTransactionId} : {}),
+      transactionId: this.plan?.transactionId || null, updatedAt: new Date().toISOString()});
+    this.ctx.notify(this.status());
   }
-
-  if (externalHandoff) {
-    if (!release.htmlUrl || !await mod.openExternal(release.htmlUrl)) {
-      await mod.showBox({
-        type: 'warning',
-        title: '无法打开下载页面',
-        message: '请从项目 Release 页面下载适用于 Linux 的安装包。',
-        detail: release.htmlUrl || '发布源没有提供可打开的 Release 页面地址。',
-        buttons: ['确定'],
-      });
-    }
-    return;
+  private async run<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.plan?.prepared) throw new Error('update-installation-in-progress');
+    if (this.task) throw new Error('update-busy');
+    const operation = new AbortController(); this.operation = operation;
+    const task = Promise.resolve().then(() => fn(operation.signal)); this.task = task;
+    try { return await task; }
+    catch (error) {
+      this.publish({phase: operation.signal.aborted ? 'idle' : 'error',
+        message: operation.signal.aborted ? '本次更新已取消' : safeUpdateError(error)});
+      throw new Error(operation.signal.aborted ? 'update-cancelled' : safeUpdateError(error));
+    } finally { if (this.operation === operation) this.operation = null; if (this.task === task) this.task = null; }
   }
-
-  const progressWin = mod.showUpdateWindow(release.version, 'client');
-  const progress = mod.makeUpdateProgressPusher(progressWin);
-  try {
-    // V4.1 更新保障①：客户端更新前同样强制插件/配置快照，失败则中止
-    //（下载与安装都不动 profile，但多一道回滚点总比少一道强）。
-    if (!ensureGuard().snapshot('pre-update:client:' + release.version)) {
-      throw new Error('更新前保护快照失败（profile 不可读），已中止客户端更新。');
-    }
-    // V4.2：探测其余发布源的同版本 release 作为备用下载源（GitHub ↔ Gitee），
-    // 主源多次失败/卡住时自动切换，全程在弹窗内提示。
-    const fallbacks = await clientUpdater.releaseFallbacks(ctx, release);
-    const speedState = { t: 0, bytes: 0, speed: null as number | null };
-    const downloaded: { filePath: string; size: number } = await clientUpdater.downloadRelease(ctx, release, {
-      fallbacks,
-      onSourceChange: (_source: unknown, idx: number, urls: unknown[]) => {
-        mod.log('client-update', `切换备用下载源（${idx + 1}/${urls.length}）`);
-        progress.force({ stage: '下载停滞，已自动切换下载源（' + (idx + 1) + '/' + urls.length + '）…' });
-      },
-      onProgress: (received: number, total: number) => {
+  async cancel(message = '本次更新已取消'): Promise<void> {
+    if (this.plan?.prepared) return;
+    // Normal shutdown also calls cancel. An idle controller has no work to cancel
+    // and must preserve its authenticated completion record.
+    if (!this.plan && !this.task && !this.operation && this.presentation.phase==='idle') return;
+    this.operation?.abort(new Error('update-cancelled'));
+    await this.task?.catch(() => {});
+    this.plan = null; this.publish({phase: 'idle', ...(message ? {message} : {})});
+  }
+  async configure(value: unknown): Promise<Record<string, unknown>> {
+    if (this.plan?.prepared) throw new Error('update-installation-in-progress');
+    const next = parseSelection(value);
+    await this.cancel('');
+    this.settingsInvalid = false; this.selection = next; writeJsonAtomic(this.settingsFile, next);
+    return this.settings();
+  }
+  async selectAutomatically(): Promise<Record<string, unknown>> {
+    if (this.plan?.prepared) throw new Error('update-installation-in-progress');
+    await this.cancel('');
+    await this.run(async signal => {
+      const next = await autoSelect(this.ctx.defaults, this.ctx.readRemote || readRemoteJson, signal);
+      this.settingsInvalid = false; this.selection = {...next, localPath: this.selection.localPath, customUrl: this.selection.customUrl};
+      writeJsonAtomic(this.settingsFile, this.selection);
+    });
+    return this.settings();
+  }
+  async initialize(): Promise<void> {
+    if (this.ctx.defaults.geoUrl && !this.settingsInvalid && this.selection.selectionMode === 'auto' && !this.selection.geoDetectedAt) await this.selectAutomatically();
+  }
+  async check(): Promise<Presentation> {
+    return this.run(async signal => {
+      if (this.settingsInvalid) throw new Error('update-invalid-source-settings');
+      this.plan = null; this.publish({phase: 'checking'});
+      let update: ResolvedUpdate | null;
+      try {
+        update = await resolveUpdate(this.selection, this.ctx.defaults, this.ctx.currentVersion,
+          this.ctx.target, signal, this.ctx.readRemote || readRemoteJson);
+      } catch (error) {
+        const selected = effectiveSource(this.selection, this.ctx.defaults).id;
+        const fallback = selected === 'github' ? 'gitee' : 'github';
+        if (signal.aborted || this.selection.selectionMode !== 'auto' || !['github', 'gitee'].includes(selected)
+          || !this.ctx.defaults[fallback].repo) throw error;
+        update = await resolveUpdate({...this.selection, selectionMode: 'manual', preferredSourceId: fallback},
+          this.ctx.defaults, this.ctx.currentVersion, this.ctx.target, signal, this.ctx.readRemote || readRemoteJson);
+        if (update) update.notice = '首选来源暂不可用，本次使用 ' + (fallback === 'github' ? 'GitHub' : 'Gitee');
+      }
+      if (signal.aborted) throw signal.reason;
+      if (!update) { this.publish({phase: 'idle', message: '没有适合当前安装形态的较新稳定版'}); return this.status(); }
+      const transactionId = crypto.randomUUID();
+      const packageFile = path.join(this.ctx.stateDir, 'transactions', transactionId, 'package');
+      this.plan = {schemaVersion: 1, transactionId, update, binding: this.ctx.binding(), packageFile, prepared: false};
+      this.publish({phase: 'available', version: update.manifest.version, message: update.notice});
+      return this.status();
+    });
+  }
+  async download(): Promise<Presentation> {
+    return this.run(async signal => {
+      const plan = this.plan;
+      if (!plan || this.presentation.phase !== 'available') throw new Error('update-plan-required');
+      const {artifact} = plan.update;
+      await fsp.mkdir(path.dirname(plan.packageFile), {recursive: true, mode: 0o700});
+      const space = await fsp.statfs(path.dirname(plan.packageFile));
+      if (space.bavail * space.bsize < artifact.size * 2) throw new Error('update-disk-space');
+      this.publish({phase: 'downloading', version: plan.update.manifest.version, progress: 0});
+      let downloaded = 0; let lastTick = 0;
+      const counter = new Transform({transform: (chunk: Buffer, _encoding, done) => {
+        downloaded += chunk.length;
+        if (downloaded > artifact.size) return done(new Error('package-size-mismatch'));
         const now = Date.now();
-        if (speedState.t && now - speedState.t >= 500) {
-          const inst = (received - speedState.bytes) / ((now - speedState.t) / 1000);
-          speedState.speed = speedState.speed == null ? inst : speedState.speed * 0.7 + inst * 0.3;
-        }
-        speedState.t = now;
-        speedState.bytes = received;
-        const sp = speedState.speed || 0;
-        const pct = total > 0 ? Math.round((received * 100) / total) : -1;
-        const meta: Record<string, unknown> = {};
-        if (pct >= 0 && sp > 0 && received < total) {
-          meta.speedMBps = sp / 1048576;
-          meta.etaSec = (total - received) / sp;
-        }
-        progress.client(received, total, meta);
-      },
+        if (now - lastTick > 250) { lastTick = now; this.publish({phase: 'downloading',
+          version: plan.update.manifest.version, progress: downloaded / artifact.size}); }
+        done(null, chunk);
+      }});
+      let source: Readable;
+      if (plan.update.sourceId === 'local') {
+        // Re-resolve on every copy: a removed drive or a replaced source cannot bypass containment.
+        const selected = path.resolve(this.selection.localPath);
+        const root = (await fsp.lstat(selected)).isDirectory() ? selected : path.dirname(selected);
+        const local = await localFile(root, artifact.url);
+        source = fs.createReadStream(local);
+      } else {
+        const response = await fetchUpdate(plan.update.location,
+          AbortSignal.any([signal, AbortSignal.timeout(30 * 60 * 1000)]));
+        if (!response.ok || !response.body) throw new Error('update-package-http-' + response.status);
+        source = Readable.fromWeb(response.body as import('node:stream/web').ReadableStream);
+      }
+      const partial = plan.packageFile + '.partial';
+      try {
+        await pipeline(source, counter, fs.createWriteStream(partial, {flags: 'wx', mode: 0o600}), {signal});
+        const key = this.ctx.defaults.trustedKeys[plan.update.keyId];
+        if (!key) throw new Error('untrusted-update-key');
+        await verifyPackage(partial, artifact, key);
+        if (signal.aborted) throw signal.reason;
+        await fsp.rename(partial, plan.packageFile);
+        writeJsonAtomic(path.join(path.dirname(plan.packageFile), 'plan.json'), plan);
+        this.publish({phase: 'ready', version: plan.update.manifest.version, progress: 1});
+        return this.status();
+      } catch (error) { await fsp.unlink(partial).catch(() => {}); throw error; }
     });
-    settings.pendingClientUpdate = { version: release.version, path: downloaded.filePath, source: release.source };
-    settings.skipClientVersion = null;
-    settings.pendingClientVersion = null;
-    updater.saveSettings(ctx, settings);
-    const { response: r2 } = autoAcceptUpdate ? { response: 0 } : await mod.showBox({
-      type: 'info',
-      title: '下载完成',
-      message: `已准备好 Deepseek Harness EAC 封装 v${release.version}（${Math.round(downloaded.size / 1048576)} MB）。`,
-      detail: '立即重启应用完成更新？\n· 重启后自动安装新版本并启动\n· 插件、皮肤、会话与配置全部保留（仅替换程序本体）\n· 选择稍后重启：下次启动时再提示安装',
-      buttons: ['立即重启', '稍后重启'],
-      defaultId: 0,
-      cancelId: 1,
+  }
+  async prepare(): Promise<UpdatePlan> {
+    return this.run(async signal => {
+      const plan = this.plan;
+      if (!plan || this.presentation.phase !== 'ready') throw new Error('verified-update-required');
+      if (!this.ctx.prepare) throw new Error('update-save-confirmation-unavailable');
+      if (JSON.stringify(this.ctx.binding()) !== JSON.stringify(plan.binding)) throw new Error('update-data-binding-changed');
+      const progress = (message: string): void => {signal.throwIfAborted();this.publish({phase:'installing',version:plan.update.manifest.version,message,cancellable:true});};
+      progress('正在验证完整包，完成前可以取消');
+      await verifyPackage(plan.packageFile, plan.update.artifact, this.ctx.defaults.trustedKeys[plan.update.keyId]!);
+      const handoff = await this.ctx.prepare(plan.transactionId, signal, plan, progress);
+      if (!handoff) throw new Error('update-install-handoff-unavailable');
+      try {
+        signal.throwIfAborted();
+        plan.prepared = true;
+        writeJsonAtomic(path.join(path.dirname(plan.packageFile), 'plan.json'), plan);
+        this.publish({phase: 'installing', version: plan.update.manifest.version, message: '保存与备份完成，正在交接安装', cancellable: false});
+        await handoff.commit();
+      } catch (error) {
+        plan.prepared = false;
+        await handoff.cancel();
+        throw error;
+      }
+      return JSON.parse(JSON.stringify(plan)) as UpdatePlan;
     });
-    if (r2 === 0) {
-      await mod.prepareQuitForClientUpdate();
-      const clientUpdateOpts = {
-        userDataDir: mod.getUserDataDir(),
-        dshHome: mod.getDshHome(),
-        installDir: mod.getExecDir(),
-        profileDir: path.join(mod.getDshHome() || '', 'profiles', desktopProfile()),
-        currentVersion: mod.getAppVersion(),
-        newVersion: release.version,
-        nodeExe: nodeExe(),
-      };
-      clientUpdater.applyUpdate(ctx, settings.pendingClientUpdate, clientUpdateOpts);
-      setTimeout(() => mod.exitProcess(), 400);
-    }
-  } catch (err) {
-    mod.log('client-update', '更新失败: ' + (err as Error).message);
-    await mod.showBox({
-      type: 'error',
-      title: '更新失败',
-      message: '未能完成客户端更新，仍使用当前版本。',
-      detail: (err as Error).message,
-      buttons: ['确定'],
-    });
-  } finally {
-    if (progressWin && !progressWin.isDestroyed()) progressWin.destroy();
   }
 }
-
-export function offerPendingClientUpdate(): void {
-  if (mod.getPlatform() !== 'win32') return;
-  const ctx = updCtx();
-  const settings = updater.loadSettings(ctx) as SettingsLike;
-  const pending = settings.pendingClientUpdate;
-  if (!pending || !pending.path) return;
-  if (!fs.existsSync(pending.path)) {
-    settings.pendingClientUpdate = null;
-    updater.saveSettings(ctx, settings);
-    return;
-  }
-  if (updater.compareVersions(pending.version, mod.getAppVersion()) <= 0) {
-    settings.pendingClientUpdate = null;
-    updater.saveSettings(ctx, settings);
-    return;
-  }
-  mod.showBox({
-    type: 'info',
-    title: '有待安装的客户端更新',
-    message: `已下载 Deepseek Harness EAC 封装 v${pending.version}，是否现在安装并重启？`,
-    detail: '安装包保存在数据目录的 updates 文件夹中。\n插件、皮肤、会话与配置全部保留（仅替换程序本体）。',
-    buttons: ['立即重启', '稍后'],
-    defaultId: 0,
-    cancelId: 1,
-  }).then(async ({ response }) => {
-    if (response !== 0) return;
-    await mod.prepareQuitForClientUpdate();
-    const clientUpdateOpts2 = {
-      userDataDir: mod.getUserDataDir(),
-      dshHome: mod.getDshHome(),
-      installDir: mod.getExecDir(),
-      profileDir: path.join(mod.getDshHome() || '', 'profiles', desktopProfile()),
-      currentVersion: mod.getAppVersion(),
-      newVersion: pending.version,
-      nodeExe: nodeExe(),
-    };
-    clientUpdater.applyUpdate(ctx, pending, clientUpdateOpts2);
-    setTimeout(() => mod.exitProcess(), 400);
-  });
+function safeUpdateError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  // Only stable, non-sensitive error codes reach the page or persisted status.
+  return /^[a-z][a-z0-9-]{0,100}$/.test(message) ? message : 'update-operation-failed';
 }

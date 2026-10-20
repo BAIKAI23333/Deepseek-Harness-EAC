@@ -1,6 +1,6 @@
 'use strict';
 // 依赖层小补丁（幂等）：目录选择器 worker 无消息退出时，把真实退出码/信号带进
-// 错误文案。由 postinstall / pack / dist 在打包前应用；匹配失败只告警不中断。
+// 错误文案。由 postinstall / pack / dist 应用；兼容补丁漂移告警，安全补丁漂移硬失败。
 import fs = require('node:fs');
 import path = require('node:path');
 // 内核补丁文件一旦截断 = 用户机启动期 MODULE_NOT_FOUND/语法损坏且无自愈：
@@ -89,8 +89,17 @@ function patchSettingsNavScroll(): void {
 //      自身滚动约束，panel 的 overflow:auto 不会产生意外滚动条；min-width
 //      防拖到不可用。幂等标记 dsh-desktop-panel-resize。
 const PANEL_RESIZE_MARKER = 'dsh-desktop-panel-resize';
+// 0.1.7 世代：z-index → background → width → max-width → height → … → overflow。
 const PANEL_RE =
   /\.([A-Za-z0-9_-]+)_panel\{(z-index:1;background:var\(--dsw-alias-bg-layer-2\);)width:800px;(max-width:[^;]+;height:[^;]+;[^{}]*?display:flex;position:relative;)overflow:hidden\}/;
+// 0.2.0 世代（KERN-004）：官方重构了属性序与高度公式（width:800px → height:
+// min(800px, calc(100vh - 2*max(24px, var(--dsh-frame-overlay-top,24px)))) →
+// border-radius → background → max-width → box-shadow → scrollbar vars →
+// display:flex;position:relative;overflow:hidden）。功能未官方化（panel 仍固定
+// 800px 宽 + overflow:hidden），只做锚点适配：宽匹配块 + 守卫（display:flex;
+// position:relative 与 max-width: 必须在块内，确保命中的是设置弹窗 panel 本体）。
+const PANEL_RE_V2 =
+  /\.([A-Za-z0-9_-]+)_panel\{([^{}]*?)width:800px;([^{}]*?)overflow:hidden\}/;
 
 function patchSettingsPanelResize(): void {
   const file = path.join(root, 'node_modules', '@deepseek-ai', 'dsh-client-ui-settings-general', 'lib', 'client.js');
@@ -105,7 +114,23 @@ function patchSettingsPanelResize(): void {
   }
   const m = PANEL_RE.exec(src);
   if (!m) {
-    console.log('[patch-deps] 设置弹窗未匹配到 panel CSS（上游版本可能已修复/更新），跳过');
+    // KERN-004：0.2.0 世代锚点（属性序重构，功能未官方化 —— panel 仍固定
+    // width:800px + overflow:hidden，见 PANEL_RE_V2 注释）。
+    const v2 = PANEL_RE_V2.exec(src);
+    const v2Pre = v2?.[2];
+    const v2Post = v2?.[3];
+    if (!v2 || !v2Pre || !v2Post
+      || !(v2Pre + v2Post).includes('display:flex;position:relative;')
+      || !(v2Pre + v2Post).includes('max-width:')) {
+      console.log('[patch-deps] 设置弹窗未匹配到 panel CSS（上游版本可能已修复/更新），跳过');
+      return;
+    }
+    const next =
+      '.' + v2[1] + '_panel{' + v2[2] + 'width:min(75vw,1280px);' + v2[3] +
+      'overflow:auto;resize:horizontal;min-width:640px;/*' + PANEL_RESIZE_MARKER + '*/}';
+    src = src.replace(v2[0], next);
+    writeFileAtomic(file, src);
+    console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
     return;
   }
   const next =
@@ -116,10 +141,18 @@ function patchSettingsPanelResize(): void {
   console.log('[patch-deps] 已补丁 settings-general：弹窗宽度跟随主窗（≤1280px）+ 可拖拽拉伸');
 }
 
-// 设置写入失败传播补丁：上游 SettingsScopeController.mutate() 会把 Remote
-// 拒绝和传输异常恢复后直接 return，导致调用方 Promise resolve 并误报“已保存”。
-// 普通表单写入遇到 settings-conflict 时刷新镜像并重试一次；显式 revision fence
-// 不自动越过。最终失败必须 reject，让设置界面进入自己的错误提示分支。
+// 设置写入冲突重试补丁（v2，适配 0.1.7-rc.2+ 的 ctx.remote 形态）：上游
+// ConfigFormController.mutate() 遇 settings/conflict 时 recover 后直接 return
+// false——用户操作被静默丢弃（EAC issue #457：主题/字号快速连点回弹的通道
+// 之一）。本补丁对无显式 revision fence 的写入做一次「recover 后按最新
+// revision 重试」；显式 fence（域编辑器钉版本）语义保持，冲突仍如实上报。
+// 最终失败仍 return false，让调用方进入各自的错误提示分支。
+// 锚点从 0.1.7-rc.2 编译产物逐字摘录，三处世代陷阱勿回退：
+//   1. 传输句柄是 this.ctx.remote.settings.mutate（旧锚 this.api.* 已失配，
+//      那是上一版补丁从未生效的死因之一）；
+//   2. 错误码是 "settings/conflict"（斜杠；旧补丁写 settings-conflict，永远
+//      为 false，重试分支形同死代码）；
+//   3. 编译产物无语句级 void、undefined 为 void 0。
 const SETTINGS_WRITE_MARKER = 'dsh-desktop-settings-write-retry';
 const SETTINGS_WRITE_TARGET = path.join(
   root,
@@ -130,76 +163,34 @@ const SETTINGS_WRITE_TARGET = path.join(
   'client.js',
 );
 const SETTINGS_WRITE_OLD = [
-  '\t\t\tmutate(ops, expectedRevision) {',
-  '\t\t\t\tconst ownedOps = structuredClone(ops);',
-  '\t\t\t\tconst generation = ++this.writeGeneration;',
-  '\t\t\t\treturn this.enqueue(async () => {',
-  '\t\t\t\t\tconst revision = expectedRevision ?? this.pendingRevision ?? this.getSnapshot().revision;',
-  '\t\t\t\t\tlet response;',
-  '\t\t\t\t\ttry {',
-  '\t\t\t\t\t\tresponse = await this.api.settings.mutate(this.spec.namespace, ownedOps, revision);',
-  '\t\t\t\t\t} catch (_settingsWriteFailure) {',
-  '\t\t\t\t\t\tawait this.recover(generation);',
-  '\t\t\t\t\t\treturn;',
-  '\t\t\t\t\t}',
   '\t\t\t\t\tif (!response.ok) {',
   '\t\t\t\t\t\tawait this.recover(generation);',
-  '\t\t\t\t\t\treturn;',
+  '\t\t\t\t\t\treturn false;',
   '\t\t\t\t\t}',
-  '\t\t\t\t\tif (this.disposed) return;',
-  '\t\t\t\t\tif (generation === this.writeGeneration) {',
-  '\t\t\t\t\t\tthis.pendingRevision = void 0;',
-  '\t\t\t\t\t\tthis.mirror.acceptView(response.value);',
-  '\t\t\t\t\t} else this.pendingRevision = response.value.revision;',
-  '\t\t\t\t});',
-  '\t\t\t}',
 ].join('\n');
 const SETTINGS_WRITE_NEW = [
-  '\t\t\tmutate(ops, expectedRevision) {',
-  '\t\t\t\tconst ownedOps = structuredClone(ops);',
-  '\t\t\t\tconst generation = ++this.writeGeneration;',
-  '\t\t\t\treturn this.enqueue(async () => {',
-  `\t\t\t\t\t// ${SETTINGS_WRITE_MARKER}`,
-  '\t\t\t\t\tconst toFailure = (error) => {',
-  '\t\t\t\t\t\tconst failure = new Error(error?.message ?? "settings write failed");',
-  '\t\t\t\t\t\tif (error?.code !== void 0) failure.code = error.code;',
-  '\t\t\t\t\t\tif (error?.details !== void 0) failure.details = error.details;',
-  '\t\t\t\t\t\treturn failure;',
-  '\t\t\t\t\t};',
-  '\t\t\t\t\tconst settle = (response) => {',
-  '\t\t\t\t\t\tif (this.disposed) return;',
-  '\t\t\t\t\t\tif (generation === this.writeGeneration) {',
-  '\t\t\t\t\t\t\tthis.pendingRevision = void 0;',
-  '\t\t\t\t\t\t\tthis.mirror.acceptView(response.value);',
-  '\t\t\t\t\t\t} else this.pendingRevision = response.value.revision;',
-  '\t\t\t\t\t};',
-  '\t\t\t\t\tconst call = (revision) => this.api.settings.mutate(this.spec.namespace, ownedOps, revision);',
-  '\t\t\t\t\tlet response;',
-  '\t\t\t\t\ttry {',
-  '\t\t\t\t\t\tresponse = await call(expectedRevision ?? this.pendingRevision ?? this.getSnapshot().revision);',
-  '\t\t\t\t\t} catch (error) {',
-  '\t\t\t\t\t\tawait this.recover(generation);',
-  '\t\t\t\t\t\tthrow error;',
-  '\t\t\t\t\t}',
-  '\t\t\t\t\tif (!response.ok && response.error.code === "settings-conflict" && expectedRevision === void 0) {',
-  '\t\t\t\t\t\tthis.pendingRevision = void 0;',
-  '\t\t\t\t\t\tawait this.mirror.load();',
-  '\t\t\t\t\t\tif (this.disposed) return;',
-  '\t\t\t\t\t\ttry {',
-  '\t\t\t\t\t\t\tresponse = await call(this.getSnapshot().revision);',
-  '\t\t\t\t\t\t} catch (error) {',
-  '\t\t\t\t\t\t\tawait this.recover(generation);',
-  '\t\t\t\t\t\t\tthrow error;',
-  '\t\t\t\t\t\t}',
-  '\t\t\t\t\t}',
   '\t\t\t\t\tif (!response.ok) {',
-  '\t\t\t\t\t\tconst failure = toFailure(response.error);',
+  `\t\t\t\t\t\t/* ${SETTINGS_WRITE_MARKER}: settings/conflict -> recover once, retry once (v2, ctx.remote) */`,
+  '\t\t\t\t\t\tif (response.error !== void 0 && response.error.code === "settings/conflict" && expectedRevision === void 0 && generation === this.writeGeneration && !this.disposed) {',
+  '\t\t\t\t\t\t\tawait this.recover(generation);',
+  '\t\t\t\t\t\t\tif (!this.disposed && generation === this.writeGeneration) {',
+  '\t\t\t\t\t\t\t\tconst fresh = this.getSnapshot().revision;',
+  '\t\t\t\t\t\t\t\tif (fresh !== void 0 && fresh !== revision) {',
+  '\t\t\t\t\t\t\t\t\tconst retried = await this.ctx.remote.settings.mutate(this.spec.namespace, ownedOps, fresh);',
+  '\t\t\t\t\t\t\t\t\tif (retried.ok) {',
+  '\t\t\t\t\t\t\t\t\t\tif (this.disposed) return true;',
+  '\t\t\t\t\t\t\t\t\t\tif (generation === this.writeGeneration) {',
+  '\t\t\t\t\t\t\t\t\t\t\tthis.pendingRevision = void 0;',
+  '\t\t\t\t\t\t\t\t\t\t\tthis.mirror.acceptView(retried.value);',
+  '\t\t\t\t\t\t\t\t\t\t} else this.pendingRevision = retried.value.revision;',
+  '\t\t\t\t\t\t\t\t\t\treturn true;',
+  '\t\t\t\t\t\t\t\t\t}',
+  '\t\t\t\t\t\t\t\t}',
+  '\t\t\t\t\t\t\t}',
+  '\t\t\t\t\t\t}',
   '\t\t\t\t\t\tawait this.recover(generation);',
-  '\t\t\t\t\t\tthrow failure;',
+  '\t\t\t\t\t\treturn false;',
   '\t\t\t\t\t}',
-  '\t\t\t\t\tsettle(response);',
-  '\t\t\t\t});',
-  '\t\t\t}',
 ].join('\n');
 
 function patchSettingsWriteFailureSource(source: string): string | undefined {
@@ -224,7 +215,296 @@ function patchSettingsWriteFailure(targetFile = SETTINGS_WRITE_TARGET): boolean 
     return false;
   }
   writeFileAtomic(targetFile, patched);
-  console.log('[patch-deps] 已补丁 client-ui-settings：冲突刷新重试，最终失败不再误报成功');
+  console.log('[patch-deps] 已补丁 client-ui-settings：settings/conflict 恢复后按新 revision 重试一次');
+  return true;
+}
+
+// 主题写入收敛 + adopt 在途防护补丁（EAC issue #457）：上游 ThemeRuntime
+// 的 setTheme/setFontSize 是乐观发布——先改内存、publish 翻 DOM，然后才
+// 异步 host.set，且无视写入结果；adopt() 又会在每次设置广播时无条件把内存
+// 拉回「已提交值」。快速连点时 N 笔写排队，每笔响应都把显示逐帧拉回历史值
+// （闪屏/回弹）；与被回弹污染的本地值比较的同值守卫还会吞掉用户的补充点击。
+// 本补丁在 ThemeRuntime 私有层做两件事（刻意不动 ConfigForm 的
+// ordering/revision/recovery 公共契约）：
+//   1. 每字段至多一笔在途 wire 写；飞行中的调用只更新目标值，settle 后
+//      目标 ≠ 落盘值再补一笔（N 次点击 = 1 笔 wire 写，写终值）。
+//   2. adopt() 按字段跳过在途字段的覆盖（其他窗口/外部编辑照常采纳）；
+//      写失败回滚到该字段最后 settled 的持久值（force，绕过防护）。
+// 锚点按 0.1.7-rc.2 编译产物逐字摘录，两代通用（0.2.0-rc.2 的
+// client/index.ts 逐字节一致）：产物无语句级 void、undefined 编译为
+// void 0、字号边界内联为字面量（边界值只在 throw 行，不在锚点内）。
+const THEME_WRITE_MARKER = 'dsh-desktop-theme-write-converge';
+const THEME_WRITE_TARGET = path.join(
+  root,
+  'node_modules',
+  '@deepseek-ai',
+  'dsh-client-ui-theme',
+  'lib',
+  'client.js',
+);
+const THEME_WRITE_EDITS: Array<[string, string]> = [
+  [
+    [
+      '\t\t\t\tthis.preference = id;',
+      '\t\t\t\tif (isThemePreference(id)) this.host.set(THEME_PREFERENCE_FIELD, id);',
+      '\t\t\t\tthis.publish();',
+    ].join('\n'),
+    [
+      '\t\t\t\tthis.preference = id;',
+      '\t\t\t\tif (isThemePreference(id)) this.__eacWrite("preference", id);',
+      '\t\t\t\tthis.publish();',
+    ].join('\n'),
+  ],
+  [
+    [
+      '\t\t\t\tthis.fontSize = px;',
+      '\t\t\t\tthis.host.set(FONT_SIZE_FIELD, px);',
+      '\t\t\t\tthis.publish();',
+    ].join('\n'),
+    [
+      '\t\t\t\tthis.fontSize = px;',
+      '\t\t\t\tthis.__eacWrite("fontSize", px);',
+      '\t\t\t\tthis.publish();',
+    ].join('\n'),
+  ],
+  [
+    [
+      '\t\t\t/** Adopt the scope\'s accepted durable preference without writing it back. */',
+      '\t\t\tadopt() {',
+      '\t\t\t\tconst section = this.host.getSnapshot().value;',
+      '\t\t\t\tif (section === void 0) return;',
+      '\t\t\t\tif (this.preference === section.preference && this.fontSize === section.fontSize) return;',
+      '\t\t\t\tthis.preference = section.preference;',
+      '\t\t\t\tthis.fontSize = section.fontSize;',
+      '\t\t\t\tthis.publish();',
+      '\t\t\t}',
+    ].join('\n'),
+    [
+      '\t\t\t/** Adopt the scope\'s accepted durable preference without writing it back. */',
+      '\t\t\tadopt() {',
+      '\t\t\t\tconst section = this.host.getSnapshot().value;',
+      '\t\t\t\tif (section === void 0) return;',
+      '\t\t\t\tconst pending = this.__eacPending;',
+      '\t\t\t\tconst skipPreference = pending !== void 0 && pending.has("preference");',
+      '\t\t\t\tconst skipFontSize = pending !== void 0 && pending.has("fontSize");',
+      '\t\t\t\tlet changed = false;',
+      '\t\t\t\tif (!skipPreference && this.preference !== section.preference) {',
+      '\t\t\t\t\tthis.preference = section.preference;',
+      '\t\t\t\t\tchanged = true;',
+      '\t\t\t\t}',
+      '\t\t\t\tif (!skipFontSize && this.fontSize !== section.fontSize) {',
+      '\t\t\t\t\tthis.fontSize = section.fontSize;',
+      '\t\t\t\t\tchanged = true;',
+      '\t\t\t\t}',
+      '\t\t\t\tif (changed) this.publish();',
+      '\t\t\t}',
+      '\t\t\t/** dsh-desktop-theme-write-converge: 每字段至多一笔在途 wire 写；飞行中的调用',
+      '\t\t\t* 只更新目标值；settle 后目标漂移再补一笔；失败回滚到最后 settled 持久值。',
+      '\t\t\t* __eacPending 同时是 adopt 的在途防护（EAC issue #457）。deadline 10s 与',
+      '\t\t\t* skin-loader 写超时同量级，防连接挂起时 adopt 永久饥饿。 */',
+      '\t\t\t__eacWrite(field, value) {',
+      '\t\t\t\tif (this.__eacPending === void 0) this.__eacPending = new Map();',
+      '\t\t\t\tconst pending = this.__eacPending.get(field);',
+      '\t\t\t\tif (pending !== void 0) {',
+      '\t\t\t\t\tpending.target = value;',
+      '\t\t\t\t\treturn;',
+      '\t\t\t\t}',
+      '\t\t\t\tconst section = this.host.getSnapshot().value;',
+      '\t\t\t\tconst settled = section === void 0 ? value : field === "preference" ? section.preference : section.fontSize;',
+      '\t\t\t\tconst entry = { inFlight: true, target: value, settled, wire: value, deadline: void 0 };',
+      '\t\t\t\tthis.__eacPending.set(field, entry);',
+      '\t\t\t\tentry.deadline = setTimeout(() => {',
+      '\t\t\t\t\tif (this.__eacPending !== void 0 && this.__eacPending.get(field) === entry) this.__eacPending.delete(field);',
+      '\t\t\t\t}, 10000);',
+      '\t\t\t\tconst settle = (ok) => {',
+      '\t\t\t\t\tif (entry.deadline !== void 0) { clearTimeout(entry.deadline); entry.deadline = void 0; }',
+      '\t\t\t\t\tconst current = this.__eacPending === void 0 ? void 0 : this.__eacPending.get(field);',
+      '\t\t\t\t\tif (current !== entry) return;',
+      '\t\t\t\t\tif (ok) {',
+      '\t\t\t\t\t\tentry.inFlight = false;',
+      '\t\t\t\t\t\tentry.settled = entry.wire;',
+      '\t\t\t\t\t\tif (entry.target !== entry.wire) {',
+      '\t\t\t\t\t\t\tconst next = entry.target;',
+      '\t\t\t\t\t\t\tthis.__eacPending.delete(field);',
+      '\t\t\t\t\t\t\tthis.__eacWrite(field, next);',
+      '\t\t\t\t\t\t\treturn;',
+      '\t\t\t\t\t\t}',
+      '\t\t\t\t\t\tthis.__eacPending.delete(field);',
+      '\t\t\t\t\t\treturn;',
+      '\t\t\t\t\t}',
+      '\t\t\t\t\tthis.__eacPending.delete(field);',
+      '\t\t\t\t\tif (field === "preference") this.preference = entry.settled;',
+      '\t\t\t\t\telse this.fontSize = entry.settled;',
+      '\t\t\t\t\tthis.publish();',
+      '\t\t\t\t};',
+      '\t\t\t\tthis.host.set(field, value).then((ok) => settle(ok === true), () => settle(false));',
+      '\t\t\t}',
+    ].join('\n'),
+  ],
+];
+
+function patchThemeWriteConvergeSource(source: string): string | undefined {
+  if (source.includes(THEME_WRITE_MARKER)) return source;
+  let out = source;
+  for (const [oldText, newText] of THEME_WRITE_EDITS) {
+    if (!out.includes(oldText)) return undefined;
+    out = out.replace(oldText, newText);
+  }
+  return out;
+}
+
+function patchThemeWriteConverge(targetFile = THEME_WRITE_TARGET): boolean {
+  if (!fs.existsSync(targetFile)) {
+    console.log('[patch-deps] dsh-client-ui-theme 不存在，跳过');
+    return false;
+  }
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchThemeWriteConvergeSource(source);
+  if (patched === source) {
+    console.log('[patch-deps] 主题写入收敛补丁已应用，跳过');
+    return true;
+  }
+  if (patched === undefined) {
+    console.log('[patch-deps] 主题写入目标代码未匹配（上游版本可能已更新），跳过');
+    return false;
+  }
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] 已补丁 client-ui-theme：写入收敛 + adopt 在途防护（#457 闪屏/回弹）');
+  return true;
+}
+
+// reconcile 性能三连（EAC issue #457 放大器治理）：每次 settings/mutate 都走
+// configEditor.edit = 文件锁 + 写前/写后两次全量 reconcileProfilePatches +
+// HMR 串行队列，全量 preflight 的 manifestOf 每行重读 package.json 且无缓存
+// ——大 profile 下单笔写入拖到秒级，正是「连点后排空连发」的节拍来源。
+//   a) config-editor edit() 的写前 reconcile 允许跳过（内容未变时它本就是
+//      Entry.update deepEqual 早退 + 重复 config-reload 事件）；
+//   b) app-boot reconcileProfilePatches 内部实现跳过（requiredIds 为空 +
+//      allowSkip 显式开启才生效；回滚路径与写后 #2 永不跳）；
+//   c) manifestOf 记忆化（stat 键 = path|size|mtimeMs，失败不缓存）——
+//      短路的前置比较需要 prepared，没有记忆化则短路省不下 I/O。
+// 三条腿共生；一致性与外部改动吸收经 0.1.7-rc.2 产物逐行审计（#2 无条件
+// 兜底 + readProfilePatches 每次新读 + watcher 独立 reconcile 三重保险）。
+const CONFIG_EDIT_SKIP_MARKER = 'dsh-desktop-config-edit-reconcile-skip';
+const RECONCILE_GATE_MARKER = 'dsh-desktop-reconcile-gate';
+const CONFIG_EDIT_TARGET = path.join(
+  root,
+  'node_modules',
+  '@deepseek-ai',
+  'dsh-config-editor',
+  'lib',
+  'index.js',
+);
+const APP_BOOT_TARGET = path.join(
+  root,
+  'node_modules',
+  '@deepseek-ai',
+  'dsh-app-boot',
+  'lib',
+  'index.js',
+);
+const CONFIG_EDIT_OLD = [
+  '\t\t\t\tconst beforePatches = readProfilePatches("dsh", this.ownerContext.profileContext);',
+  '\t\t\t\tawait reconcileProfilePatches(this.ownerContext.root, beforePatches, "dsh");',
+  '\t\t\t\tif (!this.entries().includes(entry)) throw new Error("Configuration entry changed during reload");',
+].join('\n');
+const CONFIG_EDIT_NEW = [
+  '\t\t\t\tconst beforePatches = readProfilePatches("dsh", this.ownerContext.profileContext);',
+  `\t\t\t\tawait reconcileProfilePatches(this.ownerContext.root, beforePatches, "dsh", [], { allowSkip: true }); /* ${CONFIG_EDIT_SKIP_MARKER} */`,
+  '\t\t\t\tif (!this.entries().includes(entry)) throw new Error("Configuration entry changed during reload");',
+].join('\n');
+
+function patchConfigEditorEditShortCircuitSource(source: string): string | undefined {
+  if (source.includes(CONFIG_EDIT_SKIP_MARKER)) return source;
+  if (!source.includes(CONFIG_EDIT_OLD)) return undefined;
+  return source.replace(CONFIG_EDIT_OLD, CONFIG_EDIT_NEW);
+}
+
+function patchConfigEditorEditShortCircuit(targetFile = CONFIG_EDIT_TARGET): boolean {
+  if (!fs.existsSync(targetFile)) {
+    console.log('[patch-deps] dsh-config-editor 不存在，跳过');
+    return false;
+  }
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchConfigEditorEditShortCircuitSource(source);
+  if (patched === source) {
+    console.log('[patch-deps] config-editor 短路补丁已应用，跳过');
+    return true;
+  }
+  if (patched === undefined) {
+    console.log('[patch-deps] config-editor edit() 锚点未匹配（上游版本可能已更新），跳过');
+    return false;
+  }
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] 已补丁 config-editor：写前 reconcile 内容未变时短路');
+  return true;
+}
+
+const APP_BOOT_RECONCILE_OLD = [
+  'async function reconcileProfilePatches(ctx, patches, binName, requiredIds = []) {',
+  '\tconst entry = bootstrapIncludes.get(ctx);',
+  '\tif (entry === void 0) throw new Error(`${binName}: profile reload requires the root Include entry`);',
+].join('\n');
+const APP_BOOT_RECONCILE_NEW = [
+  'async function reconcileProfilePatches(ctx, patches, binName, requiredIds = [], options = {}) {',
+  '\tconst entry = bootstrapIncludes.get(ctx);',
+  '\tif (entry === void 0) throw new Error(`${binName}: profile reload requires the root Include entry`);',
+  `\tconst reconcileSkip = options.allowSkip === true && requiredIds.length === 0; /* ${RECONCILE_GATE_MARKER} */`,
+].join('\n');
+const APP_BOOT_MANIFEST_OLD = [
+  'function manifestOf(ctx, name, parentURL) {',
+  '\tif (name.startsWith("cordis:")) return void 0;',
+].join('\n');
+const APP_BOOT_MANIFEST_NEW = [
+  `const manifestOfMemo = new Map(); /* ${RECONCILE_GATE_MARKER}: manifestOf memoize (stat key) */`,
+  'function manifestOf(ctx, name, parentURL) {',
+  '\tif (name.startsWith("cordis:")) return void 0;',
+].join('\n');
+const APP_BOOT_MANIFEST_HOT_OLD = '\tif (pkg !== void 0) return readManifest(pkg.manifestPath);';
+const APP_BOOT_MANIFEST_HOT_NEW = [
+  '\tif (pkg !== void 0) {',
+  '\t\tlet stats;',
+  '\t\ttry { stats = statSync(pkg.manifestPath); } catch { return readManifest(pkg.manifestPath); }',
+  '\t\tconst memoKey = `${pkg.manifestPath}|${stats.size}|${stats.mtimeMs}`;',
+  '\t\tconst cached = manifestOfMemo.get(memoKey);',
+  '\t\tif (cached !== void 0) return cached;',
+  '\t\tconst manifest = readManifest(pkg.manifestPath);',
+  '\t\tmanifestOfMemo.set(memoKey, manifest);',
+  '\t\treturn manifest;',
+  '\t}',
+].join('\n');
+
+function patchAppBootReconcileGateSource(source: string): string | undefined {
+  if (source.includes(RECONCILE_GATE_MARKER)) return source;
+  let out = source;
+  for (const [oldText, newText] of [
+    [APP_BOOT_RECONCILE_OLD, APP_BOOT_RECONCILE_NEW],
+    [APP_BOOT_MANIFEST_OLD, APP_BOOT_MANIFEST_NEW],
+    [APP_BOOT_MANIFEST_HOT_OLD, APP_BOOT_MANIFEST_HOT_NEW],
+  ] as Array<[string, string]>) {
+    if (!out.includes(oldText)) return undefined;
+    out = out.replace(oldText, newText);
+  }
+  return out;
+}
+
+function patchAppBootReconcileGate(targetFile = APP_BOOT_TARGET): boolean {
+  if (!fs.existsSync(targetFile)) {
+    console.log('[patch-deps] dsh-app-boot 不存在，跳过');
+    return false;
+  }
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchAppBootReconcileGateSource(source);
+  if (patched === source) {
+    console.log('[patch-deps] reconcile 门控补丁已应用，跳过');
+    return true;
+  }
+  if (patched === undefined) {
+    console.log('[patch-deps] app-boot reconcile/manifestOf 锚点未匹配（上游版本可能已更新），跳过');
+    return false;
+  }
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] 已补丁 app-boot：reconcile 短路门控 + manifestOf 记忆化');
   return true;
 }
 
@@ -527,12 +807,17 @@ function patchAgentPresetMenu(file?: string): boolean {
   const seatTail = seatStart >= 0 ? src.indexOf(AGENT_PRESET_SEAT_TAIL, seatStart) : -1;
   const rowStart = src.indexOf(AGENT_PRESET_ROW_START);
   const rowTail = rowStart >= 0 ? src.indexOf(AGENT_PRESET_ROW_TAIL, rowStart) : -1;
-  if (seatStart < 0 || seatTail < 0 || rowStart < 0 || rowTail < 0 || !src.includes(AGENT_PRESET_ZH_ANCHOR) || !src.includes(AGENT_PRESET_EN_ANCHOR)) {
+  // KERN-004 判定：0.2.0 把设置页的 preset 行菜单官方化为内建/自定义分组卡片
+  // 列表（AgentPresetSection.tsx，原生分组渲染），ROW 锚点随之消失 —— 行面
+  // 官方化；composer 座位菜单（AgentPresetSeat.tsx:161 state.options.map）锚点
+  // 仍在，第三方收进二级菜单的能力对 seat 面仍是真漂移。行替换改为可选：
+  // 锚点在则照旧（≤0.1.7 世代），不在则 seat-only 落补丁，不再整体跳过。
+  const rowApplicable = rowStart >= 0 && rowTail >= 0;
+  if (seatStart < 0 || seatTail < 0 || !src.includes(AGENT_PRESET_ZH_ANCHOR) || !src.includes(AGENT_PRESET_EN_ANCHOR)) {
     console.log('[patch-deps] agent-preset 未匹配到目标代码（版本可能已更新），跳过');
     return false;
   }
   const seatBody = src.slice(seatStart + AGENT_PRESET_SEAT_START.length, seatTail);
-  const rowBody = src.slice(rowStart + AGENT_PRESET_ROW_START.length, rowTail);
   // composer 座位：官方保留主列表，第三方收进「第三方模式」submenu。
   // submenu 子项复用两行渲染体，但 Menu 的 submenu item 是 flex-row center，
   // 会压扁两行结构导致字体重叠 —— 给子项 item span 加内联纵向布局覆盖。
@@ -561,9 +846,11 @@ function patchAgentPresetMenu(file?: string): boolean {
     '\n\t\t\t\t\t\t})\n' +
     '\t\t\t\t\t}];\n' +
     '\t\t\t\t}())],\n\t\t\t\tselectedId: state.current,';
-  // 设置行（PresetMenu，纯文本 label）：同样收进 submenu，组内不再带「· 自定义」后缀
-  const rowNew =
-    'items: [...options.filter((option) => option.trust !== "user").map((option) => {' + rowBody +
+  // 设置行（PresetMenu，纯文本 label）：同样收进 submenu，组内不再带「· 自定义」后缀。
+  // 0.2.0 起该面已被官方卡片列表替代（rowApplicable=false 时整段跳过）。
+  const rowBody = rowApplicable ? src.slice(rowStart + AGENT_PRESET_ROW_START.length, rowTail) : '';
+  const rowNew = rowApplicable
+    ? 'items: [...options.filter((option) => option.trust !== "user").map((option) => {' + rowBody +
     '\n\t\t\t\t}), ...(function () {\n' +
     '\t\t\t\t\tconst user = options.filter((option) => option.trust === "user");\n' +
     '\t\t\t\t\tif (user.length === 0) return [];\n' +
@@ -575,17 +862,20 @@ function patchAgentPresetMenu(file?: string): boolean {
     '\t\t\t\t\t\t\treturn { id: option.id, label: name };\n' +
     '\t\t\t\t\t\t})\n' +
     '\t\t\t\t\t}];\n' +
-    '\t\t\t\t}())],\n\t\t\t\tselectedId,';
+    '\t\t\t\t}())],\n\t\t\t\tselectedId,'
+    : '';
   const zhDictAdd = '\n\t\t\t"menu.thirdPartyMode": "第三方模式",\n\t\t\t"menu.thirdPartyModeHint": "自定义与 EAC 内置的 Agent 预设",';
   const enDictAdd = '\n\t\t\t"menu.thirdPartyMode": "Third-party modes",\n\t\t\t"menu.thirdPartyModeHint": "Custom and EAC-bundled agent presets",';
   // 先做 items 替换（用旧索引的 slice），再注入词典（词典锚点在 items 之前，不受 items 替换影响）
+  src = src.replace(src.slice(seatStart, seatTail + AGENT_PRESET_SEAT_TAIL.length), seatNew);
+  if (rowApplicable) src = src.replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew);
   src = src
-    .replace(src.slice(seatStart, seatTail + AGENT_PRESET_SEAT_TAIL.length), seatNew)
-    .replace(src.slice(rowStart, rowTail + AGENT_PRESET_ROW_TAIL.length), rowNew)
     .replace(AGENT_PRESET_ZH_ANCHOR, AGENT_PRESET_ZH_ANCHOR + zhDictAdd)
     .replace(AGENT_PRESET_EN_ANCHOR, AGENT_PRESET_EN_ANCHOR + enDictAdd);
   writeFileAtomic(target, src);
-  console.log('[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单');
+  console.log(rowApplicable
+    ? '[patch-deps] 已补丁 agent-preset：第三方模式收进二级菜单'
+    : '[patch-deps] 已补丁 agent-preset（seat 面）：第三方模式收进二级菜单；设置行菜单已官方化为卡片列表，跳过行面');
   return true;
 }
 
@@ -643,6 +933,13 @@ const SUBMENU_BTN_ANCHOR_012 = 'd.jsxs("button",{type:"button",role:"menuitem",c
 const SUBMENU_BTN_NEW_012 = 'd.jsxs("button",{type:"button",role:"menuitem",className:Pe.item,style:{alignItems:"flex-start",flexShrink:0},disabled:fe.disabled';
 const SUBMENU_LABEL_ANCHOR_012 = 'd.jsx("span",{className:Pe.itemLabel,children:fe.label})';
 const SUBMENU_LABEL_NEW_012 = 'd.jsx("span",{className:Pe.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:fe.label})';
+// 0.2.0 产物形态（KERN-004 第三代：l.jsxs/l.jsx + 类对象 Ee + 子项 he，新增
+// "aria-keyshortcuts" 属性插在 disabled 之后 —— 锚点截到 disabled:he.disabled
+// 为止不受影响）。submenu 项两行布局修复仍被 agent-preset seat 子菜单需要。
+const SUBMENU_BTN_ANCHOR_020 = 'l.jsxs("button",{type:"button",role:"menuitem",className:Ee.item,disabled:he.disabled';
+const SUBMENU_BTN_NEW_020 = 'l.jsxs("button",{type:"button",role:"menuitem",className:Ee.item,style:{alignItems:"flex-start",flexShrink:0},disabled:he.disabled';
+const SUBMENU_LABEL_ANCHOR_020 = 'l.jsx("span",{className:Ee.itemLabel,children:he.label})';
+const SUBMENU_LABEL_NEW_020 = 'l.jsx("span",{className:Ee.itemLabel,style:{whiteSpace:"normal",overflow:"visible","' + SUBMENU_ITEM_MARKER + '":"1"},children:he.label})';
 
 function patchMenuSubmenuScroll(file?: string): boolean {
   let target: string | undefined = file;
@@ -724,12 +1021,13 @@ function patchMenuSubmenuScroll(file?: string): boolean {
     console.log('[patch-deps] 已补丁主 bundle：二级菜单悬停离开延迟关闭（移回一级菜单保持）');
   }
   if (!src.includes(SUBMENU_ITEM_MARKER)) {
-    // 双候选：rc.2（Re/he/f）与 0.1.2（Pe/fe/d）两代产物形态。
-    const use012 = src.includes(SUBMENU_BTN_ANCHOR_012) && src.includes(SUBMENU_LABEL_ANCHOR_012);
-    const btnAnchor = use012 ? SUBMENU_BTN_ANCHOR_012 : SUBMENU_BTN_ANCHOR;
-    const btnNew = use012 ? SUBMENU_BTN_NEW_012 : SUBMENU_BTN_NEW;
-    const labelAnchor = use012 ? SUBMENU_LABEL_ANCHOR_012 : SUBMENU_LABEL_ANCHOR;
-    const labelNew = use012 ? SUBMENU_LABEL_NEW_012 : SUBMENU_LABEL_NEW;
+    // 三候选：0.2.0（l/Ee/he）、rc.2（Re/he/f）与 0.1.2（Pe/fe/d）三代产物形态。
+    const use020 = src.includes(SUBMENU_BTN_ANCHOR_020) && src.includes(SUBMENU_LABEL_ANCHOR_020);
+    const use012 = !use020 && src.includes(SUBMENU_BTN_ANCHOR_012) && src.includes(SUBMENU_LABEL_ANCHOR_012);
+    const btnAnchor = use020 ? SUBMENU_BTN_ANCHOR_020 : use012 ? SUBMENU_BTN_ANCHOR_012 : SUBMENU_BTN_ANCHOR;
+    const btnNew = use020 ? SUBMENU_BTN_NEW_020 : use012 ? SUBMENU_BTN_NEW_012 : SUBMENU_BTN_NEW;
+    const labelAnchor = use020 ? SUBMENU_LABEL_ANCHOR_020 : use012 ? SUBMENU_LABEL_ANCHOR_012 : SUBMENU_LABEL_ANCHOR;
+    const labelNew = use020 ? SUBMENU_LABEL_NEW_020 : use012 ? SUBMENU_LABEL_NEW_012 : SUBMENU_LABEL_NEW;
     const btnIdx = src.indexOf(btnAnchor);
     const labelIdx = btnIdx >= 0 ? src.indexOf(labelAnchor, btnIdx) : -1;
     if (btnIdx < 0 || labelIdx < 0) {
@@ -778,16 +1076,87 @@ function patchClientModulesResolve(targetFile = CLIENT_MODULES_RESOLVE_TARGET): 
   return true;
 }
 
+
+// Advisory-fixed 4.3.0 still permits max-stale to bypass security-zeroed lifetimes.
+// Keep this fail-closed until upstream covers the installed behavior regressions.
+const CACHE_SECURITY_MARKER = 'EAC_CACHE_SECURITY_ZEROED_V1';
+const CACHE_EVALUATE_ANCHOR = '    evaluateRequest(req) {\n        this._assertRequestHasHeaders(req);';
+const CACHE_ERROR_ANCHOR = '    _useStaleIfError() {';
+const CACHE_SWR_ANCHOR = '    useStaleWhileRevalidate() {';
+const CACHE_SECURITY_HELPER = [
+  '    /* EAC_CACHE_SECURITY_ZEROED_V1 */',
+  '    _securityZeroLifetime() {',
+  '        return !this.storable() || this._rescc["no-cache"] ||',
+  '            this._resHeaders.vary === "*" ||',
+  '            (this._isShared && (this._rescc["proxy-revalidate"] ||',
+  '                (this._resHeaders["set-cookie"] && !this._rescc.public && !this._rescc.immutable)));',
+  '    }',
+  '',
+].join('\n');
+const CACHE_SECURITY_EVALUATE = CACHE_EVALUATE_ANCHOR + '\n        if (this._securityZeroLifetime()) return this._evaluateRequestMissResult(req);';
+const CACHE_SECURITY_ERROR = CACHE_ERROR_ANCHOR + '\n        if (this._securityZeroLifetime()) return false;';
+const CACHE_SECURITY_SWR = CACHE_SWR_ANCHOR + '\n        if (this._securityZeroLifetime()) return false;';
+
+function patchHttpCacheSemanticsSource(source: string): string {
+  if (source.includes(CACHE_SECURITY_MARKER)) {
+    if (![CACHE_SECURITY_HELPER, CACHE_SECURITY_EVALUATE, CACHE_SECURITY_ERROR, CACHE_SECURITY_SWR].every(block => source.includes(block))) {
+      throw new Error('http-cache-semantics security patch marker exists but its guards are incomplete');
+    }
+    return source;
+  }
+  for (const anchor of [CACHE_EVALUATE_ANCHOR, CACHE_ERROR_ANCHOR, CACHE_SWR_ANCHOR]) {
+    if (source.split(anchor).length !== 2) throw new Error('http-cache-semantics security anchor drift: ' + anchor);
+  }
+  return source.replace(CACHE_EVALUATE_ANCHOR, CACHE_SECURITY_HELPER + CACHE_SECURITY_EVALUATE)
+    .replace(CACHE_ERROR_ANCHOR, CACHE_SECURITY_ERROR)
+    .replace(CACHE_SWR_ANCHOR, CACHE_SECURITY_SWR);
+}
+
+function patchHttpCacheSemantics(targetFile = path.join(root, 'node_modules', 'http-cache-semantics', 'index.js')): boolean {
+  if (!fs.existsSync(targetFile)) throw new Error('http-cache-semantics security target missing: ' + targetFile);
+  const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(targetFile), 'package.json'), 'utf8')) as { version?: string };
+  if (pkg.version !== '4.3.0') throw new Error('http-cache-semantics security patch requires reviewed version 4.3.0');
+  const source = fs.readFileSync(targetFile, 'utf8');
+  const patched = patchHttpCacheSemanticsSource(source);
+  if (patched === source) return false;
+  writeFileAtomic(targetFile, patched);
+  console.log('[patch-deps] http-cache-semantics security-zeroed cache cannot serve stale responses');
+  return true;
+}
+
 function main(): void {
-  patchPickerWorker();
-  patchSettingsNavScroll();
-  patchSettingsPanelResize();
-  patchSettingsWriteFailure();
-  patchModelImageInputToggle();
-  patchOptionalEscalationFields();
-  patchAgentPresetMenu();
-  patchMenuSubmenuScroll();
-  patchClientModulesResolve();
+  // 退出码三态语义（审核定案）：
+  //   全部命中            → exit 0
+  //   锚点未命中（内核升级后的预期路径）→ exit 0 + 日志 + marker 缺失，
+  //     由 test/patch-anchor-regression.test.ts 的安装树绊网在测试期变红报警
+  //   意外崩溃（IO 错误 / 部分应用风险）→ exit 1，postinstall 硬失败
+  // 安全补丁缺失或漂移直接抛错，不适用上述兼容补丁的告警降级。
+  // 每个补丁独立 try/catch：单个崩溃不跳过其余补丁；任一崩溃则进程非零退出。
+  const patches: Array<[string, () => void]> = [
+    ['http-cache-security', patchHttpCacheSemantics],
+    ['picker-worker', patchPickerWorker],
+    ['settings-nav-scroll', patchSettingsNavScroll],
+    ['settings-panel-resize', patchSettingsPanelResize],
+    ['settings-write-retry', patchSettingsWriteFailure],
+    ['theme-write-converge', patchThemeWriteConverge],
+    ['config-edit-skip', patchConfigEditorEditShortCircuit],
+    ['app-boot-reconcile-gate', patchAppBootReconcileGate],
+    ['model-image-input', patchModelImageInputToggle],
+    ['optional-escalation-fields', patchOptionalEscalationFields],
+    ['agent-preset-menu', patchAgentPresetMenu],
+    ['menu-submenu-scroll', patchMenuSubmenuScroll],
+    ['client-modules-resolve', patchClientModulesResolve],
+  ];
+  let crashed = 0;
+  for (const [name, run] of patches) {
+    try {
+      run();
+    } catch (error) {
+      crashed += 1;
+      console.log(`[patch-deps] ${name} 意外失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (crashed > 0) process.exitCode = 1;
 }
 
 // 单测 require 本模块时不应改写真实 node_modules；仅命令行直接执行时跑 main()。
@@ -796,6 +1165,8 @@ if (require.main === module) {
 }
 
 module.exports = {
+  patchHttpCacheSemanticsSource,
+  patchHttpCacheSemantics,
   patchAgentPresetMenu,
   patchMenuSubmenuScroll,
   patchClientModulesResolve,
@@ -803,4 +1174,10 @@ module.exports = {
   patchModelImageInputToggle,
   patchSettingsWriteFailureSource,
   patchSettingsWriteFailure,
+  patchThemeWriteConvergeSource,
+  patchThemeWriteConverge,
+  patchConfigEditorEditShortCircuitSource,
+  patchConfigEditorEditShortCircuit,
+  patchAppBootReconcileGateSource,
+  patchAppBootReconcileGate,
 };

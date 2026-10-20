@@ -1,0 +1,3 @@
+[submodule "third_party/dsh-dpx"]
+	path = third_party/dsh-dpx
+	url = https://github.com/T-Auto/dsh-dpx.git
