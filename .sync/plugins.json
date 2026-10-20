@@ -227,7 +227,7 @@
       },
       "request": {
         "mode": "exact",
-        "version": "0.1.0"
+        "version": "0.1.2"
       },
       "sync": {
         "mode": "manual",
@@ -263,7 +263,7 @@
       },
       "request": {
         "mode": "exact",
-        "version": "2.0.2"
+        "version": "2.0.3"
       },
       "sync": {
         "mode": "manual",
