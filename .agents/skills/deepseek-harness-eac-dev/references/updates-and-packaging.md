@@ -51,7 +51,7 @@
 - 同步版本号到产品配置和发布产物命名。
 - NSIS 与便携包都要验证真实目录结构。
 - 不能只验证 `target/release`，必须验证安装后或解压后的运行树。
-- **体积与裁剪预算见 [ADR 0011](../../../../docs/adr/0011-packaging-budget-and-trimming.md)**：
+- **体积与裁剪预算见 [ADR 0011](../../../../docs/adr/0012-packaging-budget-and-trimming.md)**：
   lite ZIP ≤ 260 MiB / ≤ 20000 文件，full ZIP ≤ 1.1 GiB / ≤ 40000 文件。
   文件数按普通文件计、不计目录；安装载荷树也执行文件数预算，Setup 大小另行记录。
   改产物形态前先读该 ADR；新规则尚待实现，不能把文档更新视为产物验收通过。
@@ -111,7 +111,7 @@
 - NSIS 钩子：`tauri-shell/installer-hooks.nsh`
 - Tauri 配置：`tauri-shell/tauri.conf.json`
 - 发布工作流：`.github/workflows/release-tauri.yml`
-- 体积预算：`docs/adr/0011-packaging-budget-and-trimming.md`
+- 体积预算：`docs/adr/0012-packaging-budget-and-trimming.md`
 
 ## 测试组
 
