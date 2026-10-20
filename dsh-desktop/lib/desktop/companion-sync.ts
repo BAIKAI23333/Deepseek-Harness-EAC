@@ -954,6 +954,40 @@ function ensurePluginHostDeps(profileDirP: string): void {
   if (!fs.existsSync(sharedSchemastery)) {
     ensureCopy(path.join('@deepseek-ai', 'schemastery'), 0);
   }
+  // 共享层的裸名 schemastery 自身带 `cosmokit` 与 `@standard-schema/spec` 两个
+  // 运行时依赖，而内核重建该层时只放它自己、不放这两个 —— 于是
+  //   require('cosmokit') from profiles/node_modules/schemastery/lib/index.cjs
+  // 直接 MODULE_NOT_FOUND，**整个 web boot 起不来**（端口都不监听）。
+  // 实测 2026-10-21：`dsh --profile web-desktop --dump-config-schema` 报
+  //   Error: Cannot find module 'cosmokit'
+  // 静默地让 better-sidebar 在启动审计里只显示 "failed to import"（原始异常
+  // 被上游压成字符串，不落日志），排查成本极高。
+  // 修法：只在这两个依赖缺失时补进共享层（bare 与 scoped 两种拼写都补，
+  // schemastery 声明的是 bare `cosmokit`）。
+  for (const [rel, alias] of [
+    ['@deepseek-ai/cosmokit', 'cosmokit'],
+    ['@standard-schema/spec', path.join('@standard-schema', 'spec')],
+  ] as const) {
+    const scopedDir = path.join(sharedRoot, ...rel.split('/'));
+    if (!fs.existsSync(path.join(scopedDir, 'package.json'))) {
+      ensureCopy(rel, 0);
+    }
+    if (alias !== rel) {
+      const aliasDir = path.join(sharedRoot, ...alias.split('/'));
+      if (!fs.existsSync(path.join(aliasDir, 'package.json'))) {
+        const src = path.join(APP_ROOT, 'node_modules', ...rel.split('/'));
+        if (fs.existsSync(path.join(src, 'package.json'))) {
+          try {
+            fs.mkdirSync(path.dirname(aliasDir), { recursive: true });
+            fs.cpSync(src, aliasDir, { recursive: true });
+            ctx.log('boot', `已落位共享层依赖别名 ${alias} -> ${rel}`);
+          } catch (err) {
+            ctx.log('boot', `共享层依赖别名落位失败 ${alias}: ` + String((err as Error)?.message || err));
+          }
+        }
+      }
+    }
+  }
 }
 
 // 注册到 profile 的 patch 层（幂等：已有行不重写，用户选择的皮肤/disabled 状态保留）。
