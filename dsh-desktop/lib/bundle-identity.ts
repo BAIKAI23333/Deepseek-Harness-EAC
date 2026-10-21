@@ -40,6 +40,46 @@ export function registeredPatchEntryIds(text: string): Set<string> {
   return ids;
 }
 
+/**
+ * 哪些 entry 已经有**显式的 disabled 覆盖行**（用户/安装器已表过态）。
+ *
+ * 与 `registeredPatchEntryIds` 的区别（这个区别是一个真实 bug 的来源）：
+ *   · `registeredPatchEntryIds` = 「这个 id 在 patch 里出现过」——**包括**只由
+ *     bundle 层 `- insert: [{id, name}]` 引入、从未写过 disabled 的行。
+ *   · 本函数 = 「这个 id 有一行显式写了 disabled」——只有这种才算"用户已选择"。
+ *
+ * 为什么必须分开：`externalDefaultDisabledPlan`（第三方插件默认禁用）用
+ * `registeredPatchEntryIds` 判「已登记就跳过」。而 `dsh-theme-endfield` 这类
+ * 社区包**自带 `dsh.bundle.patch`**，profile 里因此天然有一行 insert：
+ *
+ *     - id: theme-endfield
+ *       name: dsh-theme-endfield
+ *       config: { enabled: "0" }
+ *
+ * 这行没有 `disabled` 字段 → 插件默认**启用**。但它已"登记"，于是被跳过、
+ * 永远补不上关闭行。`config.enabled` 是插件内部开关，管不了插件加载。
+ * 实测后果：终末地主题默认打开，覆写 73 个 `dsw-*` 变量，与皮肤管理冲突。
+ *
+ * 注意 insert 行里的 `disabled` 也算显式（bundle 自己声明要关），同样尊重。
+ */
+export function explicitDisabledEntryIds(text: string): Set<string> {
+  const data = parsePatchData(text) ?? [];
+  if (!Array.isArray(data)) throw new Error('用户补丁必须是列表');
+  const ids = new Set<string>();
+  const consider = (entry: unknown): void => {
+    const row = object(entry);
+    if (!row || typeof row.id !== 'string') return;
+    // 只有"写出来了 disabled"才算表态；`disabled` 为 undefined 不算。
+    if (row.disabled !== undefined) ids.add(row.id);
+  };
+  for (const value of data) {
+    const patch = object(value);
+    consider(patch);
+    if (Array.isArray(patch?.insert)) for (const row of patch.insert) consider(row);
+  }
+  return ids;
+}
+
 /** Follow the profile's Node lookup hierarchy, including profiles/node_modules. */
 function installedPackageRoot(profileDir: string, packageName: string): string {
   for (let directory = path.resolve(profileDir);;) {

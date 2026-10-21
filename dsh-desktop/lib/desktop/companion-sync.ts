@@ -28,7 +28,7 @@ import { ensureGuard } from './guard-box';
 import { applySessionManageFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
 import { writeFileAtomic } from '../atomic-json.js';
-import { parsePatchData, registeredPatchEntryIds, resolveBundleIdentities, toggleBundleInPatch } from '../bundle-identity';
+import { explicitDisabledEntryIds, parsePatchData, resolveBundleIdentities, resolveBundleIdentity, toggleBundleInPatch } from '../bundle-identity';
 import { PLUGIN_UPDATE_SOURCES as GENERATED_PLUGIN_UPDATE_SOURCES } from './plugin-sync-registry';
 // 未类型化依赖（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
@@ -175,6 +175,92 @@ function resolveHomeForCatalog(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 即使 catalog 标了 `defaultEnabled: false` 也**绝不能**关闭的包。
+ *
+ * 判据：它们不是"可选皮肤/增强"，而是**功能入口** —— 关掉会让对应界面整块消失。
+ *
+ * 实测教训（2026-10-21）：`@smalltailqwq/dsh-client-ui-skin-deep-whale-manager`
+ * 在 catalog 里是 `defaultEnabled: false`（语义是"默认不启用任何皮肤"），但它
+ * 本身就是**皮肤管理器的 UI 入口**。把它写成 disabled 后，设置里的「皮肤管理」
+ * 分节直接消失 —— 逐页截图测试立刻暴露（导航从 27 个分节掉到 24 个）。
+ *
+ * 同理 `@deepseek-ai/dsh-skin-switch` 是上游切换器入口，也不可关。
+ */
+const NEVER_DEFAULT_DISABLE = new Set<string>([
+  '@smalltailqwq/dsh-client-ui-skin-deep-whale-manager',
+  '@deepseek-ai/dsh-skin-switch',
+]);
+
+/**
+ * catalog 里标了 `defaultEnabled: false` 的包名 —— 安装器应给它们写关闭行。
+ *
+ * 为什么需要这个（而不是复用 externalDefaultDisabledPlan）
+ * ------------------------------------------------------
+ * `externalDefaultDisabledPlan` 的设计前提是：能从 `dsh.profile.bundles` 反推每个
+ * 包的 canonical id，并与 `PLUGIN_DISTRIBUTION_CLASSES` 同空间比对。EAC 上这两个
+ * 前提都不成立：
+ *
+ *   · `PLUGIN_SYNC_REGISTRY` 只登记 10 个包，profile 有 61 个 bundles（命中 1/61）
+ *   · 未登记包经 `canonicalBundleId` 得到 `scoped-<hex>`（如
+ *     `@deepseek-ai/dsh-balance` → `scoped-4064…`），而分类表 key 是裸名 `balance`
+ *   · 于是 `distributionClassOf` 全部落到默认 `'external'`
+ *
+ * 实测：一旦解除 `unresolvedCore` 安全网，该规划器会一次给 **45 个插件**补
+ * `disabled: true`（含 skin-switch、皮肤管理器、better-sidebar、agent-teams……），
+ * 把正常功能全部关掉。**所以不能走那条路。**
+ *
+ * 本函数改走**事实源**：catalog 里显式写了 `defaultEnabled: false` 的包，
+ * 就是"装着但默认关"。不做 id 推断、不做分类猜测，因此不会误伤。
+ *
+ * 为什么必须有它：自带 `dsh.bundle.patch` 的社区包（如 `dsh-theme-endfield`）
+ * 在 profile 里天然有一行 `- insert:`（来自 bundle 层），该行**没有 disabled 字段**
+ * → 插件默认启用。而 `config.enabled: "0"` 只是插件内部开关，管不了插件加载。
+ * 实测后果：终末地主题默认打开，覆写 73 个 `dsw-*` 变量，与皮肤管理冲突。
+ *
+ * fail-open：catalog 不可读时返回空集（无法判定时不擅自禁用）。
+ */
+let defaultDisabledCache: Set<string> | null = null;
+
+export function defaultDisabledBundlePackages(): Set<string> {
+  if (defaultDisabledCache) return defaultDisabledCache;
+  const names = new Set<string>();
+  try {
+    const home = resolveHomeForCatalog();
+    const candidates = [
+      process.env.DSH_PROFILE_DIR
+        ? path.join(process.env.DSH_PROFILE_DIR, 'node_modules', 'eac-plugin-suite', 'catalog')
+        : null,
+      home ? path.join(home, 'profiles', 'web-desktop', 'node_modules', 'eac-plugin-suite', 'catalog') : null,
+      home ? path.join(home, 'eac-plugin-suite', 'catalog') : null,
+      path.join(APP_ROOT, 'node_modules', 'eac-plugin-suite', 'catalog'),
+    ].filter((x): x is string => typeof x === 'string');
+    const suiteCatalogDir = candidates.find((dir) => fs.existsSync(dir));
+    if (!suiteCatalogDir) return names; // 未装 suite：无 catalog 可依（fail-open）
+    let read = 0;
+    for (const file of fs.readdirSync(suiteCatalogDir)) {
+      if (!file.endsWith('.json') || file === 'retired.json') continue;
+      let catalog: unknown;
+      try {
+        catalog = JSON.parse(fs.readFileSync(path.join(suiteCatalogDir, file), 'utf8'));
+      } catch { continue; }
+      const rows = Array.isArray(catalog) ? catalog : (catalog as { plugins?: unknown[] }).plugins ?? [];
+      for (const row of rows as { name?: string; defaultEnabled?: boolean; distExclude?: boolean }[]) {
+        if (!row || typeof row.name !== 'string' || !row.name) continue;
+        if (row.distExclude === true) continue;            // 未随包分发，无需管理
+        if (NEVER_DEFAULT_DISABLE.has(row.name)) continue; // 功能入口，关掉会让界面整块消失
+        if (row.defaultEnabled === false) names.add(row.name);
+      }
+      read += 1;
+    }
+    if (read > 0) defaultDisabledCache = names;
+  } catch (err) {
+    console.warn('[companion-sync] catalog 读取失败，默认关闭兜底未生效（fail-open）: '
+      + String((err as Error)?.message || err));
+  }
+  return names;
 }
 
 let ctx!: CompanionSyncCtx;
@@ -1230,11 +1316,18 @@ function ensurePluginHostDeps(profileDirP: string): void {
       p.id,
       canonicalBundleId(p.name),
     ]);
-    const registeredIds = registeredPatchEntryIds(patch);
+    // 两种"登记"必须区分（这是一个真实 bug 的根因）：
+    //   registeredPatchEntryIds —— id 在 patch 里出现过，含 bundle 层 `- insert:` 行
+    //   explicitDisabledEntryIds —— 该行**显式写了 disabled**，才算用户/安装器表过态
+    //
+    // 原先 isRegistered 用的是前者，于是自带 `dsh.bundle.patch` 的社区包
+    // （如 dsh-theme-endfield）天然有一行 insert、被判定"已登记"而跳过补写关闭行，
+    // 结果它默认启用：覆写 73 个 dsw-* 变量，与皮肤管理冲突。
+    // 它的 `config.enabled: "0"` 只是插件内部开关，管不了插件加载。
     const externalDefaults = inSafeMode ? [] : externalDefaultDisabledPlan({
       bundles: bundled,
       bundleIdentities: resolveBundleIdentities(profileDirP, bundled.filter((name): name is string => typeof name === 'string')),
-      isRegistered: (id: string) => registeredIds.has(id),
+      isRegistered: (id: string) => explicitDisabledEntryIds(patch).has(id),
       distributionClasses: PLUGIN_DISTRIBUTION_CLASSES,
       builtinIds: DISTRIBUTION_BUILTIN_PLUGIN_IDS,
       recommendedIds: RECOMMENDED_PACK_PLUGIN_IDS,
@@ -1247,6 +1340,56 @@ function ensurePluginHostDeps(profileDirP: string): void {
       }, false);
       changed = true;
       for (const ext of externalDefaults) ctx.log('boot', `外部插件默认关闭（可在「设置 → 插件 → 管理」启用）: ${ext.id}`);
+    }
+    // catalog 标了 defaultEnabled:false、但 patch 里还没有显式 disabled 的包 ——
+    // 给它们补一条关闭行。判据完全来自 catalog，不推断 id、不猜分类，因此不会误伤。
+    //
+    // 为什么必须有这一步：自带 `dsh.bundle.patch` 的社区包（如 dsh-theme-endfield）
+    // 在 profile 里天然有一行 `- insert:`（bundle 层写入），该行**没有 disabled 字段**
+    // → 插件默认启用；而它的 `config.enabled: "0"` 只是插件内部开关，管不了插件加载。
+    // 实测后果：终末地主题默认打开、覆写 73 个 dsw-* 变量、与皮肤管理冲突。
+    //
+    // 为什么不复用上面的 externalDefaultDisabledPlan：它依赖 PLUGIN_SYNC_REGISTRY
+    // 覆盖全部 bundle（实际只 10/61），未登记包得 scoped-<hex> id 与分类表裸名 key
+    // 对不上 → 全落默认 'external'。实测解除 unresolvedCore 安全网后它会一次误禁
+    // 45 个插件（含 skin-switch、皮肤管理器、better-sidebar）。
+    const defaultDisabled = inSafeMode ? new Set<string>() : defaultDisabledBundlePackages();
+    if (defaultDisabled.size > 0) {
+      // 「已表态」必须查**两层** patch。
+      //
+      // 双 patch 层是既有设计：profile 层 `<home>/profiles/<name>/cordis.patch.yml`
+      // 与 home 层 `<home>/cordis.patch.yml`，后者优先级更高。皮肤管理器切换时
+      // 会同时写两层（见其 patchTargetsForProfile），而用户手动/其它插件也可能
+      // 只写其中一层。
+      //
+      // 实测踩过（2026-10-21）：只查 profile 层时，用户在上一轮切换皮肤写进 home 层的
+      // `disabled: false`（明确"启用 qq98"）被无视，这里又给 profile 层补了
+      // `disabled: true` → 两层对同一 id 给出相反值 → 审计报「两层不一致」，
+      // 且界面读到的是 home 层（生效=启用）而文件里看是关闭，正是"切换看似成功
+      // 实则无效"的复现路径。
+      const homePatchFile = path.join(path.dirname(path.dirname(path.dirname(patchFile))), 'cordis.patch.yml');
+      const decided = explicitDisabledEntryIds(patch);
+      try {
+        if (homePatchFile !== patchFile && fs.existsSync(homePatchFile)) {
+          for (const id of explicitDisabledEntryIds(fs.readFileSync(homePatchFile, 'utf8'))) decided.add(id);
+        }
+      } catch { /* home 层损坏时按未表态处理，仍受上层判定保护 */ }
+      const applied: string[] = [];
+      for (const name of bundled) {
+        if (typeof name !== 'string' || !defaultDisabled.has(name)) continue;
+        // entry id 从该包自己的 bundle patch 读；读不到就跳过 —— 绝不猜 id。
+        const identity = resolveBundleIdentity(profileDirP, name);
+        if (!identity.ok) continue;
+        for (const entry of identity.entries) {
+          if (decided.has(entry.id)) continue;   // 已表态（开或关）就尊重
+          patch = toggleBundleInPatch(patch, { ok: true, entries: [entry], entryIds: [entry.id] }, false);
+          applied.push(entry.id);
+        }
+      }
+      if (applied.length) {
+        changed = true;
+        ctx.log('boot', `catalog 默认关闭的插件已补 disabled 行（可在「设置 → 插件 → 管理」启用）: ${applied.join(', ')}`);
+      }
     }
     if (changed) {
       // 顺带清理历史遗留的孤儿 `- insert:` 行（v4.2/4.3 每次启动「剥离-回写」

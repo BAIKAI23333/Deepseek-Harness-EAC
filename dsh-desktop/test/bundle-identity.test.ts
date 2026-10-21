@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parsePatchData, registeredPatchEntryIds, resolveBundleIdentity, resolveBundleIdentities, toggleBundleInPatch } from '../lib/bundle-identity.js';
+import { explicitDisabledEntryIds, parsePatchData, registeredPatchEntryIds, resolveBundleIdentity, resolveBundleIdentities, toggleBundleInPatch } from '../lib/bundle-identity.js';
 import state from '../plugin-manager-state.js';
 
 function fixture(t: test.TestContext) {
@@ -16,6 +16,63 @@ test('default-disable registration honors quoted YAML IDs and ignores comments a
   const ids = registeredPatchEntryIds('# id: comment-only\n- id: "pet" # user choice\n  disabled: false\n  config: { id: nested-data }\n- insert: [{ id: pet-settings, name: settings }]\n');
   assert.deepEqual([...ids], ['pet', 'pet-settings']);
   assert.deepEqual([...registeredPatchEntryIds('# no rows\n')], []);
+});
+
+/**
+ * 「id 出现过」≠「已表态禁用」——这条区分修的是一个真实 bug。
+ *
+ * 自带 `dsh.bundle.patch` 的社区包（如 dsh-theme-endfield）在 profile 里天然有一行
+ * insert：
+ *     - id: theme-endfield
+ *       name: dsh-theme-endfield
+ *       config: { enabled: "0" }
+ * 这行没有 disabled 字段 → 插件默认**启用**。旧实现用 registeredPatchEntryIds 判
+ * 「已登记就跳过补写关闭行」，于是它永远补不上 disabled，主题默认打开、覆写 73 个
+ * dsw-* 变量，与皮肤管理冲突。`config.enabled` 只是插件内部开关，管不了插件加载。
+ *
+ * explicitDisabledEntryIds 只认「显式写了 disabled」的行，让这类包能被正确补写。
+ */
+test('explicitDisabledEntryIds only counts rows that actually declare disabled', () => {
+  const patch = [
+    '# 社区包自带 insert：没有 disabled → 未表态',
+    '- id: theme-endfield',
+    '  name: dsh-theme-endfield',
+    '  config:',
+    '    enabled: "0"',
+    '# 用户已表态关闭',
+    '- id: pet',
+    '  disabled: true',
+    '# 用户已表态开启',
+    '- id: balance',
+    '  disabled: false',
+    '# bundle 层 insert 里显式声明',
+    '- insert:',
+    '    - id: ext-a',
+    '      name: ext-a',
+    '      disabled: true',
+    '# insert 里没声明 disabled → 未表态',
+    '    - id: ext-b',
+    '      name: ext-b',
+    '',
+  ].join('\n');
+  assert.deepEqual(
+    [...explicitDisabledEntryIds(patch)].sort(),
+    ['balance', 'ext-a', 'pet'],
+    '只有显式写了 disabled 的行才算已表态',
+  );
+  // 对照：旧口径会把 theme-endfield / ext-b 也算成"已登记"，从而跳过补写。
+  assert.deepEqual(
+    [...registeredPatchEntryIds(patch)].sort(),
+    ['balance', 'ext-a', 'ext-b', 'pet', 'theme-endfield'],
+    '旧口径确实包含未表态的行（这是被修掉的差异）',
+  );
+  assert.deepEqual([...explicitDisabledEntryIds('# no rows\n')], []);
+  // disabled 出现在 config 里不算表态（只看行本身的字段）
+  assert.deepEqual(
+    [...explicitDisabledEntryIds('- id: x\n  config:\n    disabled: true\n')],
+    [],
+    'config 里的 disabled 是插件内部配置，不是 loader 行开关',
+  );
 });
 
 function bundle(root: string, name: string, patches: Record<string, string>, declared: unknown = Object.keys(patches)) {
