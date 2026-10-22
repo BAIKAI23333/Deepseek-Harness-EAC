@@ -25,7 +25,7 @@ import { updCtx, APP_ROOT } from './runtime-paths';
 import { isLiteDisabled, readInstallProfile } from './install-profile';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
 import { ensureGuard } from './guard-box';
-import { applySessionManageFix } from './runtime-patches';
+import { applySessionManageFix, applyKernelTagToneFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
 import { writeFileAtomic } from '../atomic-json.js';
 import { explicitDisabledEntryIds, parsePatchData, resolveBundleIdentities, resolveBundleIdentity, toggleBundleInPatch } from '../bundle-identity';
@@ -949,6 +949,8 @@ export function syncCompanionPlugins(): void {
     // V4 运行时补丁（幂等，随启动 / 服务重启 / agent 更新后重放）：
     //  · 对话删除/归档 —— dsh-session-manager 插件的全链路前置依赖；
     applySessionManageFix();
+    //  · 内核前端 CSS：反色标签把背景层色当文字色用，字看不见（详见模块头注释）。
+    applyKernelTagToneFix();
     const profileDirP = desktopProfileDir();
     // 内置社区 agent preset（anchored-standard：首请求锚定 Minimal 工具对，
     // 首次工具调用/回复后开放完整 Standard 目录）：安装到用户 preset 根。
