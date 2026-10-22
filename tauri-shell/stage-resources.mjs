@@ -461,6 +461,17 @@ console.log('[stage] assets（v6 最简本体：图标 + WS 客户端 + skills�
     // 阶段 3：服务端 RPC / bridge 面已随本批接回
     'dsh-plugin-shield',
     'dsh-client-file-changes',
+    // 阶段 4：视觉核心（用户在精简版里明确要求随包的两项）
+    //  · dsh-plugin-wallpaper-engine —— 壁纸引擎。host 半扫 Steam 431960 并把
+    //    media 经同源 HTTP 路由下发，client 半绘壁纸 + 玻璃质感；不依赖
+    //    window.dshDesktop（webServer 走 ctx.get，缺失时自身有守卫）。
+    //  · dsh-client-ui-skin-deep-whale-manager —— 皮肤管理器（「皮肤管理」分节）。
+    //    纯客户端插件，只读 catalog 与配置，不碰已删桥接面。
+    // 两者此前只作为市场可选包（packs: aio / skins），精简版装完看不到入口；
+    // 提升为 builtin 后自动进入 onboarding 的 CORE_PLUGIN_IDS（核心组，
+    // 锁定停用路径），这正是「核心插件」语义。
+    'dsh-plugin-wallpaper-engine',
+    'dsh-client-ui-skin-deep-whale-manager',
   ];
   // EAC-CORE-SHELL-01：皮肤平台（loader + 13 款公约皮肤）已彻底外迁，宿主
   // 最小壳不再随包皮肤/加载器。皮肤改为市场可选包（Market Core 按需安装）。
