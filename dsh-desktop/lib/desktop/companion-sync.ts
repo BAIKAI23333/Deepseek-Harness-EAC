@@ -323,6 +323,15 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // overflow 尺寸识别导航/内容滚动区；MutationObserver 跟随动态内容，卸载时
   // 完整清理样式、标记与监听器。纯客户端实现（host 半边 no-op）。
   { id: 'settings-scroll-fix', name: 'dsh-settings-scroll-fix', dir: 'dsh-settings-scroll-fix' },
+  // 壁纸引擎：host 半扫描本地 Wallpaper Engine（Steam 431960）的 Workshop /
+  // 默认工程，把 Video/Web 类壁纸通过同源 HTTP 路由
+  // （/wallpaper-engine/{inventory,media,preview}）下发；client 半绘制壁纸背景
+  // 并渲染玻璃质感。不依赖 window.dshDesktop（webServer 用 ctx.get，缺失时
+  // 自身守卫），因此可随包。
+  { id: 'wallpaper-engine', name: 'dsh-plugin-wallpaper-engine', dir: 'dsh-plugin-wallpaper-engine' },
+  // 皮肤管理器：设置页「皮肤管理」分节，列出 profile 内已安装皮肤并切换，
+  // 同一时间只有一套生效。纯客户端插件，只读 catalog 与配置。
+  { id: 'ui-skin-deep-whale-manager', name: '@smalltailqwq/dsh-client-ui-skin-deep-whale-manager', dir: 'dsh-client-ui-skin-deep-whale-manager' },
   // —— 已不随包的插件（ISO-005 收敛出本清单）：不再登记 ——
   // 收敛前本清单 44 项，其中 35 项自 v6 Task 3.1 剥出 assets/plugins 后已无实物
   //（每次启动只留一条「配套插件源目录无效，跳过」）。它们不再随包，改由市场按需
@@ -1164,6 +1173,16 @@ function ensurePluginHostDeps(profileDirP: string): void {
   // web-push（meow-smooth 通知 host 半边的运行时依赖；动态 import，缺省时
   // 该插件优雅降级为仅页面内提醒 —— 这里落位让系统推送开箱即用）。
   ensureCopy('web-push', 0);
+  // 壁纸引擎（dsh-plugin-wallpaper-engine）的两个运行时依赖。它是 builtin
+  // 随包插件，但 web-app 闭包不带它们，缺任一个都会让整个插件在启动审计里
+  // 只显示 "failed to import"（原始异常被上游压成字符串、不落日志）：
+  //   · jpeg-js            —— 读 Workshop 预览图的 JPEG 解码
+  //   · @shaderfrog/glsl-parser —— we-renderer 的 GLSL 解析
+  // 实测 2026-10-22：不落位时 dsh web 报
+  //   wallpaper-engine (dsh-plugin-wallpaper-engine): failed to import
+  // 且设置页的「Wallpaper Engine」分节整块消失。
+  ensureCopy('jpeg-js', 0);
+  ensureCopy(path.join('@shaderfrog', 'glsl-parser'), 0);
   // cosmokit 只在共享层没有时兜底（避免遮蔽内核闭包内的配套版本）。
   const sharedRoot = path.join(ctx.getDshHome() || path.join(os.homedir(), '.dsh'), 'profiles', 'node_modules');
   const sharedCosmo = path.join(sharedRoot, '@deepseek-ai', 'cosmokit');
