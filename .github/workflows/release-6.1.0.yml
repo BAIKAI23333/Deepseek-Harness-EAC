@@ -3,6 +3,13 @@ on:
   push:
     branches:
       - 'release/**'
+    paths-ignore:
+      - '**/*.md'
+      - 'reports/**'
+      - 'docs/**'
+concurrency:
+  group: release-6.1.0-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 env:
