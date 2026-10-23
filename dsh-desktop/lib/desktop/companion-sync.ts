@@ -1378,7 +1378,7 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // 它的 `config.enabled: "0"` 只是插件内部开关，管不了插件加载。
     const externalDefaults = inSafeMode ? [] : externalDefaultDisabledPlan({
       bundles: bundled,
-      bundleIdentities: resolveBundleIdentities(profileDirP, bundled.filter((name): name is string => typeof name === 'string')),
+      bundleIdentities: resolveBundleIdentities(profileDirP, bundled.filter((name): name is string => typeof name === 'string'), [APP_ROOT]),
       isRegistered: (id: string) => explicitDisabledEntryIds(patch).has(id),
       distributionClasses: PLUGIN_DISTRIBUTION_CLASSES,
       builtinIds: DISTRIBUTION_BUILTIN_PLUGIN_IDS,

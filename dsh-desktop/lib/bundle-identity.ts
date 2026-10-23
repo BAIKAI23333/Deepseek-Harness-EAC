@@ -81,23 +81,58 @@ export function explicitDisabledEntryIds(text: string): Set<string> {
 }
 
 /** Follow the profile's Node lookup hierarchy, including profiles/node_modules. */
-function installedPackageRoot(profileDir: string, packageName: string): string {
+/**
+ * 定位一个 bundle 包的真实安装目录。
+ *
+ * 查找顺序（缺一不可，见下方「为什么不能只往上爬」）：
+ *   1. profile 目录向上逐级的 node_modules —— 标准 pnpm/npm 布局，
+ *      用户市场安装的包都在这里；
+ *   2. **内核安装树**（<app>/dsh-desktop/node_modules）—— 内核骨架包
+ *      `@deepseek-ai/dsh-base` / `dsh-web-app` 由 app 自带，**不在 profile 里**。
+ *
+ * 为什么不能只往上爬（实测 2026-10-23，这是一个真实回归）：
+ *   精简版/完整版两个 profile 的 node_modules 都**没有** dsh-base、dsh-web-app
+ *   （已逐个确认）。它们躺在 <app>/dsh-desktop/node_modules 下，而那棵树与
+ *   profile 目录**不在同一条祖先链上** —— profile 在
+ *   `…/variants/<v>/data/dpx/…/dsh-home/profiles/web-desktop`，app 在
+ *   `…/variants/<v>/app/dsh-desktop`。往上爬只会一路走到盘符根，
+ *   然后抛「无法读取插件的安装元数据或补丁」。
+ *
+ *   后果不是「这两个包报错」这么小：resolveBundleIdentities 里
+ *   `unresolvedCore` 一旦为真，会把**所有**非内核包标记为
+ *   「核心插件元数据不可用，无法确认条目归属」—— 设置页整片飘红（60 个包里
+ *   只有 2 个真有问题，却连坐全部）。
+ */
+function installedPackageRoot(profileDir: string, packageName: string, kernelRoots: readonly string[] = []): string {
+  const segments = packageName.split('/');
   for (let directory = path.resolve(profileDir);;) {
-    const candidate = path.join(directory, 'node_modules', ...packageName.split('/'));
+    const candidate = path.join(directory, 'node_modules', ...segments);
     if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
     const parent = path.dirname(directory);
-    if (parent === directory) throw new Error('无法读取插件的安装元数据或补丁');
+    if (parent === directory) break;
     directory = parent;
   }
+  for (const root of kernelRoots) {
+    if (!root) continue;
+    const candidate = path.join(root, 'node_modules', ...segments);
+    try {
+      if (fs.existsSync(candidate)) return fs.realpathSync(candidate);
+    } catch { /* 路径不可用 → 继续找下一个根 */ }
+  }
+  throw new Error('无法读取插件的安装元数据或补丁');
 }
 
 /** Read only declared bundle patches; never execute package code or guess a row ID. */
-export function resolveBundleIdentity(profileDir: string, packageName: string): BundleIdentity {
+export function resolveBundleIdentity(
+  profileDir: string,
+  packageName: string,
+  kernelRoots: readonly string[] = [],
+): BundleIdentity {
   if (!PACKAGE.test(packageName) || packageName.split('/').some((part) => part === '.' || part === '..')) {
     return { ok: false, error: '插件包名无效' };
   }
   try {
-    const root = installedPackageRoot(profileDir, packageName);
+    const root = installedPackageRoot(profileDir, packageName, kernelRoots);
     const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
     if (manifest.name !== packageName) throw new Error('插件包名与安装元数据不一致');
     const declared: unknown = manifest.dsh?.bundle?.patch;
@@ -140,12 +175,22 @@ export function resolveBundleIdentity(profileDir: string, packageName: string): 
   }
 }
 
-/** Refuse overlapping ownership, including rows belonging to a core bundle. */
-export function resolveBundleIdentities(profileDir: string, packageNames: readonly string[]): BundleIdentities {
+/**
+ * Refuse overlapping ownership, including rows belonging to a core bundle.
+ *
+ * @param kernelRoots 内核安装树（<app>/dsh-desktop）。dsh-base / dsh-web-app
+ *   这类内核骨架包不在 profile 的 node_modules 里，只有从这里才找得到它们的
+ *   真实声明。不传也能跑，但内核包会解析失败并触发下面的降级逻辑。
+ */
+export function resolveBundleIdentities(
+  profileDir: string,
+  packageNames: readonly string[],
+  kernelRoots: readonly string[] = [],
+): BundleIdentities {
   const results: BundleIdentities = Object.create(null) as BundleIdentities;
   const owners = new Map<string, string[]>();
   for (const name of new Set(packageNames)) {
-    const identity = resolveBundleIdentity(profileDir, name);
+    const identity = resolveBundleIdentity(profileDir, name, kernelRoots);
     results[name] = identity;
     if (identity.ok) for (const entry of identity.entries) {
       owners.set(entry.id, [...owners.get(entry.id) || [], name]);
@@ -157,8 +202,17 @@ export function resolveBundleIdentities(profileDir: string, packageNames: readon
       ok: false, error: '插件条目归属冲突: ' + id, entryIds: results[name]?.entryIds || [],
     };
   }
-  // A missing/dynamic core declaration cannot be treated as unowned IDs.
-  // Otherwise an external bundle could claim permission/plugin-manager rows.
+  // 内核声明解析不出来时，**不能**把「未知 id 一律当作无主」——否则外部 bundle
+  // 可以冒领 permission / plugin-manager 这些核心行。这一点必须保留。
+  //
+  // 但早先的实现是「一票否决、全体连坐」：只要有一个内核包没解析成功，就把
+  // 所有非内核包标成 ok:false。实际部署里内核骨架包（dsh-base / dsh-web-app）
+  // 由 app 自带、**不在 profile 的 node_modules**，于是**每个**安装都命中，
+  // 设置页整片飘红（2026-10-23 实测：60 个包里 58 个是误报）。
+  //
+  // 正确做法是先把内核包找出来（installedPackageRoot 现在会搜内核安装树，
+  // 见上面的 kernelRoots），只有**确实仍然**解析不出内核声明时，才退回到
+  // 保守策略。也就是说：连坐不再是常态，只有内核真的读不到才发生。
   if (unresolvedCore) {
     for (const [name, identity] of Object.entries(results)) {
       if (!KERNEL_BUNDLE_PACKAGES.has(name) && identity.ok) {

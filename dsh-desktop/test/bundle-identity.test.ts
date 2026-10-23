@@ -215,6 +215,45 @@ test('shared parent node_modules supplies core ownership without copying core in
   assert.match(identities.external.error || '', /冲突/);
 });
 
+/**
+ * 回归：内核骨架包在**应用树**、不在 profile 时，不得把全部外部包标红。
+ *
+ * 真实部署形态（lite / full / 用户日常桌面端都如此）：profile 的
+ * `dsh.profile.bundles` 里列着 `@deepseek-ai/dsh-base` / `dsh-web-app`，但这两个
+ * 包**不在 profile 的 node_modules**（由 app 自带，位于 <app>/node_modules）。
+ *
+ * 旧实现只在 profile 的祖先链里找包：找不到 → 这两个内核包解析失败 →
+ * `unresolvedCore` 为真 → 把所有非内核包标成「核心插件元数据不可用」。
+ * 实测后果：60 个 bundle 里 58 个是误报，设置页整片红字。
+ *
+ * 修法：把内核安装树作为额外的解析根（kernelRoots 参数）。传入后内核包能正常
+ * 解析，连坐不再触发；而「内核真的读不到」时的保守拦截仍然保留（见下一个测试）。
+ */
+test('kernel bundles living in the app tree resolve without a profile copy', (t) => {
+  const root = fixture(t);
+  const profileDir = join(root, 'profiles', 'web-desktop');
+  mkdirSync(profileDir, { recursive: true });
+  // 应用树：内核包在这里，且不在 profile 的祖先链上（兄弟目录）。
+  const appRoot = join(root, 'app');
+  bundle(appRoot, '@deepseek-ai/dsh-base', {
+    'core.yml': '- insert:\n    - id: permission\n      name: "@deepseek-ai/dsh-sandbox-policy"\n',
+  });
+  // 普通外部包：装在 profile 里。
+  bundle(profileDir, 'external', { 'patch.yml': '- insert:\n    - id: external\n      name: external\n' });
+
+  const names = ['@deepseek-ai/dsh-base', 'external'];
+
+  // 不传 kernelRoots（旧调用形态）：内核包找不到 → 连坐。
+  const withoutRoot = resolveBundleIdentities(profileDir, names);
+  assert.equal(withoutRoot['@deepseek-ai/dsh-base'].ok, false);
+  assert.match(withoutRoot.external.error || '', /核心插件元数据不可用/);
+
+  // 传 app 树作为内核根：内核包解析成功，外部包不再被误标。
+  const withRoot = resolveBundleIdentities(profileDir, names, [appRoot]);
+  assert.equal(withRoot['@deepseek-ai/dsh-base'].ok, true, '内核包应能从应用树解析');
+  assert.equal(withRoot.external.ok, true, '外部包不应被内核连坐误标');
+});
+
 test('dynamic identifiers stay inert and unresolved core prevents external mutations', (t) => {
   const root = fixture(t);
   bundle(root, 'dynamic-id', { 'patch.yml': '- insert:\n    - id: !!js "pet"\n      name: dynamic-id\n' });

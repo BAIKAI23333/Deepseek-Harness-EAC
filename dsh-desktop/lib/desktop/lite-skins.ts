@@ -148,6 +148,73 @@ function materializeSkin(profileDir: string, spec: LiteSkinSpec, assetsSkins: st
 const SKIN_MANAGER_PACKAGE = '@smalltailqwq/dsh-client-ui-skin-deep-whale-manager';
 
 /**
+ * 精简版：把虎鲸之链的「居中设置面板」默认打开。
+ *
+ * 现象（用户实测，lite）：设置页左栏导航**上方空出一大片**，内容被推到底部。
+ *
+ * 成因（已核对皮肤源码，不是猜测）：
+ *   皮肤在 docked 布局下给设置弹层的 <nav> 写了
+ *     {justify-content:safe flex-end; padding-bottom:24px}
+ *   `flex-end` 把导航列贴到底部；导航项少时上方自然空一块。
+ *   实测 lite：nav 高 680，内容高 392，可用 634 → **上方空 242px**。
+ *
+ *   皮肤作者**自己提供了正常布局**：当 html 上有
+ *     data-dsh-whale-orca-settings-layout=centered
+ *   时覆盖为 {justify-content:flex-start}。该属性由设置项 `centerSettings`
+ *   （"Center the settings panel"）驱动，`defaultValue: false`。
+ *
+ * 为什么改默认值而不是改 CSS：
+ *   `safe flex-end` 是 docked 布局的**设计行为**，不是样式 bug。直接改基础规则
+ *   等于推翻作者的设计、也破坏了 docked 模式的观感。改默认值只影响「新用户
+ *   首次进来看到哪种布局」，作者两种都实现好了，用户随时能在皮肤设置里切回去。
+ *
+ * 为什么只对 lite 做：
+ *   lite 的设置分节本来就少（7 项），贴底必然难看；full 分节多、内容基本填满，
+ *   空白几乎看不出来。不对 full 改，避免无谓地改动用户既有观感。
+ *
+ * 生效范围：皮肤设置存在 localStorage（键 dsh.skin-manager.preferences.v2），
+ * `defaultValue` 只在**没有存过值**时使用。所以本修正对新装 / 未改过该设置的用户
+ * 生效；已手动选过 docked 的用户保持其选择（尊重现状，与本文件其它修正一致）。
+ *
+ * 实现：该文件里 `defaultValue: false` 出现 3 次，因此用
+ * 「key: "centerSettings" 之后的第一处」做窗口定位，并在写入前自检
+ * 「全文仅此一处按预期变化」，不自检通过就不写。
+ */
+function applyOrcaCenterSettingsDefault(profileDir: string, log: (m: string) => void): boolean {
+  const file = path.join(
+    profileDir, 'node_modules', '@smalltailqwq', 'dsh-client-ui-skin-orca-link', 'lib', 'client.js',
+  );
+  let text: string;
+  try {
+    if (!fs.existsSync(file)) return false;
+    text = fs.readFileSync(file, 'utf8');
+  } catch {
+    return false;
+  }
+  const KEY = 'key: "centerSettings"';
+  const first = text.indexOf(KEY);
+  if (first < 0) return false; // 上游结构变了 —— 不动。
+  const nextKey = text.indexOf('key: "', first + KEY.length);
+  if (nextKey < 0) return false;
+  const seg = text.slice(first, nextKey);
+  if (!seg.includes('defaultValue: false')) return false; // 已修过 / 上游已改。
+  const fixedSeg = seg.replace('defaultValue: false', 'defaultValue: true');
+  const next = text.slice(0, first) + fixedSeg + text.slice(nextKey);
+  // 自检：键前、键后逐字节不变（false→true 少一个字符，不能拿长度相等当判据）。
+  if (next.slice(0, first) !== text.slice(0, first)) return false;
+  if (next.slice(next.length - (text.length - nextKey)) !== text.slice(nextKey)) return false;
+  if (next.length !== text.length - 1) return false;
+  try {
+    fs.writeFileSync(file, next, 'utf8');
+    log('已把虎鲸之链「居中设置面板」默认打开（精简版设置栏贴底留白问题）');
+    return true;
+  } catch (err) {
+    log('虎鲸之链设置面板默认值修正失败: ' + String((err as Error)?.message || err));
+    return false;
+  }
+}
+
+/**
  * 确保 profile package.json 的 dependencies 与 dsh.profile.bundles 都登记这些皮肤。
  * （外加皮肤管理器本身，它也需要在 bundles 里才能让内核 apply 它的包内 patch。）
  *
@@ -426,6 +493,10 @@ export function seedLiteBundledSkins(
   for (const spec of LITE_BUNDLED_SKINS) {
     if (materializeSkin(profileDir, spec, assetsSkins, log)) changed = true;
   }
+  // 设置面板布局默认值：必须在落位**之后**、且**每次启动都跑**。
+  // materializeSkin 在包已存在时会跳过（尊重用户现状），但本修正要覆盖
+  // 「老用户升级到带皮肤的 lite」这一路径 —— 那时包已经在了，跳过就永远修不上。
+  if (applyOrcaCenterSettingsDefault(profileDir, log)) changed = true;
   if (ensureSkinDependencies(profileDir, LITE_BUNDLED_SKINS, SKIN_MANAGER_PACKAGE)) {
     log('已登记随包皮肤到 profile dependencies/bundles: ' + LITE_BUNDLED_SKINS.map((s) => s.name).join(', '));
     changed = true;

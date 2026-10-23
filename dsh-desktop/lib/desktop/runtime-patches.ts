@@ -104,3 +104,13 @@ export function applyKernelTagToneFix(): void {
     }
   }
 }
+
+// 虎鲸之链皮肤设置栏贴底的问题**不在这里修**。
+//
+// 曾经想过把基础规则 `justify-content:safe flex-end` 就地改成 `flex-start`，
+// 核对皮肤源码后否掉了：那是 docked 布局的**设计行为**（作者还专门提供了
+// centered 布局的覆盖规则），改基础规则等于推翻作者设计、并破坏 docked 观感。
+//
+// 正确做法是改设置项 `centerSettings` 的默认值（作者实现好了两种布局），
+// 落在精简版的播种流程里：见 lite-skins.ts 的 applyOrcaCenterSettingsDefault。
+// 只对 lite 生效，full 不动。

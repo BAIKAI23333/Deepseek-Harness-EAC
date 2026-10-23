@@ -196,6 +196,66 @@ test('播种：非激活款在段外手写 disabled:true 时保持不动（不�
   assert.equal(all[all.length - 1][1], 'true', '非默认激活款的显式禁用是用户选择，不能被播种打开');
 });
 
+test('播种：lite 把虎鲸之链「居中设置面板」默认打开（设置栏贴底留白）', (t) => {
+  const { root, profileDir } = makeLayout();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appRoot = makeAppRoot(root, 'lite');
+
+  // 造一个最小可用的 orca 包：只含本次修正要匹配的结构。
+  // 关键点：文件里**另有**两处 `defaultValue: false`（真实包有 3 处），
+  // 用来证明修正是按 key 定位的，不会误伤别的选项。
+  const orcaDir = join(profileDir, 'node_modules', '@smalltailqwq', 'dsh-client-ui-skin-orca-link', 'lib');
+  mkdirSync(orcaDir, { recursive: true });
+  const FAKE = [
+    'const settings = [',
+    '  {',
+    '    key: "character",',
+    '    type: "boolean",',
+    '    defaultValue: false',
+    '  },',
+    '  {',
+    '    key: "centerSettings",',
+    '    type: "boolean",',
+    '    defaultValue: false',
+    '  },',
+    '  {',
+    '    key: "mirrorCharacter",',
+    '    type: "boolean",',
+    '    defaultValue: false',
+    '  },',
+    '];',
+  ].join('\n');
+  writeFileSync(join(orcaDir, 'client.js'), FAKE);
+
+  liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
+
+  const after = readFileSync(join(orcaDir, 'client.js'), 'utf8');
+  const segOf = (txt: string, key: string) => {
+    const i = txt.indexOf(`key: "${key}"`);
+    const j = txt.indexOf('key: "', i + 10);
+    return txt.slice(i, j < 0 ? undefined : j);
+  };
+  assert.match(segOf(after, 'centerSettings'), /defaultValue: true/, 'centerSettings 默认值应改为 true');
+  // 另外两项必须原封不动 —— 这是「按 key 定位、不盲改」的核心保证。
+  assert.match(segOf(after, 'character'), /defaultValue: false/, 'character 不应被连带修改');
+  assert.match(segOf(after, 'mirrorCharacter'), /defaultValue: false/, 'mirrorCharacter 不应被连带修改');
+});
+
+test('播种：full 档不动 orca 的默认值', (t) => {
+  const { root, profileDir } = makeLayout();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appRoot = makeAppRoot(root, 'full');
+
+  const orcaDir = join(profileDir, 'node_modules', '@smalltailqwq', 'dsh-client-ui-skin-orca-link', 'lib');
+  mkdirSync(orcaDir, { recursive: true });
+  const fake = 'key: "centerSettings",\n  defaultValue: false,\n';
+  writeFileSync(join(orcaDir, 'client.js'), fake);
+
+  liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
+
+  assert.equal(readFileSync(join(orcaDir, 'client.js'), 'utf8'), fake, 'full 档不应改动');
+});
+
 test('播种：full 档一行都不碰', (t) => {
   const { root, home, profileDir } = makeLayout();
   t.after(() => rmSync(root, { recursive: true, force: true }));
