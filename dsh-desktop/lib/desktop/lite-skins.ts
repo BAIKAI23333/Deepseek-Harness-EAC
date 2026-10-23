@@ -206,7 +206,7 @@ function applyOrcaCenterSettingsDefault(profileDir: string, log: (m: string) => 
   if (next.length !== text.length - 1) return false;
   try {
     fs.writeFileSync(file, next, 'utf8');
-    log('已把虎鲸之链「居中设置面板」默认打开（精简版设置栏贴底留白问题）');
+    log('已把虎鲸之链「居中设置面板」默认打开（修设置栏贴底留白）');
     return true;
   } catch (err) {
     log('虎鲸之链设置面板默认值修正失败: ' + String((err as Error)?.message || err));
@@ -468,6 +468,22 @@ function ensureSkinPatchRows(profileDir: string, specs: readonly LiteSkinSpec[],
 }
 
 /**
+ * 修虎鲸之链「设置面板贴底留白」，两档都适用。
+ *
+ * 导出给 companion-sync 在**两档**都调用 —— 早先只放在 lite 的播种流程里，
+ * 结果 full 一直保留 docked 布局（上方空出 300+ px）。而 full 的设置分节同样
+ * 填不满一屏（实测导航内容 400px / 容器 680px），所以它并不是「full 才需要
+ * 的设计选择」，而是同一个布局缺陷。
+ *
+ * 幂等 + 只改默认值，不动用户已存的选择（localStorage 有值时 defaultValue 不生效）。
+ *
+ * @returns 是否发生了修改
+ */
+export function applyOrcaSettingsLayoutFix(profileDir: string, log: (m: string) => void = () => {}): boolean {
+  return applyOrcaCenterSettingsDefault(profileDir, log);
+}
+
+/**
  * 精简版随包皮肤的完整播种：落位包目录 + 登记 dependencies + 补 patch 行。
  *
  * @returns 是否发生了任何变化（用于决定是否打日志）
@@ -493,10 +509,8 @@ export function seedLiteBundledSkins(
   for (const spec of LITE_BUNDLED_SKINS) {
     if (materializeSkin(profileDir, spec, assetsSkins, log)) changed = true;
   }
-  // 设置面板布局默认值：必须在落位**之后**、且**每次启动都跑**。
-  // materializeSkin 在包已存在时会跳过（尊重用户现状），但本修正要覆盖
-  // 「老用户升级到带皮肤的 lite」这一路径 —— 那时包已经在了，跳过就永远修不上。
-  if (applyOrcaCenterSettingsDefault(profileDir, log)) changed = true;
+  // 注意：设置面板布局修正**不在这里**。它两档都要跑，由 companion-sync 直接
+  // 调用 applyOrcaSettingsLayoutFix（本函数的 isLiteProfile 早退会把 full 挡掉）。
   if (ensureSkinDependencies(profileDir, LITE_BUNDLED_SKINS, SKIN_MANAGER_PACKAGE)) {
     log('已登记随包皮肤到 profile dependencies/bundles: ' + LITE_BUNDLED_SKINS.map((s) => s.name).join(', '));
     changed = true;

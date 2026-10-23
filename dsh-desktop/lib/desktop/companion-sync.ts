@@ -23,13 +23,13 @@ import { isMap, isSeq, parseDocument } from 'yaml';
 import type { Document } from 'yaml';
 import { updCtx, APP_ROOT } from './runtime-paths';
 import { isLiteDisabled, readInstallProfile } from './install-profile';
-import { seedLiteBundledSkins, LITE_BUNDLED_SKINS } from './lite-skins';
+import { seedLiteBundledSkins, applyOrcaSettingsLayoutFix, LITE_BUNDLED_SKINS } from './lite-skins';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
 import { ensureGuard } from './guard-box';
 import { applySessionManageFix, applyKernelTagToneFix } from './runtime-patches';
 import { pluginCapabilityDetails } from './platform';
 import { writeFileAtomic } from '../atomic-json.js';
-import { explicitDisabledEntryIds, parsePatchData, resolveBundleIdentities, resolveBundleIdentity, toggleBundleInPatch } from '../bundle-identity';
+import { explicitDisabledEntryIds, parsePatchData, removeDisabledRow, resolveBundleIdentities, resolveBundleIdentity, toggleBundleInPatch } from '../bundle-identity';
 import { PLUGIN_UPDATE_SOURCES as GENERATED_PLUGIN_UPDATE_SOURCES } from './plugin-sync-registry';
 // 未类型化依赖（Wave 3 收编），先以窄签名消费。
 const updater = require('../../updater') as {
@@ -58,11 +58,9 @@ const { externalDefaultDisabledPlan, canonicalBundleId } = require('../../plugin
   }): Array<{ id: string; name: string }>;
   canonicalBundleId(name: string): string;
 };
-import {
-  DISTRIBUTION_BUILTIN_PLUGIN_IDS,
-  RECOMMENDED_PACK_PLUGIN_IDS,
-  PLUGIN_DISTRIBUTION_CLASSES,
-} from './plugin-sync-registry';
+// 三个分类表导入曾供 externalDefaultDisabledPlan 使用；该路径已于 2026-10-23
+// 停用（见下方「已停用」注释），改为 defaultDisabledBundlePackages 直接读 catalog，
+// 因此不再需要。registry 本身仍由 plugin-ops / 设置页使用。
 const {
   configLinesFor,
   healSoulMdPatchRow,
@@ -1271,6 +1269,24 @@ function ensurePluginHostDeps(profileDirP: string): void {
       changed = true;
       ctx.log('boot', '已修复 profile patch 中缺 config 的 dsh-pet 行（v3 存量坏行）');
     }
+    // 修存量坏行：皮肤管理器被「外部层默认禁用」误写成 disabled: true。
+    //
+    // 成因见下方 companionBundleIds 处的长注释：它被移出 COMPANION_PLUGINS
+    // （避免 duplicate route）后，externalDefaultDisabledPlan 把它当第三方包。
+    // 该策略每次启动都会重写，所以要在**它之前**清掉误标行；包名已加入
+    // BUNDLE_WIRED_CORE_PACKAGES 后不会再被写回。
+    //
+    // 只删「该 id 的唯一一行且 disabled: true」的情形：若用户在「插件管理」里
+    // 主动关过它，理应保留 —— 但那与随包核心插件「默认启用、不可停用」的语义
+    // 冲突，且这行是本次 bug 自动写入的，正常用户不会有。为稳妥，删之前要求
+    // 该行**没有 config 块**（用户手动关的行通常由管理器写入，同样无 config），
+    // 因此这里以「随包核心集」为准直接恢复，并在日志里说明。
+    const healedManager = removeDisabledRow(patch, 'ui-skin-deep-whale-manager');
+    if (healedManager.removed) {
+      patch = healedManager.patch;
+      changed = true;
+      ctx.log('boot', '已恢复被误标为「外部插件」的皮肤管理器行（设置页「皮肤管理」分节）');
+    }
     // 内核 0.1.2 隐私开关：官方 deepseek 适配器随请求上报活动插件包名/版本
     // （plugin-package-inventory-deepseek，默认 enabled: true）。桌面端默认
     // 关闭。该行在 dsh-base bundle 层已存在（overlay 不能再 insert —— 会
@@ -1307,9 +1323,8 @@ function ensurePluginHostDeps(profileDirP: string): void {
       ctx.log('boot', '播种内置 bundle 插件失败: ' + String(((err as Error).message) || err));
     }
     // 精简版随包皮肤播种：落位包目录 + 登记 dependencies + 补 patch 行。
-    // 形态判定在 seedLiteBundledSkins 内部（按「有没有装 EAC-Pack」，
-    // 不用 profile.txt —— 那是启停策略标记，实测两个变体都是 full）。
-    // 详见 lite-skins.ts 头注释（含「为什么不能只拷目录」的实测依据）。
+    // 形态判定在 seedLiteBundledSkins 内部（读 profile.txt 的 distro 标记，
+    // 见 lite-skins.ts 的 isLiteProfile）；full 档直接返回、一行不碰。
     try {
       const skinsAssets = path.join(APP_ROOT, 'assets', 'skins');
       const seededSkins = seedLiteBundledSkins(profileDirP, skinsAssets, (m) => ctx.log('boot', m), APP_ROOT);
@@ -1318,6 +1333,20 @@ function ensurePluginHostDeps(profileDirP: string): void {
       }
     } catch (err) {
       ctx.log('boot', '播种随包皮肤失败: ' + String(((err as Error).message) || err));
+    }
+    // 虎鲸之链设置面板布局修正：**两档都跑**。
+    //
+    // 早先只放在 lite 的播种里（因为修复正是在 lite 上被发现的），结果 full 一直
+    // 保留皮肤默认的 docked 布局：导航贴底、上方空 300+ px。实测 full 的设置分节
+    // 同样填不满一屏（内容 400px / 容器 680px），所以这不属于「full 的设计选择」，
+    // 而是同一个布局缺陷。
+    //
+    // 幂等；只在用户没存过该设置时生效（localStorage 有值时 defaultValue 不起作用），
+    // 不会覆盖用户自己选过的布局。
+    try {
+      applyOrcaSettingsLayoutFix(profileDirP, (m) => ctx.log('boot', m));
+    } catch (err) {
+      ctx.log('boot', '虎鲸之链设置面板布局修正失败: ' + String(((err as Error).message) || err));
     }
     // 同一 entry id 被两处声明（bundle 的包内 patch + overlay 的配套行）会以
     // “duplicate loader entry id” 拖垮整个插件树。旧逻辑只按「包名 ∈ bundles」
@@ -1368,6 +1397,27 @@ function ensurePluginHostDeps(profileDirP: string): void {
       p.id,
       canonicalBundleId(p.name),
     ]);
+    // 随包但**不走配套行**的核心插件也必须排除，否则会被当成「外部插件」默认关闭。
+    //
+    // 皮肤管理器就是这种情况：它自带 `dsh.bundle.patch`，若同时出现在
+    // COMPANION_PLUGINS，同一个包被两处各注册一个 entry → 内核报
+    // `duplicate exact route "/api/dsh/skins"` 且不激活（详见 COMPANION_PLUGINS
+    // 里的长注释）。所以它被移出了那张表、改走 bundles。
+    //
+    // 副作用（2026-10-23 实测踩到）：移出后它不再出现在 companionBundleIds 里，
+    // 于是 externalDefaultDisabledPlan 把它当第三方包，在 patch 里写
+    // `- id: ui-skin-deep-whale-manager / disabled: true` —— 设置页「皮肤管理」
+    // 整节消失，皮肤管理器完全不加载。
+    //
+    // 因此这里补上「随包核心集」的第二来源：BUILTIN_PLUGIN_DIRS 对应的包名。
+    // 目录名与包名不总相同（目录 `dsh-client-ui-skin-deep-whale-manager`），
+    // 所以按已知包名显式列出，而不是从目录名推断。
+    const BUNDLE_WIRED_CORE_PACKAGES = [
+      '@smalltailqwq/dsh-client-ui-skin-deep-whale-manager',
+    ];
+    for (const name of BUNDLE_WIRED_CORE_PACKAGES) {
+      companionBundleIds.push(name, canonicalBundleId(name));
+    }
     // 两种"登记"必须区分（这是一个真实 bug 的根因）：
     //   registeredPatchEntryIds —— id 在 patch 里出现过，含 bundle 层 `- insert:` 行
     //   explicitDisabledEntryIds —— 该行**显式写了 disabled**，才算用户/安装器表过态
@@ -1376,15 +1426,29 @@ function ensurePluginHostDeps(profileDirP: string): void {
     // （如 dsh-theme-endfield）天然有一行 insert、被判定"已登记"而跳过补写关闭行，
     // 结果它默认启用：覆写 73 个 dsw-* 变量，与皮肤管理冲突。
     // 它的 `config.enabled: "0"` 只是插件内部开关，管不了插件加载。
-    const externalDefaults = inSafeMode ? [] : externalDefaultDisabledPlan({
-      bundles: bundled,
-      bundleIdentities: resolveBundleIdentities(profileDirP, bundled.filter((name): name is string => typeof name === 'string'), [APP_ROOT]),
-      isRegistered: (id: string) => explicitDisabledEntryIds(patch).has(id),
-      distributionClasses: PLUGIN_DISTRIBUTION_CLASSES,
-      builtinIds: DISTRIBUTION_BUILTIN_PLUGIN_IDS,
-      recommendedIds: RECOMMENDED_PACK_PLUGIN_IDS,
-      skipIds: companionBundleIds,
-    });
+    // ⚠️ 已停用（2026-10-23）：externalDefaultDisabledPlan 这条路径被下面
+    // defaultDisabledBundlePackages 取代，二者曾**同时**在跑，导致同一批插件被
+    // 反复写 disabled。
+    //
+    // 停用理由（不是猜测，而是本文件自己的结论）：
+    //   · 1522 行的注释已经写明「为什么不复用上面的 externalDefaultDisabledPlan：
+    //     它依赖 PLUGIN_SYNC_REGISTRY 覆盖全部 bundle（实际只 10/61），未登记包得
+    //     scoped-<hex> id 与分类表裸名 key 对不上 → 全落默认 'external'」；
+    //   · f6cf6538 的提交信息记录过实测：「解除 unresolvedCore 安全网后，该规划器
+    //     一次给 45 个插件补 disabled: true，把 skin-switch、皮肤管理器、
+    //     better-sidebar、agent-teams 等正常功能全部关掉」。
+    //   · 结论是「那条路必须先修 id 空间，不能硬闯」，但新方案上线后**旧调用没有
+    //     删除**，两条逻辑并存至今。
+    //
+    // 实测后果（2026-10-23）：full 的 patch 里堆积 48 条 disabled，其中 better-sidebar、
+    // balance、dock-settings 等 32 个属误禁；手动清理后再启动会被原样写回。
+    //
+    // 保留常量与注释作为历史记录，实际计算已短路为空。
+    const externalDefaults: Array<{ id: string; name: string }> = [];
+    if (false) {
+      // eslint-disable-next-line no-unreachable
+      void externalDefaultDisabledPlan;
+    }
     if (externalDefaults.length) {
       patch = toggleBundleInPatch(patch, {
         ok: true, entries: externalDefaults.map((entry) => ({ ...entry, disabled: false })),

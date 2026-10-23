@@ -227,9 +227,12 @@ test('播种：lite 把虎鲸之链「居中设置面板」默认打开（设置
   ].join('\n');
   writeFileSync(join(orcaDir, 'client.js'), FAKE);
 
-  liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
+  // 布局修正已从 seedLiteBundledSkins 里拆出（它两档都要跑，而播种只跑 lite），
+  // 由 companion-sync 直接调用导出的 applyOrcaSettingsLayoutFix。
+  (liteSkins as { applyOrcaSettingsLayoutFix: (d: string) => boolean }).applyOrcaSettingsLayoutFix(profileDir);
 
   const after = readFileSync(join(orcaDir, 'client.js'), 'utf8');
+  (liteSkins as { applyOrcaSettingsLayoutFix: (d: string) => boolean }).applyOrcaSettingsLayoutFix(profileDir);
   const segOf = (txt: string, key: string) => {
     const i = txt.indexOf(`key: "${key}"`);
     const j = txt.indexOf('key: "', i + 10);
@@ -254,6 +257,41 @@ test('播种：full 档不动 orca 的默认值', (t) => {
   liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
 
   assert.equal(readFileSync(join(orcaDir, 'client.js'), 'utf8'), fake, 'full 档不应改动');
+});
+
+test('布局修正两档都生效：full 也要修掉设置栏贴底留白', (t) => {
+  const { root, profileDir } = makeLayout();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appRoot = makeAppRoot(root, 'full');
+
+  // orca 包装在 profile 里（full 通过市场/随包安装后就是这个形态）。
+  const orcaDir = join(profileDir, 'node_modules', '@smalltailqwq', 'dsh-client-ui-skin-orca-link', 'lib');
+  mkdirSync(orcaDir, { recursive: true });
+  // 结构要和真实包一致：centerSettings 的 defaultValue 在本段内，后面还有别的 key。
+  const FAKE = [
+    '{',
+    '  key: "character",',
+    '  type: "boolean",',
+    '  defaultValue: false,',
+    '},',
+    '{',
+    '  key: "centerSettings",',
+    '  type: "boolean",',
+    '  defaultValue: false,',
+    '},',
+    '{',
+    '  key: "mirrorCharacter",',
+    '  type: "boolean",',
+    '  defaultValue: false,',
+    '},',
+  ].join('\n');
+  writeFileSync(join(orcaDir, 'client.js'), FAKE);
+
+  // applyOrcaSettingsLayoutFix 是独立导出的，两档都应能调用。
+  const changed = (liteSkins as { applyOrcaSettingsLayoutFix?: (d: string) => boolean })
+    .applyOrcaSettingsLayoutFix?.(profileDir);
+  assert.equal(changed, true, 'full 档也应有修改');
+  assert.match(readFileSync(join(orcaDir, 'client.js'), 'utf8'), /defaultValue: true/);
 });
 
 test('播种：full 档一行都不碰', (t) => {

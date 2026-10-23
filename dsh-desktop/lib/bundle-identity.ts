@@ -257,3 +257,40 @@ export function toggleBundleInPatch(text: string, identity: Extract<BundleIdenti
   }
   return doc.toString();
 }
+
+/**
+ * 删除 patch 里某个 id 的 `disabled: true` 顶层行（连同它的 config 块）。
+ *
+ * 用途：把被「外部层默认禁用」误标的随包核心插件恢复回来。皮肤管理器就是
+ * 这种情况 —— 它被移出 COMPANION_PLUGINS 后不再被该策略排除，于是被写成
+ * `- id: ui-skin-deep-whale-manager / disabled: true`，设置页「皮肤管理」整节消失。
+ *
+ * 只删 disabled 为 true 的行；用户主动启用的行（disabled: false）不动。
+ * 插入型行（`- insert:` 块里的条目）不在顶层，不会被误删。
+ *
+ * @returns removed 表示是否真的删了；patch 为处理后的文本。
+ */
+export function removeDisabledRow(text: string, id: string): { patch: string; removed: boolean } {
+  if (!text || !text.includes(id)) return { patch: text, removed: false };
+  let doc: Document;
+  try {
+    doc = parseDocument(text, {
+      customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: (value: string) => value }],
+    });
+  } catch {
+    return { patch: text, removed: false };
+  }
+  if (doc.errors.length || !isSeq(doc.contents)) return { patch: text, removed: false };
+  const items = doc.contents.items;
+  let removed = false;
+  // 从后往前删，避免索引位移。
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    if (!isMap(item)) continue;
+    if (item.get('id') !== id) continue;
+    if (item.get('disabled') !== true) continue;
+    items.splice(i, 1);
+    removed = true;
+  }
+  return removed ? { patch: doc.toString(), removed } : { patch: text, removed: false };
+}
