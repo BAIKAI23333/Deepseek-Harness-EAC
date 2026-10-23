@@ -234,11 +234,17 @@ function ensureSkinPatchRowsIn(patchFile: string, specs: readonly LiteSkinSpec[]
   const hasInsert = (id: string) =>
     new RegExp(`^\\s*-\\s*id:\\s*${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm').test(text);
   // 「已有 disabled 行」= 该 id 的下一行是 disabled。只认后一行，避免误判 insert 行。
+  //
+  // 同一 id 可能有多行（段外用户手写 + 段内本模块写）。按 patch 层语义**后写者胜**，
+  // 所以这里取**最后一条**，不取第一条。取第一条会踩到这个坑：段外的
+  // `disabled: true` 在文件前面时被判为「已有且为 true」，于是既不补新行、也不
+  // 进纠正逻辑，默认激活款被静默关掉 —— 与本次主 bug 同源。
   const disabledValueOf = (id: string): boolean | null => {
     const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const m = new RegExp(`^- id:\\s*${esc}\\s*\\n\\s+disabled:\\s*(true|false)`, 'm').exec(text);
-    if (!m) return null;
-    return m[1] === 'true';
+    const re = new RegExp(`^- id:\\s*${esc}\\s*\\n\\s+disabled:\\s*(true|false)`, 'gm');
+    let last: string | null = null;
+    for (const m of text.matchAll(re)) last = m[1] ?? null;
+    return last === null ? null : last === 'true';
   };
   const hasDisabledRow = (id: string) => disabledValueOf(id) !== null;
 
@@ -259,6 +265,14 @@ function ensureSkinPatchRowsIn(patchFile: string, specs: readonly LiteSkinSpec[]
     return re.test(seg);
   };
 
+  // 默认激活款若在**段外**被写成 disabled: true，段内的 false 压不住它
+  // （patch 层后写者胜，段外那行在段内之前或之后都可能出现）。这种情况必须纠正，
+  // 否则「默认激活」在边界下静默失效 —— 与本次主 bug 同一类。
+  // 只针对 active 款：非激活款保持用户的显式禁用是正确的，不能越权打开。
+  const blockedOutside = specs.filter(
+    (s) => s.active && !inManaged(s.wiringId) && disabledValueOf(s.wiringId) === true,
+  );
+
   // **每款皮肤都必须有 insert 行** —— 这是客户端半被下发的唯一入口。
   //
   // 实测（2026-10-23，这块连续判断错了三次）：
@@ -277,7 +291,12 @@ function ensureSkinPatchRowsIn(patchFile: string, specs: readonly LiteSkinSpec[]
     const v = disabledValueOf(s.wiringId);
     return v !== null && v !== !s.active && inManaged(s.wiringId);
   });
-  if (missingInserts.length === 0 && missingDisabled.length === 0 && wrongDisabled.length === 0) return false;
+  if (
+    missingInserts.length === 0
+    && missingDisabled.length === 0
+    && wrongDisabled.length === 0
+    && blockedOutside.length === 0
+  ) return false;
 
   const lines: string[] = [];
   if (!text.includes(MANAGED_BEGIN)) {
@@ -291,7 +310,11 @@ function ensureSkinPatchRowsIn(patchFile: string, specs: readonly LiteSkinSpec[]
   }
   if (!text.includes(MANAGED_END)) lines.push(MANAGED_END);
 
-  if (lines.length === 0 && wrongDisabled.length === 0) return false;
+  // 三个纠正来源任一命中有意义，就不能在这里返回：早退条件必须与第 299 行的
+  // 早退条件严格对称（那边含 blockedOutside，这边原来漏了）。漏掉的表现是
+  // 「只有段外阻挠行」时函数静默返回 false —— 判定命中了却不执行，没有日志、
+  // 没有改动，和没命中完全无法区分。
+  if (lines.length === 0 && wrongDisabled.length === 0 && blockedOutside.length === 0) return false;
   // 就地纠正自管段内写错的值（在 managedRange 内替换，不碰段外）。
   let next = text;
   for (const s of wrongDisabled) {
@@ -303,6 +326,24 @@ function ensureSkinPatchRowsIn(patchFile: string, specs: readonly LiteSkinSpec[]
     );
     next = next.slice(0, managedRange!.begin) + fixed + next.slice(managedRange!.end);
     log('已纠正随包皮肤的默认激活状态: ' + s.wiringId + ' → disabled=' + (!s.active));
+  }
+  // 默认激活款另有「段外阻挠行」的场景：用户（或早期版本的皮肤管理器）在自管段
+  // **之外**手写过 `- id: ui-skin-orca-link / disabled: true`。上面只改段内，
+  // 段外那行不动，而同 id 后出现的行会覆盖先出现的行 —— 结果默认激活款仍被关着，
+  // 「播种成功但界面无皮肤」原样复现（逐行解析的 patch 层语义是后写者胜）。
+  //
+  // 只对 active 款做这件事：非激活款保持用户的显式禁用是正确行为，不能越权打开。
+  // 改法是把段外的 true 改成 false，段内那份本来就是 false，两处一致即无歧义。
+  for (const s of blockedOutside) {
+    const esc = s.wiringId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const before = next;
+    next = next.replace(
+      new RegExp(`^(- id:\\s*${esc}\\s*\\n\\s+disabled:\\s*)true`, 'gm'),
+      '$1false',
+    );
+    if (next !== before) {
+      log('已在自管段外纠正默认激活款: ' + s.wiringId + ' → disabled=false（段外旧值会覆盖段内）');
+    }
   }
   if (lines.length > 0) next = next.replace(/\s*$/, '\n') + lines.join('\n') + '\n';
   if (next === text) return false;

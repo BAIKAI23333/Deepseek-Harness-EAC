@@ -132,6 +132,70 @@ test('播种：home 层不存在时不凭空创建（避免在无该文件的环
   assert.equal(existsSync(join(home, 'cordis.patch.yml')), false, 'home 层文件不应被创建');
 });
 
+test('播种：home 层段外的手写 disabled:true 也会被纠正（否则同样压死默认激活款）', (t) => {
+  const { root, home, profileDir } = makeLayout();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appRoot = makeAppRoot(root, 'lite');
+
+  // 段外（没有 managed 标记）手写一行：模拟用户或早期管理器留下的显式禁用。
+  const homePatch = join(home, 'cordis.patch.yml');
+  writeFileSync(homePatch, `- id: ${ORCA!.wiringId}\n  disabled: true\n`);
+
+  liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
+
+  const text = readFileSync(homePatch, 'utf8');
+  // patch 层后写者胜：取最后一处该 id 的 disabled 值，必须已放开。
+  const all = [...text.matchAll(new RegExp(`^- id:\\s*${ORCA!.wiringId}\\s*\\n\\s+disabled:\\s*(true|false)`, 'gm'))];
+  assert.ok(all.length > 0, 'home 层应仍有该 id 的行');
+  assert.equal(all[all.length - 1][1], 'false', '段外的旧 true 必须被纠正，否则默认激活款静默失效');
+});
+
+test('播种：home 层只有段外阻挠行时也必须纠正（早退条件不对称的回归）', (t) => {
+  const { root, home, profileDir } = makeLayout();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appRoot = makeAppRoot(root, 'lite');
+
+  // 关键构造：home 层里 **managed 段已存在且完整**（其它皮肤行齐全），唯独
+  // 默认激活款只在**段外**有一行 true。这样 missingInserts / missingDisabled /
+  // wrongDisabled 全为空，`lines` 也为空，只有 blockedOutside 命中。
+  //
+  // 曾因此静默失效：两处早退条件不对称（第一处含 blockedOutside，第二处漏了），
+  // 判定命中却直接 return false —— 没日志、没改动，与「没命中」完全无法区分。
+  const homePatch = join(home, 'cordis.patch.yml');
+  const others = SKINS.filter((s) => !s.active);
+  writeFileSync(homePatch, [
+    `- id: ${ORCA!.wiringId}`,
+    '  disabled: true',
+    liteSkins.MANAGED_BEGIN,
+    ...others.flatMap((s) => [`- id: ${s.wiringId}`, '  disabled: true']),
+    liteSkins.MANAGED_END,
+    '',
+  ].join('\n'));
+
+  liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
+
+  const text = readFileSync(homePatch, 'utf8');
+  const all = [...text.matchAll(new RegExp(`^- id:\\s*${ORCA!.wiringId}\\s*\\n\\s+disabled:\\s*(true|false)`, 'gm'))];
+  assert.ok(all.length > 0, '该行应仍在原位');
+  assert.equal(all[all.length - 1][1], 'false', '仅凭段外阻挠行也应触发纠正');
+});
+
+test('播种：非激活款在段外手写 disabled:true 时保持不动（不越权打开）', (t) => {
+  const { root, home, profileDir } = makeLayout();
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appRoot = makeAppRoot(root, 'lite');
+
+  const nonActive = SKINS.find((s) => !s.active)!;
+  const homePatch = join(home, 'cordis.patch.yml');
+  writeFileSync(homePatch, `- id: ${nonActive.wiringId}\n  disabled: true\n`);
+
+  liteSkins.seedLiteBundledSkins(profileDir, join(appRoot, 'assets', 'skins'), () => {}, appRoot);
+
+  const text = readFileSync(homePatch, 'utf8');
+  const all = [...text.matchAll(new RegExp(`^- id:\\s*${nonActive.wiringId}\\s*\\n\\s+disabled:\\s*(true|false)`, 'gm'))];
+  assert.equal(all[all.length - 1][1], 'true', '非默认激活款的显式禁用是用户选择，不能被播种打开');
+});
+
 test('播种：full 档一行都不碰', (t) => {
   const { root, home, profileDir } = makeLayout();
   t.after(() => rmSync(root, { recursive: true, force: true }));
