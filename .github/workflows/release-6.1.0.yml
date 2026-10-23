@@ -3,21 +3,14 @@ on:
   push:
     branches:
       - 'release/**'
-    paths-ignore:
-      - '**/*.md'
-      - 'reports/**'
-      - 'docs/**'
-concurrency:
-  group: release-6.1.0-${{ github.ref }}
-  cancel-in-progress: true
 permissions:
   contents: read
 env:
-  NODE_VERSION: '24'
+  DISTRO: lite
 jobs:
   release:
+    name: build ${{ env.DISTRO }}
     runs-on: windows-latest
-    timeout-minutes: 150
     steps:
       - name: Checkout
         uses: actions/checkout@v4
