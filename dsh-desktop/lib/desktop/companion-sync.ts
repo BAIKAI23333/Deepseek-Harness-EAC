@@ -23,6 +23,7 @@ import { isMap, isSeq, parseDocument } from 'yaml';
 import type { Document } from 'yaml';
 import { updCtx, APP_ROOT } from './runtime-paths';
 import { isLiteDisabled, readInstallProfile } from './install-profile';
+import { seedLiteBundledSkins, LITE_BUNDLED_SKINS } from './lite-skins';
 import { desktopProfile, desktopProfileDir, ensureDesktopProfileInit, BUNDLED_BUILTIN_PLUGINS } from './profile';
 import { ensureGuard } from './guard-box';
 import { applySessionManageFix, applyKernelTagToneFix } from './runtime-patches';
@@ -329,9 +330,26 @@ export const COMPANION_PLUGINS: CompanionPluginDef[] = [
   // 并渲染玻璃质感。不依赖 window.dshDesktop（webServer 用 ctx.get，缺失时
   // 自身守卫），因此可随包。
   { id: 'wallpaper-engine', name: 'dsh-plugin-wallpaper-engine', dir: 'dsh-plugin-wallpaper-engine' },
-  // 皮肤管理器：设置页「皮肤管理」分节，列出 profile 内已安装皮肤并切换，
-  // 同一时间只有一套生效。纯客户端插件，只读 catalog 与配置。
-  { id: 'ui-skin-deep-whale-manager', name: '@smalltailqwq/dsh-client-ui-skin-deep-whale-manager', dir: 'dsh-client-ui-skin-deep-whale-manager' },
+  // 皮肤管理器（@smalltailqwq/dsh-client-ui-skin-deep-whale-manager）**不登记在
+  // COMPANION_PLUGINS**，原因（实测 2026-10-23，踩了三次）：
+  //
+  // 它自带 `dsh.bundle.patch`（cordis.patch.yml 里 insert `ui-skin-deep-whale-manager`）。
+  // 若同时出现在 COMPANION_PLUGINS，syncCompanionPlugins 会再写一条配套行 ——
+  // 同一个包被两个来源各注册一个 entry，内核把它们当两个插件实例加载：
+  //
+  //   skin-manager (@smalltailqwq/dsh-client-ui-skin-deep-whale-manager):
+  //     Error: webserver: duplicate exact route "/api/dsh/skins"
+  //   dsh: warning: 1 entry did not activate
+  //
+  // 后果不只是报错：管理器 did not activate → 不写 body 皮肤属性 → 皮肤全部
+  // 不生效（这就是「皮肤包都在、bundles 也登记了，界面却没换肤」的根因）。
+  //
+  // 对照：壁纸引擎同样自带 patch，但它**不在**任何 bundles 里，只靠配套行注册，
+  // 所以没问题。两者路径不同：
+  //   · 壁纸引擎 = 普通插件 → 配套行注册（COMPANION_PLUGINS）
+  //   · 皮肤管理器 = 皮肤平台本体，自带 patch → 目录由装配拷贝、行由包内 patch 提供
+  // 因此它只在 stage-resources 的 BUILTIN_PLUGIN_DIRS 里（负责随包资产），
+  // 行由包自带，不进 COMPANION_PLUGINS。
   // —— 已不随包的插件（ISO-005 收敛出本清单）：不再登记 ——
   // 收敛前本清单 44 项，其中 35 项自 v6 Task 3.1 剥出 assets/plugins 后已无实物
   //（每次启动只留一条「配套插件源目录无效，跳过」）。它们不再随包，改由市场按需
@@ -1287,6 +1305,19 @@ function ensurePluginHostDeps(profileDirP: string): void {
     } catch (err) {
       bundled = [];
       ctx.log('boot', '播种内置 bundle 插件失败: ' + String(((err as Error).message) || err));
+    }
+    // 精简版随包皮肤播种：落位包目录 + 登记 dependencies + 补 patch 行。
+    // 形态判定在 seedLiteBundledSkins 内部（按「有没有装 EAC-Pack」，
+    // 不用 profile.txt —— 那是启停策略标记，实测两个变体都是 full）。
+    // 详见 lite-skins.ts 头注释（含「为什么不能只拷目录」的实测依据）。
+    try {
+      const skinsAssets = path.join(APP_ROOT, 'assets', 'skins');
+      const seededSkins = seedLiteBundledSkins(profileDirP, skinsAssets, (m) => ctx.log('boot', m), APP_ROOT);
+      if (seededSkins) {
+        ctx.log('boot', '精简版随包皮肤已就绪（' + LITE_BUNDLED_SKINS.length + ' 款）');
+      }
+    } catch (err) {
+      ctx.log('boot', '播种随包皮肤失败: ' + String(((err as Error).message) || err));
     }
     // 同一 entry id 被两处声明（bundle 的包内 patch + overlay 的配套行）会以
     // “duplicate loader entry id” 拖垮整个插件树。旧逻辑只按「包名 ∈ bundles」
