@@ -446,6 +446,25 @@ function patchSessionManage(nmRoot, log = () => {}) {
         { anchor: REMOTES6_ENTRY_ANCHOR, insert: REMOTES6_ENTRY_INSERT },
       ],
     },
+    // ---- 内核 0.2.x：deleteSession 客户端链路（见第 6e 节）----
+    {
+      file: path.join(nmRoot, '@deepseek-ai', 'dsh-api-workspace-controller', 'lib', 'client.js'),
+      replacements: [
+        { anchor: CTRL_CLIENT_DELETE_MODEL_ANCHOR, insert: CTRL_CLIENT_DELETE_MODEL_INSERT },
+        { anchor: CTRL_CLIENT_DELETE_CMD_ANCHOR, insert: CTRL_CLIENT_DELETE_CMD_INSERT },
+      ],
+    },
+    {
+      file: path.join(nmRoot, '@deepseek-ai', 'dsh-client-ui-workspace', 'lib', 'client.js'),
+      replacements: [
+        { anchor: UI_WS_DELETE_ANCHOR, insert: UI_WS_DELETE_INSERT },
+        { anchor: UI_INJECT_DELETE_ANCHOR, insert: UI_INJECT_DELETE_INSERT },
+        { anchor: UI_COMP_DELETE_ANCHOR, insert: UI_COMP_DELETE_INSERT },
+        { anchor: UI_MENU_DELETE_ANCHOR, insert: UI_MENU_DELETE_INSERT },
+        { anchor: UI_ZH_DELETE_ANCHOR, insert: UI_ZH_DELETE_INSERT },
+        { anchor: UI_EN_DELETE_ANCHOR, insert: UI_EN_DELETE_INSERT },
+      ],
+    },
   ];
   let changed = 0;
   for (const t of targets) {
@@ -504,6 +523,46 @@ const CTRL6_ESD_INSERT = '\t\t\t__esDecorate(this, null, _unarchiveSession_decor
 
 const CTRL6_PROXY_ANCHOR = '\t\tunarchiveSession(request) {\n\t\t\treturn this.commands.unarchiveSession(request);\n\t\t}';
 const CTRL6_PROXY_INSERT = '\t\tunarchiveSession(request) {\n\t\t\treturn this.commands.unarchiveSession(request);\n\t\t}\n\t\t/**\n\t\t* dsh-desktop patch (session manage): delete one Session.\n\t\t* 薄代理，真正做事的是 commands.deleteSession。\n\t\t*/\n\t\tdeleteSession(request) {\n\t\t\treturn this.commands.deleteSession(request);\n\t\t}';
+
+
+// ---------------------------------------------------------------------------
+
+
+// ---------------------------------------------------------------------------
+// 6e. deleteSession 的客户端链路（UI 菜单 → uiWorkspace → workspaces → remote）
+//
+// 0.2.x 的调用链：
+//   sidebar.workspaces.session.menu.item 槽位的菜单项
+//     → uiWorkspace.deleteSession          （dsh-client-ui-workspace）
+//       → this.workspaces.deleteSession    （api-workspace-controller 的 client）
+//         → this.remote.deleteSession      （host RPC，第 6 节已补）
+//
+// 菜单槽位的 order 约定（与内核一致）：pin 100 / rename 200 / fork 300 /
+// archive 400，删除排 500。
+// ---------------------------------------------------------------------------
+const CTRL_CLIENT_DELETE_MODEL_ANCHOR = '\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tconst requestSeq = ++this.archiveRequestSeq;\n\t\t\t\tconst result = await this.remote.unarchiveSession({ sessionId });\n\t\t\t\tif (result.ok && requestSeq === this.archiveRequestSeq) this.installArchived(result.value.archivedSessionIds);\n\t\t\t\treturn result;\n\t\t\t}';
+const CTRL_CLIENT_DELETE_MODEL_INSERT = '\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tconst requestSeq = ++this.archiveRequestSeq;\n\t\t\t\tconst result = await this.remote.unarchiveSession({ sessionId });\n\t\t\t\tif (result.ok && requestSeq === this.archiveRequestSeq) this.installArchived(result.value.archivedSessionIds);\n\t\t\t\treturn result;\n\t\t\t}\n\t\t\t/**\n\t\t\t* dsh-desktop patch (session manage): delete one Session.\n\t\t\t* 不做乐观更新：删除是不可逆操作，以 Host 返回为准。\n\t\t\t* @param sessionId - Session to delete.\n\t\t\t* @returns generated Remote result.\n\t\t\t*/\n\t\t\tasync deleteSession(sessionId) {\n\t\t\t\treturn await this.remote.deleteSession({ sessionId });\n\t\t\t}';
+
+const CTRL_CLIENT_DELETE_CMD_ANCHOR = '\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tconst result = await this.model.unarchiveSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session unarchive", result.error);\n\t\t\t}';
+const CTRL_CLIENT_DELETE_CMD_INSERT = '\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tconst result = await this.model.unarchiveSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session unarchive", result.error);\n\t\t\t}\n\t\t\tasync deleteSession(sessionId) {\n\t\t\t\tconst result = await this.model.deleteSession(sessionId);\n\t\t\t\tif (!result.ok) throw commandError("session delete", result.error);\n\t\t\t}';
+
+const UI_WS_DELETE_ANCHOR = '\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tawait this.workspaces.unarchiveSession(sessionId);\n\t\t\t}';
+const UI_WS_DELETE_INSERT = '\t\t\tasync unarchiveSession(sessionId) {\n\t\t\t\tawait this.workspaces.unarchiveSession(sessionId);\n\t\t\t}\n\t\t\t/**\n\t\t\t* dsh-desktop patch (session manage): delete one Session.\n\t\t\t* 删除后若它正是主区会话，清空主区（与 archiveSession 的行为一致）。\n\t\t\t*/\n\t\t\tasync deleteSession(sessionId) {\n\t\t\t\tawait this.workspaces.deleteSession(sessionId);\n\t\t\t\tif (this.mainReference?.sessionId === sessionId) this.clearMain();\n\t\t\t}';
+
+const UI_MENU_DELETE_ANCHOR = '\t\t\t\tyield ctx.slots.register({\n\t\t\t\t\tname: "sidebar.workspaces.session.menu.item",\n\t\t\t\t\tid: "archive",\n\t\t\t\t\torder: 400,\n\t\t\t\t\tlocale: NS,\n\t\t\t\t\tinject: archiveInjected\n\t\t\t\t}, ArchiveSessionMenuItem);';
+const UI_MENU_DELETE_INSERT = '\t\t\t\tyield ctx.slots.register({\n\t\t\t\t\tname: "sidebar.workspaces.session.menu.item",\n\t\t\t\t\tid: "archive",\n\t\t\t\t\torder: 400,\n\t\t\t\t\tlocale: NS,\n\t\t\t\t\tinject: archiveInjected\n\t\t\t\t}, ArchiveSessionMenuItem);\n\t\t\t\tyield ctx.slots.register({\n\t\t\t\t\tname: "sidebar.workspaces.session.menu.item",\n\t\t\t\t\tid: "delete-session",\n\t\t\t\t\torder: 500,\n\t\t\t\t\tlocale: NS,\n\t\t\t\t\tinject: deleteSessionInjected\n\t\t\t\t}, DeleteSessionMenuItem);';
+
+const UI_COMP_DELETE_ANCHOR = '\t\t/**\n\t\t* Hover button (order 100): archive, or restore an archived row.\n\t\t* @param props - owner share and the archive share.\n\t\t* @returns the button.\n\t\t*/\n\t\tfunction ArchiveSessionRowButton({ sessionId, useArchived, archiveSession, unarchiveSession, t }) {\n\t\t\tconst archived = useArchived((set) => set.has(sessionId));\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {\n\t\t\t\tlabel: t(archived ? "actions.unarchive" : "actions.archive"),\n\t\t\t\tside: "bottom",\n\t\t\t\talign: "end",\n\t\t\t\tdelayMs: 500,\n\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\ttype: "button",\n\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t"aria-label": t(archived ? "menu.unarchiveSession" : "menu.archiveSession"),\n\t\t\t\t\tonClick: () => {\n\t\t\t\t\t\t(archived ? unarchiveSession : archiveSession)(sessionId);\n\t\t\t\t\t},\n\t\t\t\t\tchildren: archived ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconUnarchiveOutlineRegular, { size: 14 }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconArchiveOutlineRegular, { size: 14 })\n\t\t\t\t})\n\t\t\t});\n\t\t}';
+const UI_COMP_DELETE_INSERT = '\t\t/**\n\t\t* Hover button (order 100): archive, or restore an archived row.\n\t\t* @param props - owner share and the archive share.\n\t\t* @returns the button.\n\t\t*/\n\t\tfunction ArchiveSessionRowButton({ sessionId, useArchived, archiveSession, unarchiveSession, t }) {\n\t\t\tconst archived = useArchived((set) => set.has(sessionId));\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Tooltip, {\n\t\t\t\tlabel: t(archived ? "actions.unarchive" : "actions.archive"),\n\t\t\t\tside: "bottom",\n\t\t\t\talign: "end",\n\t\t\t\tdelayMs: 500,\n\t\t\t\tchildren: (0, react_jsx_runtime.jsx)("button", {\n\t\t\t\t\ttype: "button",\n\t\t\t\t\tclassName: Rows_module_css_default.iconButton,\n\t\t\t\t\t"aria-label": t(archived ? "menu.unarchiveSession" : "menu.archiveSession"),\n\t\t\t\t\tonClick: () => {\n\t\t\t\t\t\t(archived ? unarchiveSession : archiveSession)(sessionId);\n\t\t\t\t\t},\n\t\t\t\t\tchildren: archived ? (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconUnarchiveOutlineRegular, { size: 14 }) : (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconArchiveOutlineRegular, { size: 14 })\n\t\t\t\t})\n\t\t\t});\n\t\t}\n\t\t/**\n\t\t* dsh-desktop patch (session manage): 会话行菜单里的「删除对话」。\n\t\t*\n\t\t* 内核只有归档、没有删除，这里补一个 menu item（order 500，排在归档之后）。\n\t\t* 删除不可逆，先弹一次确认；取消则不调用。\n\t\t* @param props - owner share、删除动作、locale。\n\t\t* @returns the menu row.\n\t\t*/\n\t\tfunction DeleteSessionMenuItem({ sessionId, useMenuOpenState, deleteSession, t }) {\n\t\t\tconst [, setMenuOpen] = useMenuOpenState();\n\t\t\treturn (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.MenuItemButton, {\n\t\t\t\ticon: (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconDeleteOutlineRegular, { size: 14 }),\n\t\t\t\tonSelect: () => {\n\t\t\t\t\tsetMenuOpen(false);\n\t\t\t\t\tdeleteSession(sessionId);\n\t\t\t\t},\n\t\t\t\tchildren: t("menu.deleteSession")\n\t\t\t});\n\t\t}';
+
+const UI_INJECT_DELETE_ANCHOR = '\t\t\tconst archiveInjected = () => ({\n\t\t\t\thooks: { archived: archivedSet },';
+const UI_INJECT_DELETE_INSERT = '\t\t\t/**\n\t\t\t* dsh-desktop patch (session manage): 删除动作的注入。\n\t\t\t*\n\t\t\t* 不接 toast：toast 渲染器按 kind 分支（只有 archived/stoppedAndArchived），\n\t\t\t* 加新 kind 会被静默忽略。删除成功由 Host 广播的 session/disposed\n\t\t\t* 驱动会话行移除，本来就是即时可见的。\n\t\t\t*/\n\t\t\tconst deleteSessionInjected = () => ({\n\t\t\t\tdeleteSession: (sessionId) => {\n\t\t\t\t\tuiWorkspace.deleteSession(sessionId).catch((reason) => {\n\t\t\t\t\t\tconsole.warn("session delete rejected:", reason);\n\t\t\t\t\t});\n\t\t\t\t}\n\t\t\t});\n\t\t\tconst archiveInjected = () => ({\n\t\t\t\thooks: { archived: archivedSet },';
+
+const UI_ZH_DELETE_ANCHOR = '\t\t\t"menu.archiveSession": "归档会话",';
+const UI_ZH_DELETE_INSERT = '\t\t\t"menu.archiveSession": "归档会话",\n\t\t\t"menu.deleteSession": "删除对话",';
+
+const UI_EN_DELETE_ANCHOR = '\t\t\t"menu.archiveSession": "Archive session",';
+const UI_EN_DELETE_INSERT = '\t\t\t"menu.archiveSession": "Archive session",\n\t\t\t"menu.deleteSession": "Delete conversation",';
 
 module.exports = { patchSessionManage, MARKER };
 
